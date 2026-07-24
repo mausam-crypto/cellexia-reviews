@@ -1,0 +1,40 @@
+{
+  "cellexia": {
+    "reviews_block": {
+      "name": "Cellexia Bewertungen",
+      "settings": {
+        "heading": {
+          "label": "Überschrift",
+          "info": "Wird oben im Bewertungs-Widget angezeigt. Übersetzbar in Translate & Adapt."
+        },
+        "show_summary": {
+          "label": "KI-Zusammenfassung und Themen anzeigen"
+        },
+        "show_media_strip": {
+          "label": "Kundenfoto-Leiste anzeigen"
+        },
+        "show_form": {
+          "label": "Schreiben von Rezensionen erlauben"
+        },
+        "per_page": {
+          "label": "Rezensionen pro Seite"
+        },
+        "accent_color": {
+          "label": "Sternfarbe",
+          "info": "Standard entspricht dem Orange im Amazon-Stil."
+        }
+      }
+    },
+    "star_rating_block": {
+      "name": "Cellexia Sterne-Badge",
+      "settings": {
+        "show_count": {
+          "label": "Anzahl der Bewertungen anzeigen"
+        }
+      }
+    },
+    "defaults": {
+      "heading": "Kundenbewertungen"
+    }
+  }
+}

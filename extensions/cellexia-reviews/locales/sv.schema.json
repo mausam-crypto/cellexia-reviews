@@ -1,0 +1,40 @@
+{
+  "cellexia": {
+    "reviews_block": {
+      "name": "Cellexia Reviews",
+      "settings": {
+        "heading": {
+          "label": "Rubrik",
+          "info": "Visas överst i recensionswidgeten. Kan översättas i Translate & Adapt."
+        },
+        "show_summary": {
+          "label": "Visa AI-sammanfattning och ämnen"
+        },
+        "show_media_strip": {
+          "label": "Visa kundernas fotorad"
+        },
+        "show_form": {
+          "label": "Tillåt att skriva recensioner"
+        },
+        "per_page": {
+          "label": "Recensioner per sida"
+        },
+        "accent_color": {
+          "label": "Stjärnfärg",
+          "info": "Standard matchar det Amazon-inspirerade orange."
+        }
+      }
+    },
+    "star_rating_block": {
+      "name": "Cellexia Star Badge",
+      "settings": {
+        "show_count": {
+          "label": "Visa antal betyg"
+        }
+      }
+    },
+    "defaults": {
+      "heading": "Kundrecensioner"
+    }
+  }
+}

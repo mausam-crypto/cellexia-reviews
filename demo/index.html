@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex">
+  <title>Cellexia Reviews — Demo preview</title>
+
+  <!-- The REAL storefront widget stylesheet (theme app extension asset) -->
+  <link rel="stylesheet" href="../extensions/cellexia-reviews/assets/cellexia-reviews.css">
+
+  <style>
+    /* Demo page chrome only — everything widget-related is styled by the
+       real extension CSS, scoped under .cx. */
+    html { -webkit-text-size-adjust: 100%; }
+    body {
+      margin: 0;
+      background: #FFFFFF;
+      color: #0F1111;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+    }
+    .demo-banner {
+      position: sticky;
+      top: 0;
+      z-index: 60;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: baseline;
+      gap: 4px 10px;
+      padding: 7px 16px;
+      background: #232F3E;
+      color: #FFFFFF;
+      font-size: 12.5px;
+      line-height: 1.4;
+    }
+    .demo-banner strong { font-weight: 700; letter-spacing: 0.01em; }
+    .demo-banner span { color: #C8CDD4; }
+    .demo-skin {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      margin-inline-start: auto;
+    }
+    .demo-skin__btn {
+      appearance: none;
+      -webkit-appearance: none;
+      border: 1px solid #6B7684;
+      border-radius: 999px;
+      background: transparent;
+      color: #FFFFFF;
+      font: inherit;
+      font-size: 12px;
+      line-height: 1;
+      padding: 5px 12px;
+      cursor: pointer;
+    }
+    .demo-skin__btn:hover { border-color: #FFFFFF; }
+    .demo-skin__btn:focus-visible { outline: 2px solid #FFFFFF; outline-offset: 2px; }
+    .demo-skin__btn.is-active {
+      background: #FFFFFF;
+      border-color: #FFFFFF;
+      color: #232F3E;
+      font-weight: 700;
+    }
+    .demo-page {
+      max-width: 1000px;
+      margin: 0 auto;
+      padding: 28px 16px 72px;
+    }
+    .demo-product {
+      border-bottom: 1px solid #E7E7E7;
+      padding-bottom: 18px;
+      margin-bottom: 26px;
+    }
+    .demo-kicker {
+      margin: 0 0 6px;
+      font-size: 11.5px;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: #565959;
+    }
+    .demo-product h1 {
+      margin: 0 0 4px;
+      font-size: 24px;
+      line-height: 1.25;
+      font-weight: 700;
+    }
+    .demo-product p {
+      margin: 0;
+      font-size: 14px;
+      color: #565959;
+    }
+    .demo-missing {
+      display: none;
+      margin: 18px 0;
+      padding: 14px 16px;
+      border: 1px solid #D5D9D9;
+      border-left: 4px solid #C7511F;
+      border-radius: 8px;
+      background: #FFF8F6;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    .demo-missing.is-visible { display: block; }
+    .demo-missing code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12.5px;
+      background: #F0F2F2;
+      padding: 1px 4px;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+
+  <div class="demo-banner" role="note">
+    <strong>Demo preview — sample data</strong>
+    <span>Real Cellexia Reviews widget, hydrated from local mock data. No network requests, nothing is saved.</span>
+    <!-- v1.1/v1.3 design-version switcher: toggles data-cx-skin on the widget
+         root (and any open dialog/sheet/lightbox) live. Default: amazon. -->
+    <div class="demo-skin" role="group" aria-label="Design version">
+      <span id="demo-skin-label">Design:</span>
+      <button type="button" class="demo-skin__btn is-active" data-skin="amazon" aria-pressed="true" aria-describedby="demo-skin-label">Amazon like</button>
+      <button type="button" class="demo-skin__btn" data-skin="cellexia" aria-pressed="false" aria-describedby="demo-skin-label">Cellexia</button>
+      <button type="button" class="demo-skin__btn" data-skin="luxe" aria-pressed="false" aria-describedby="demo-skin-label">Luxe</button>
+    </div>
+  </div>
+
+  <main class="demo-page">
+    <header class="demo-product">
+      <p class="demo-kicker">Cellexia · Demo storefront</p>
+      <h1>Cellexia Régénérant Cellular Renewal Cream</h1>
+      <p>Anti-aging facial cream · 50 mL · This section mimics a product page where the merchant added the “Cellexia Reviews” app block.</p>
+    </header>
+
+    <div class="demo-missing" id="demo-missing" role="alert">
+      The widget assets could not be loaded. This page expects the real extension files at
+      <code>../extensions/cellexia-reviews/assets/cellexia-reviews.css</code> and
+      <code>../extensions/cellexia-reviews/assets/cellexia-reviews.js</code>.
+      Make sure you opened <code>demo/index.html</code> from a full checkout of the repository
+      (double-click the file, or run <code>python3 -m http.server</code> from the repo root and visit
+      <code>http://localhost:8000/demo/</code>).
+    </div>
+
+    <!--
+      Inline i18n dictionary — same element the storefront gets from
+      snippets/cx-i18n.liquid. English strings copied verbatim from
+      extensions/cellexia-reviews/locales/en.default.json, flattened to
+      dotted keys (plural forms as "key.one"/"key.other", [[var]]
+      placeholders intact). Each entry is present both without and with the
+      "cellexia." prefix.
+    -->
+    <script type="application/json" id="cx-i18n">{
+  "widget.title": "Customer reviews",
+  "widget.rating_out_of": "[[rating]] out of 5",
+  "widget.global_ratings.one": "[[count]] global rating",
+  "widget.global_ratings.other": "[[count]] global ratings",
+  "widget.star_row.one": "[[count]] star",
+  "widget.star_row.other": "[[count]] star",
+  "widget.percent": "[[percent]]%",
+  "widget.how_link": "How customer reviews and ratings work",
+  "widget.how_body": "Customer reviews, including product star ratings, help other shoppers learn more about the product and decide whether it is right for them. Ratings are calculated from genuine customer reviews. Reviews are checked before publication, and purchases are verified whenever possible.",
+  "widget.summary_title": "Customers say",
+  "widget.summary_disclaimer": "AI-generated from the text of customer reviews.",
+  "widget.chips_title": "Select to learn more",
+  "widget.chip_mentions": "[[count]] customers mention \"[[topic]]\"",
+  "widget.chip_positive": "[[count]] positive",
+  "widget.chip_negative": "[[count]] negative",
+  "widget.close": "Close",
+  "widget.media_strip_title": "Reviews with images",
+  "widget.gallery_title": "Customer photos & videos",
+  "widget.gallery_by": "By [[name]]",
+  "widget.search_placeholder": "Search in reviews",
+  "widget.search_label": "Search in reviews",
+  "widget.sort_label": "Sort by",
+  "widget.sort_top": "Top reviews",
+  "widget.sort_recent": "Most recent",
+  "widget.filter_button": "Filter",
+  "widget.filter_title": "Filter reviews",
+  "widget.filter_stars": "Star rating",
+  "widget.filter_all_stars": "All stars",
+  "widget.filter_verified": "Verified purchases only",
+  "widget.filter_media": "With photos or videos",
+  "widget.clear_filters": "Clear filters",
+  "widget.apply_filters": "Show results",
+  "widget.active_filters": "Active filters",
+  "widget.remove_filter": "Remove filter [[name]]",
+  "widget.translate_all": "Translate all reviews",
+  "widget.show_original_all": "Show original languages",
+  "widget.write_review": "Write a review",
+  "widget.load_more": "See more reviews",
+  "widget.showing_count": "Showing [[from]]–[[to]] of [[total]] reviews",
+  "widget.review_count.one": "[[count]] review",
+  "widget.review_count.other": "[[count]] reviews",
+  "widget.no_reviews": "No reviews yet. Be the first to share your experience.",
+  "widget.no_results": "No reviews match your current filters.",
+  "widget.loading": "Loading reviews…",
+  "widget.error_loading": "Reviews could not be loaded. Please try again.",
+  "widget.retry": "Try again",
+  "review.verified": "Verified Purchase",
+  "review.pending": "Pending approval",
+  "review.size": "Size: [[value]]",
+  "review.reviewed_on": "Reviewed on [[date]]",
+  "review.reviewed_in_on": "Reviewed in [[country]] on [[date]]",
+  "review.helpful": "Helpful",
+  "review.helpful_thanks": "Thank you for your feedback",
+  "review.helpful_count.one": "[[count]] person found this helpful",
+  "review.helpful_count.other": "[[count]] people found this helpful",
+  "review.report": "Report",
+  "review.reported": "Reported — thank you",
+  "review.translate": "Translate",
+  "review.translating": "Translating…",
+  "review.see_original": "See original",
+  "review.translated_from": "Translated from [[language]]",
+  "review.reply_from": "Response from [[brand]]",
+  "review.read_more": "Read more",
+  "review.show_less": "Show less",
+  "review.media_alt": "Customer media from [[name]]",
+  "review.video_badge": "Video",
+  "attrs.age_label": "Age range",
+  "attrs.skin_label": "Skin concerns",
+  "attrs.time_label": "Time using product",
+  "attrs.results_label": "Results seen",
+  "age.under_25": "Under 25",
+  "age.25_34": "25–34",
+  "age.35_44": "35–44",
+  "age.45_54": "45–54",
+  "age.55_64": "55–64",
+  "age.65_plus": "65+",
+  "skin.fine_lines": "Fine lines & wrinkles",
+  "skin.dark_spots": "Dark spots",
+  "skin.dryness": "Dryness",
+  "skin.dullness": "Dullness",
+  "skin.firmness": "Loss of firmness",
+  "skin.texture": "Uneven texture",
+  "skin.sensitivity": "Sensitive skin",
+  "skin.redness": "Redness",
+  "skin.pores": "Visible pores",
+  "skin.dark_circles": "Dark circles",
+  "time.lt_1w": "Less than 1 week",
+  "time.w1_4": "1–4 weeks",
+  "time.m1_3": "1–3 months",
+  "time.m3_6": "3–6 months",
+  "time.gt_6m": "More than 6 months",
+  "results.smoother": "Smoother texture",
+  "results.fewer_lines": "Reduced fine lines",
+  "results.firmer": "Firmer skin",
+  "results.radiance": "More radiance",
+  "results.even_tone": "More even tone",
+  "results.hydration": "Deep hydration",
+  "results.calmer": "Calmer, less irritated skin",
+  "results.too_early": "Too early to tell",
+  "report_dialog.title": "Report this review",
+  "report_dialog.reason_label": "Why are you reporting this review?",
+  "report_dialog.off_topic": "Not about the product",
+  "report_dialog.inappropriate": "Inappropriate or offensive",
+  "report_dialog.spam": "Spam or advertising",
+  "report_dialog.privacy": "Privacy concern",
+  "report_dialog.other": "Other",
+  "report_dialog.submit": "Submit report",
+  "report_dialog.cancel": "Cancel",
+  "preview.badge": "Preview mode",
+  "preview.note": "Only you can see this — the widget is not live for visitors.",
+  "preview.exit": "Exit preview",
+  "form.title": "Write a review",
+  "form.rating_label": "Overall rating",
+  "form.rating_value.one": "[[count]] star",
+  "form.rating_value.other": "[[count]] stars",
+  "form.title_label": "Add a headline",
+  "form.title_placeholder": "What's most important to know?",
+  "form.body_label": "Add a written review",
+  "form.body_placeholder": "What did you like or dislike? How is your skin responding?",
+  "form.name_label": "Your name",
+  "form.name_placeholder": "How your name will appear",
+  "form.email_label": "Email address",
+  "form.email_note": "Used to verify your purchase — never shown publicly.",
+  "form.media_label": "Add a photo or video",
+  "form.media_hint": "Up to [[images]] photos and [[videos]] video. Photos up to [[img_mb]] MB, video up to [[vid_mb]] MB.",
+  "form.media_add": "Add",
+  "form.media_remove": "Remove",
+  "form.age_label": "Your age range",
+  "form.skin_label": "Your skin concerns",
+  "form.time_label": "How long have you used this product?",
+  "form.results_label": "Results you've seen",
+  "form.multi_hint": "Select all that apply",
+  "form.optional": "(optional)",
+  "form.submit": "Submit review",
+  "form.submitting": "Submitting…",
+  "form.cancel": "Cancel",
+  "form.success_title": "Thank you for your review!",
+  "form.success_pending": "Your review has been submitted and will appear once it has been approved.",
+  "form.success_published": "Your review is now published.",
+  "form.error_generic": "Something went wrong. Please try again.",
+  "form.error_rating": "Please select a star rating.",
+  "form.error_body": "Please write your review.",
+  "form.error_name": "Please enter your name.",
+  "form.error_email": "Please enter a valid email address.",
+  "form.error_media_type": "This file type is not supported.",
+  "form.error_media_size": "This file is too large.",
+  "form.error_media_count": "Too many files selected.",
+  "form.error_rate_limited": "Too many attempts. Please try again later.",
+  "a11y.stars_label": "[[rating]] out of 5 stars",
+  "a11y.rating_input": "Select a star rating",
+  "a11y.open_gallery": "Open customer media gallery",
+  "a11y.open_media": "View media from [[name]]",
+  "a11y.prev": "Previous",
+  "a11y.next": "Next",
+  "a11y.close_dialog": "Close dialog",
+  "a11y.filter_row": "Filter by [[stars]] star reviews",
+  "a11y.list_updated": "Review list updated",
+  "a11y.menu": "Review options",
+  "a11y.page_loaded": "More reviews loaded",
+  "cellexia.widget.title": "Customer reviews",
+  "cellexia.widget.rating_out_of": "[[rating]] out of 5",
+  "cellexia.widget.global_ratings.one": "[[count]] global rating",
+  "cellexia.widget.global_ratings.other": "[[count]] global ratings",
+  "cellexia.widget.star_row.one": "[[count]] star",
+  "cellexia.widget.star_row.other": "[[count]] star",
+  "cellexia.widget.percent": "[[percent]]%",
+  "cellexia.widget.how_link": "How customer reviews and ratings work",
+  "cellexia.widget.how_body": "Customer reviews, including product star ratings, help other shoppers learn more about the product and decide whether it is right for them. Ratings are calculated from genuine customer reviews. Reviews are checked before publication, and purchases are verified whenever possible.",
+  "cellexia.widget.summary_title": "Customers say",
+  "cellexia.widget.summary_disclaimer": "AI-generated from the text of customer reviews.",
+  "cellexia.widget.chips_title": "Select to learn more",
+  "cellexia.widget.chip_mentions": "[[count]] customers mention \"[[topic]]\"",
+  "cellexia.widget.chip_positive": "[[count]] positive",
+  "cellexia.widget.chip_negative": "[[count]] negative",
+  "cellexia.widget.close": "Close",
+  "cellexia.widget.media_strip_title": "Reviews with images",
+  "cellexia.widget.gallery_title": "Customer photos & videos",
+  "cellexia.widget.gallery_by": "By [[name]]",
+  "cellexia.widget.search_placeholder": "Search in reviews",
+  "cellexia.widget.search_label": "Search in reviews",
+  "cellexia.widget.sort_label": "Sort by",
+  "cellexia.widget.sort_top": "Top reviews",
+  "cellexia.widget.sort_recent": "Most recent",
+  "cellexia.widget.filter_button": "Filter",
+  "cellexia.widget.filter_title": "Filter reviews",
+  "cellexia.widget.filter_stars": "Star rating",
+  "cellexia.widget.filter_all_stars": "All stars",
+  "cellexia.widget.filter_verified": "Verified purchases only",
+  "cellexia.widget.filter_media": "With photos or videos",
+  "cellexia.widget.clear_filters": "Clear filters",
+  "cellexia.widget.apply_filters": "Show results",
+  "cellexia.widget.active_filters": "Active filters",
+  "cellexia.widget.remove_filter": "Remove filter [[name]]",
+  "cellexia.widget.translate_all": "Translate all reviews",
+  "cellexia.widget.show_original_all": "Show original languages",
+  "cellexia.widget.write_review": "Write a review",
+  "cellexia.widget.load_more": "See more reviews",
+  "cellexia.widget.showing_count": "Showing [[from]]–[[to]] of [[total]] reviews",
+  "cellexia.widget.review_count.one": "[[count]] review",
+  "cellexia.widget.review_count.other": "[[count]] reviews",
+  "cellexia.widget.no_reviews": "No reviews yet. Be the first to share your experience.",
+  "cellexia.widget.no_results": "No reviews match your current filters.",
+  "cellexia.widget.loading": "Loading reviews…",
+  "cellexia.widget.error_loading": "Reviews could not be loaded. Please try again.",
+  "cellexia.widget.retry": "Try again",
+  "cellexia.review.verified": "Verified Purchase",
+  "cellexia.review.pending": "Pending approval",
+  "cellexia.review.size": "Size: [[value]]",
+  "cellexia.review.reviewed_on": "Reviewed on [[date]]",
+  "cellexia.review.reviewed_in_on": "Reviewed in [[country]] on [[date]]",
+  "cellexia.review.helpful": "Helpful",
+  "cellexia.review.helpful_thanks": "Thank you for your feedback",
+  "cellexia.review.helpful_count.one": "[[count]] person found this helpful",
+  "cellexia.review.helpful_count.other": "[[count]] people found this helpful",
+  "cellexia.review.report": "Report",
+  "cellexia.review.reported": "Reported — thank you",
+  "cellexia.review.translate": "Translate",
+  "cellexia.review.translating": "Translating…",
+  "cellexia.review.see_original": "See original",
+  "cellexia.review.translated_from": "Translated from [[language]]",
+  "cellexia.review.reply_from": "Response from [[brand]]",
+  "cellexia.review.read_more": "Read more",
+  "cellexia.review.show_less": "Show less",
+  "cellexia.review.media_alt": "Customer media from [[name]]",
+  "cellexia.review.video_badge": "Video",
+  "cellexia.attrs.age_label": "Age range",
+  "cellexia.attrs.skin_label": "Skin concerns",
+  "cellexia.attrs.time_label": "Time using product",
+  "cellexia.attrs.results_label": "Results seen",
+  "cellexia.age.under_25": "Under 25",
+  "cellexia.age.25_34": "25–34",
+  "cellexia.age.35_44": "35–44",
+  "cellexia.age.45_54": "45–54",
+  "cellexia.age.55_64": "55–64",
+  "cellexia.age.65_plus": "65+",
+  "cellexia.skin.fine_lines": "Fine lines & wrinkles",
+  "cellexia.skin.dark_spots": "Dark spots",
+  "cellexia.skin.dryness": "Dryness",
+  "cellexia.skin.dullness": "Dullness",
+  "cellexia.skin.firmness": "Loss of firmness",
+  "cellexia.skin.texture": "Uneven texture",
+  "cellexia.skin.sensitivity": "Sensitive skin",
+  "cellexia.skin.redness": "Redness",
+  "cellexia.skin.pores": "Visible pores",
+  "cellexia.skin.dark_circles": "Dark circles",
+  "cellexia.time.lt_1w": "Less than 1 week",
+  "cellexia.time.w1_4": "1–4 weeks",
+  "cellexia.time.m1_3": "1–3 months",
+  "cellexia.time.m3_6": "3–6 months",
+  "cellexia.time.gt_6m": "More than 6 months",
+  "cellexia.results.smoother": "Smoother texture",
+  "cellexia.results.fewer_lines": "Reduced fine lines",
+  "cellexia.results.firmer": "Firmer skin",
+  "cellexia.results.radiance": "More radiance",
+  "cellexia.results.even_tone": "More even tone",
+  "cellexia.results.hydration": "Deep hydration",
+  "cellexia.results.calmer": "Calmer, less irritated skin",
+  "cellexia.results.too_early": "Too early to tell",
+  "cellexia.report_dialog.title": "Report this review",
+  "cellexia.report_dialog.reason_label": "Why are you reporting this review?",
+  "cellexia.report_dialog.off_topic": "Not about the product",
+  "cellexia.report_dialog.inappropriate": "Inappropriate or offensive",
+  "cellexia.report_dialog.spam": "Spam or advertising",
+  "cellexia.report_dialog.privacy": "Privacy concern",
+  "cellexia.report_dialog.other": "Other",
+  "cellexia.report_dialog.submit": "Submit report",
+  "cellexia.report_dialog.cancel": "Cancel",
+  "cellexia.form.title": "Write a review",
+  "cellexia.form.rating_label": "Overall rating",
+  "cellexia.form.rating_value.one": "[[count]] star",
+  "cellexia.form.rating_value.other": "[[count]] stars",
+  "cellexia.form.title_label": "Add a headline",
+  "cellexia.form.title_placeholder": "What's most important to know?",
+  "cellexia.form.body_label": "Add a written review",
+  "cellexia.form.body_placeholder": "What did you like or dislike? How is your skin responding?",
+  "cellexia.form.name_label": "Your name",
+  "cellexia.form.name_placeholder": "How your name will appear",
+  "cellexia.form.email_label": "Email address",
+  "cellexia.form.email_note": "Used to verify your purchase — never shown publicly.",
+  "cellexia.form.media_label": "Add a photo or video",
+  "cellexia.form.media_hint": "Up to [[images]] photos and [[videos]] video. Photos up to [[img_mb]] MB, video up to [[vid_mb]] MB.",
+  "cellexia.form.media_add": "Add",
+  "cellexia.form.media_remove": "Remove",
+  "cellexia.form.age_label": "Your age range",
+  "cellexia.form.skin_label": "Your skin concerns",
+  "cellexia.form.time_label": "How long have you used this product?",
+  "cellexia.form.results_label": "Results you've seen",
+  "cellexia.form.multi_hint": "Select all that apply",
+  "cellexia.form.optional": "(optional)",
+  "cellexia.form.submit": "Submit review",
+  "cellexia.form.submitting": "Submitting…",
+  "cellexia.form.cancel": "Cancel",
+  "cellexia.form.success_title": "Thank you for your review!",
+  "cellexia.form.success_pending": "Your review has been submitted and will appear once it has been approved.",
+  "cellexia.form.success_published": "Your review is now published.",
+  "cellexia.form.error_generic": "Something went wrong. Please try again.",
+  "cellexia.form.error_rating": "Please select a star rating.",
+  "cellexia.form.error_body": "Please write your review.",
+  "cellexia.form.error_name": "Please enter your name.",
+  "cellexia.form.error_email": "Please enter a valid email address.",
+  "cellexia.form.error_media_type": "This file type is not supported.",
+  "cellexia.form.error_media_size": "This file is too large.",
+  "cellexia.form.error_media_count": "Too many files selected.",
+  "cellexia.form.error_rate_limited": "Too many attempts. Please try again later.",
+  "cellexia.a11y.stars_label": "[[rating]] out of 5 stars",
+  "cellexia.a11y.rating_input": "Select a star rating",
+  "cellexia.a11y.open_gallery": "Open customer media gallery",
+  "cellexia.a11y.open_media": "View media from [[name]]",
+  "cellexia.a11y.prev": "Previous",
+  "cellexia.a11y.next": "Next",
+  "cellexia.a11y.close_dialog": "Close dialog",
+  "cellexia.a11y.filter_row": "Filter by [[stars]] star reviews",
+  "cellexia.a11y.list_updated": "Review list updated",
+  "cellexia.a11y.menu": "Review options",
+  "cellexia.a11y.page_loaded": "More reviews loaded"
+}</script>
+
+    <!--
+      Widget root — same element blocks/reviews.liquid renders on a product
+      page (§8), with data-demo="true" so the JS reads window.CellexiaDemoData
+      instead of fetching the app proxy. The inner containers mirror the
+      block's empty SSR containers; the JS fills them on hydrate.
+    -->
+    <div
+      id="cellexia-reviews"
+      class="cx"
+      data-product-id="8654321098765"
+      data-locale="en"
+      data-shop-default-locale="en"
+      data-proxy="/apps/cellexia/api"
+      data-per-page="10"
+      data-show-summary="true"
+      data-show-media-strip="true"
+      data-show-form="true"
+      data-show-translate="true"
+      data-brand="Cellexia"
+      data-demo="true"
+      data-cx-skin="amazon"
+    >
+      <!-- Mirrors the .cx-layout structure of blocks/reviews.liquid so the
+           desktop two-column layout previews identically to the storefront. -->
+      <div class="cx-layout">
+        <div class="cx-layout__rail">
+          <div class="cx-header" data-cx="header"></div>
+          <div class="cx-summary" data-cx="summary"></div>
+          <div class="cx-write" data-cx="write"></div>
+        </div>
+        <div class="cx-layout__main">
+          <div class="cx-strip" data-cx="media-strip" hidden></div>
+          <div class="cx-controls" data-cx="controls"></div>
+          <div class="cx-pills" data-cx="active-filters" hidden></div>
+          <div class="cx-list" data-cx="list"></div>
+          <div class="cx-pagination" data-cx="pagination"></div>
+        </div>
+      </div>
+      <noscript>
+        <p>JavaScript is required to display customer reviews in this demo preview.</p>
+      </noscript>
+    </div>
+  </main>
+
+  <!-- Mock dataset must be defined before the widget script runs. -->
+  <script src="mock-data.js"></script>
+  <!-- The REAL storefront widget script (theme app extension asset) -->
+  <script src="../extensions/cellexia-reviews/assets/cellexia-reviews.js"></script>
+
+  <script>
+    /* Demo-only: surface a readable hint when the real widget assets are
+       missing (e.g. incomplete checkout). No effect when everything loads. */
+    (function () {
+      "use strict";
+      window.addEventListener("load", function () {
+        window.setTimeout(function () {
+          if (!window.CellexiaReviews) {
+            var note = document.getElementById("demo-missing");
+            if (note) note.className += " is-visible";
+          }
+        }, 1500);
+      });
+    })();
+
+    /* Demo-only: design-version switcher (SPEC-1.1, SPEC-1.3). Toggles
+       data-cx-skin on the widget root — the same attribute
+       blocks/reviews.liquid renders from the `cellexia.design_theme` shop
+       metafield — and on any top-layer surface (dialog / sheet / lightbox /
+       filter panel) that is open at that moment, so all three skins are
+       previewable live. Default: amazon. */
+    (function () {
+      "use strict";
+      var buttons = document.querySelectorAll(".demo-skin__btn");
+      function applySkin(value) {
+        var skin = value === "cellexia" || value === "luxe" ? value : "amazon";
+        var root = document.getElementById("cellexia-reviews");
+        if (root) root.setAttribute("data-cx-skin", skin);
+        var surfaces = document.querySelectorAll(".cx-overlay, .cx-dialog");
+        Array.prototype.forEach.call(surfaces, function (node) {
+          node.setAttribute("data-cx-skin", skin);
+        });
+        Array.prototype.forEach.call(buttons, function (b) {
+          var active = b.getAttribute("data-skin") === skin;
+          b.setAttribute("aria-pressed", active ? "true" : "false");
+          b.classList.toggle("is-active", active);
+        });
+      }
+      Array.prototype.forEach.call(buttons, function (b) {
+        b.addEventListener("click", function () {
+          applySkin(b.getAttribute("data-skin"));
+        });
+      });
+    })();
+  </script>
+</body>
+</html>

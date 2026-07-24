@@ -1,0 +1,40 @@
+{
+  "cellexia": {
+    "reviews_block": {
+      "name": "Cellexia Recenzii",
+      "settings": {
+        "heading": {
+          "label": "Titlu",
+          "info": "Afișat în partea de sus a widgetului de recenzii. Traductibil în Translate & Adapt."
+        },
+        "show_summary": {
+          "label": "Afișează rezumatul IA și subiectele"
+        },
+        "show_media_strip": {
+          "label": "Afișează banda cu fotografiile clienților"
+        },
+        "show_form": {
+          "label": "Permite scrierea recenziilor"
+        },
+        "per_page": {
+          "label": "Recenzii pe pagină"
+        },
+        "accent_color": {
+          "label": "Culoarea stelelor",
+          "info": "Valoarea implicită corespunde portocaliului în stil Amazon."
+        }
+      }
+    },
+    "star_rating_block": {
+      "name": "Cellexia Insignă cu stele",
+      "settings": {
+        "show_count": {
+          "label": "Afișează numărul de evaluări"
+        }
+      }
+    },
+    "defaults": {
+      "heading": "Recenziile clienților"
+    }
+  }
+}

@@ -1,0 +1,40 @@
+{
+  "cellexia": {
+    "reviews_block": {
+      "name": "Cellexia Reviews",
+      "settings": {
+        "heading": {
+          "label": "Encabezado",
+          "info": "Se muestra en la parte superior del widget de opiniones. Traducible en Translate & Adapt."
+        },
+        "show_summary": {
+          "label": "Mostrar resumen de IA y temas"
+        },
+        "show_media_strip": {
+          "label": "Mostrar tira de fotos de clientes"
+        },
+        "show_form": {
+          "label": "Permitir escribir opiniones"
+        },
+        "per_page": {
+          "label": "Opiniones por página"
+        },
+        "accent_color": {
+          "label": "Color de las estrellas",
+          "info": "El valor predeterminado coincide con el naranja al estilo de Amazon."
+        }
+      }
+    },
+    "star_rating_block": {
+      "name": "Cellexia Star Badge",
+      "settings": {
+        "show_count": {
+          "label": "Mostrar número de valoraciones"
+        }
+      }
+    },
+    "defaults": {
+      "heading": "Opiniones de clientes"
+    }
+  }
+}

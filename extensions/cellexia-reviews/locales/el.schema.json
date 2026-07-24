@@ -1,0 +1,40 @@
+{
+  "cellexia": {
+    "reviews_block": {
+      "name": "Cellexia Αξιολογήσεις",
+      "settings": {
+        "heading": {
+          "label": "Επικεφαλίδα",
+          "info": "Εμφανίζεται στην κορυφή του widget αξιολογήσεων. Μεταφράζεται στο Translate & Adapt."
+        },
+        "show_summary": {
+          "label": "Εμφάνιση σύνοψης ΤΝ και θεμάτων"
+        },
+        "show_media_strip": {
+          "label": "Εμφάνιση λωρίδας φωτογραφιών πελατών"
+        },
+        "show_form": {
+          "label": "Να επιτρέπεται η συγγραφή αξιολογήσεων"
+        },
+        "per_page": {
+          "label": "Αξιολογήσεις ανά σελίδα"
+        },
+        "accent_color": {
+          "label": "Χρώμα αστεριών",
+          "info": "Η προεπιλογή αντιστοιχεί στο πορτοκαλί στυλ Amazon."
+        }
+      }
+    },
+    "star_rating_block": {
+      "name": "Cellexia Σήμα Αστεριών",
+      "settings": {
+        "show_count": {
+          "label": "Εμφάνιση αριθμού αξιολογήσεων"
+        }
+      }
+    },
+    "defaults": {
+      "heading": "Αξιολογήσεις πελατών"
+    }
+  }
+}

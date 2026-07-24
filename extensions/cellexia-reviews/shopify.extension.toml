@@ -1,0 +1,5 @@
+# Cellexia Reviews — theme app extension configuration.
+# Deployed with `npm run deploy` (shopify app deploy).
+
+name = "Cellexia Reviews"
+type = "theme"

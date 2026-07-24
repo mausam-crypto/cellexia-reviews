@@ -1,0 +1,40 @@
+{
+  "cellexia": {
+    "reviews_block": {
+      "name": "Cellexia Recensioni",
+      "settings": {
+        "heading": {
+          "label": "Titolo",
+          "info": "Mostrato nella parte superiore del widget delle recensioni. Traducibile in Translate & Adapt."
+        },
+        "show_summary": {
+          "label": "Mostra riepilogo IA e argomenti"
+        },
+        "show_media_strip": {
+          "label": "Mostra la striscia di foto dei clienti"
+        },
+        "show_form": {
+          "label": "Consenti la scrittura di recensioni"
+        },
+        "per_page": {
+          "label": "Recensioni per pagina"
+        },
+        "accent_color": {
+          "label": "Colore delle stelle",
+          "info": "Il valore predefinito corrisponde all'arancione in stile Amazon."
+        }
+      }
+    },
+    "star_rating_block": {
+      "name": "Cellexia Badge Stelle",
+      "settings": {
+        "show_count": {
+          "label": "Mostra il numero di valutazioni"
+        }
+      }
+    },
+    "defaults": {
+      "heading": "Recensioni dei clienti"
+    }
+  }
+}

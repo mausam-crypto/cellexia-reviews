@@ -1,0 +1,367 @@
+{% comment %}
+  Cellexia Reviews — main product reviews app block (Amazon-fidelity widget).
+
+  SSR paints instantly from the `cellexia` product metafields (rating, rating_count,
+  distribution, summary, top_reviews) so the header, AI summary and top reviews are
+  indexable with zero JS. assets/cellexia-reviews.js then hydrates live data from the
+  app proxy JSON API (/apps/cellexia-reviews/api) and fills the containers.
+
+  Container contract with the JS (section() lookup): every hydratable container
+  carries a value-style hook — data-cx="header|summary|media-strip|controls|
+  active-filters|list|pagination|write" — matching demo/index.html.
+
+  v1.2 live/preview gating (SPEC-1.2): the app syncs the merchant's go-live state
+  into the boolean SHOP metafield `cellexia.live`. An absent metafield counts as
+  live (upgrade-neutral for pre-1.2 installs). The theme editor (request.design_mode)
+  always renders the full widget so merchants can place/configure the block. When
+  the store is NOT live on the real storefront, only a minimal hidden shell is
+  rendered — the root div with all its data attributes plus data-cx-live="false"
+  and `hidden`, the cx-i18n dictionary, and the CSS/JS assets. No SSR content and
+  no JSON-LD. The JS un-hides the shell only for tokenized admin previews
+  (?cx_preview=…) and builds the missing containers itself.
+{% endcomment %}
+{%- if product -%}
+{{ 'cellexia-reviews.css' | asset_url | stylesheet_tag }}
+{%- liquid
+  comment
+    v1.2 (SPEC-1.2): app-synced `cellexia.live` SHOP metafield. Only an explicit
+    false means "not live" — absent/invalid values stay live so upgraded stores
+    never go dark. The theme editor always shows the full widget.
+  endcomment
+  assign cx_is_live = true
+  if shop.metafields.cellexia.live.value == false
+    assign cx_is_live = false
+  endif
+  assign cx_show_full = cx_is_live
+  if request.design_mode
+    assign cx_show_full = true
+  endif
+
+  assign cx_lang = request.locale.iso_code | split: '-' | first
+
+  assign cx_default_locale = 'en'
+  for cx_loc in shop.published_locales
+    if cx_loc.primary
+      assign cx_default_locale = cx_loc.iso_code
+    endif
+  endfor
+
+  assign cx_heading = block.settings.heading
+  if cx_heading == blank
+    assign cx_heading = 'cellexia.widget.title' | t
+  endif
+
+  assign cx_ns = product.metafields.cellexia
+
+  assign cx_has_stats = false
+  assign cx_rating = 0
+  assign cx_count = 0
+  if cx_ns.rating and cx_ns.rating_count
+    assign cx_rating = cx_ns.rating.value | times: 1.0
+    assign cx_count = cx_ns.rating_count.value | times: 1
+    if cx_count > 0
+      assign cx_has_stats = true
+    endif
+  endif
+
+  assign cx_dist = nil
+  if cx_ns.distribution
+    assign cx_dist = cx_ns.distribution.value
+  endif
+
+  assign cx_summary = nil
+  if cx_ns.summary
+    assign cx_summary = cx_ns.summary.value
+  endif
+  assign cx_has_summary = false
+  if cx_summary and cx_summary.text
+    assign cx_has_summary = true
+  endif
+  assign cx_topics_size = 0
+  if cx_summary
+    if cx_summary.topics
+      assign cx_topics_size = cx_summary.topics.size
+    endif
+  endif
+
+  assign cx_top = nil
+  assign cx_top_size = 0
+  if cx_ns.top_reviews
+    assign cx_top = cx_ns.top_reviews.value
+    if cx_top
+      assign cx_top_size = cx_top.size
+    endif
+  endif
+
+  assign cx_rating_str = cx_rating | round: 1 | append: ''
+  assign cx_count_str = cx_count | append: ''
+
+  comment
+    Settings the block cannot read from the app DB. The app may sync them into
+    `cellexia` shop metafields; until then: no data-brand attribute (the JS falls
+    back to the Setting default "Cellexia") and translate buttons default to on.
+    The JS also accepts both values from the list API response (applyServerSettings).
+  endcomment
+  assign cx_brand = shop.metafields.cellexia.brand_display_name.value
+  assign cx_show_translate = true
+  if shop.metafields.cellexia.show_translate.value == false
+    assign cx_show_translate = false
+  endif
+
+  comment
+    v1.1 design version (SPEC-1.1) + v1.3 "luxe" skin (SPEC-1.3): the app
+    syncs the merchant-selected skin into the `cellexia.design_theme` shop
+    metafield. The case/when guards unknown or missing values back to the
+    default "amazon" skin; the JS applies the same setting from the list API
+    ride-along (applyServerSettings).
+  endcomment
+  assign cx_skin = 'amazon'
+  case shop.metafields.cellexia.design_theme.value
+    when 'cellexia'
+      assign cx_skin = 'cellexia'
+    when 'luxe'
+      assign cx_skin = 'luxe'
+  endcase
+
+  assign cx_accent = block.settings.accent_color | append: '' | downcase
+  assign cx_style = ''
+-%}
+{%- if cx_accent != '' and cx_accent != blank and cx_accent != '#ffa41c' -%}
+  {%- capture cx_style -%}--cx-star: {{ block.settings.accent_color }}; --cx-star-stroke: {{ block.settings.accent_color | color_darken: 12 }}; --cx-bar: {{ block.settings.accent_color }};{%- endcapture -%}
+{%- endif -%}
+<div
+  id="cellexia-reviews"
+  class="cx"
+  {% if cx_lang == 'ar' %}dir="rtl"{% endif %}
+  {% if cx_style != '' %}style="{{ cx_style }}"{% endif %}
+  data-product-id="{{ product.id }}"
+  data-locale="{{ request.locale.iso_code }}"
+  data-shop-default-locale="{{ cx_default_locale }}"
+  data-proxy="/apps/cellexia-reviews/api"
+  data-per-page="{{ block.settings.per_page | default: 10 }}"
+  data-heading="{{ cx_heading | escape }}"
+  {% if cx_brand != blank %}data-brand="{{ cx_brand | escape }}"{% endif %}
+  data-show-summary="{{ block.settings.show_summary }}"
+  data-show-media-strip="{{ block.settings.show_media_strip }}"
+  data-show-form="{{ block.settings.show_form }}"
+  data-show-translate="{{ cx_show_translate }}"
+  data-demo="false"
+  data-cx-skin="{{ cx_skin }}"
+  data-cx-live="{{ cx_show_full }}"
+  {% unless cx_show_full %}hidden{% endunless %}
+>
+  {%- if cx_show_full -%}
+  <div class="cx-layout">
+    <div class="cx-layout__rail">
+      <section class="cx-header" data-cx="header">
+        <h2 class="cx-header__title">{{ cx_heading | escape }}</h2>
+        {%- if cx_has_stats -%}
+        <div class="cx-header__score">
+          {% render 'cx-stars', rating: cx_rating, size: 20 %}
+          <span class="cx-avg-text">{{ 'cellexia.widget.rating_out_of' | t: rating: cx_rating_str | replace: '[[rating]]', cx_rating_str }}</span>
+        </div>
+        <p class="cx-header__count">{{ 'cellexia.widget.global_ratings' | t: count: cx_count | replace: '[[count]]', cx_count_str }}</p>
+        {%- if cx_dist -%}
+        <div class="cx-dist">
+          {%- for cx_i in (1..5) reversed -%}
+          {%- liquid
+            assign cx_i_str = cx_i | append: ''
+            assign cx_row = cx_dist[cx_i_str]
+            assign cx_pct_val = 0
+            if cx_row
+              assign cx_pct_val = cx_row.percent | default: 0
+            endif
+            assign cx_pct_str = cx_pct_val | append: ''
+          -%}
+          <button
+            type="button"
+            class="cx-dist__row"
+            data-stars="{{ cx_i }}"
+            aria-pressed="false"
+            aria-label="{{ 'cellexia.a11y.filter_row' | t: stars: cx_i_str | replace: '[[stars]]', cx_i_str | escape }}"
+          >
+            <span class="cx-dist__label">{{ 'cellexia.widget.star_row' | t: count: cx_i | replace: '[[count]]', cx_i_str }}</span>
+            <span class="cx-dist__bar" aria-hidden="true"><span class="cx-dist__fill" style="inline-size:{{ cx_pct_val }}%"></span></span>
+            <span class="cx-dist__percent" aria-hidden="true">{{ 'cellexia.widget.percent' | t: percent: cx_pct_str | replace: '[[percent]]', cx_pct_str }}</span>
+          </button>
+          {%- endfor -%}
+        </div>
+        {%- endif -%}
+        {%- endif -%}
+        <details class="cx-how">
+          <summary class="cx-how__link">{{ 'cellexia.widget.how_link' | t }}</summary>
+          <div class="cx-how__panel" role="note"><p>{{ 'cellexia.widget.how_body' | t }}</p></div>
+        </details>
+      </section>
+
+      {%- if block.settings.show_summary -%}
+      <section class="cx-summary" data-cx="summary"{% unless cx_has_summary %} hidden{% endunless %}>
+        {%- if cx_has_summary -%}
+        <h3 class="cx-summary__title">{{ 'cellexia.widget.summary_title' | t }}</h3>
+        <p class="cx-summary__text">{{ cx_summary.text | escape }}</p>
+        <p class="cx-summary__disclaimer">{{ 'cellexia.widget.summary_disclaimer' | t }}</p>
+        {%- if cx_topics_size > 0 -%}
+        <p class="cx-chips__title" id="cx-chips-title">{{ 'cellexia.widget.chips_title' | t }}</p>
+        <ul class="cx-chips" role="list" aria-labelledby="cx-chips-title">
+          {%- for cx_topic in cx_summary.topics -%}
+          {%- assign cx_topic_neg = false -%}
+          {%- if cx_topic.sentiment == 'negative' or cx_topic.sentiment == 'mixed' -%}
+            {%- assign cx_topic_neg = true -%}
+          {%- endif -%}
+          <li class="cx-chips__item">
+            <button
+              type="button"
+              class="cx-chip{% if cx_topic_neg %} cx-chip--neg{% endif %}"
+              data-topic="{{ cx_topic.key | escape }}"
+              aria-pressed="false"
+            >
+              <span class="cx-chip__icon" aria-hidden="true">
+                {%- if cx_topic_neg -%}
+                <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true" focusable="false"><path d="M1.8 6.4c1.3-2 2.9-2 4.2 0s2.9 2 4.2 0" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>
+                {%- else -%}
+                <svg viewBox="0 0 12 12" width="12" height="12" aria-hidden="true" focusable="false"><path d="M3.2 8.8 8.8 3.2M4.4 3.2h4.4v4.4" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                {%- endif -%}
+              </span>
+              <span class="cx-chip__label">{{ cx_topic.label | escape }}</span>
+              {%- if cx_topic.count -%}<span class="cx-chip__count">({{ cx_topic.count }})</span>{%- endif -%}
+            </button>
+          </li>
+          {%- endfor -%}
+        </ul>
+        {%- endif -%}
+        {%- endif -%}
+      </section>
+      {%- endif -%}
+
+      {%- if block.settings.show_form -%}
+      <div class="cx-write" data-cx="write">
+        <button type="button" class="cx-btn cx-btn--write">{{ 'cellexia.widget.write_review' | t }}</button>
+      </div>
+      {%- endif -%}
+    </div>
+
+    <div class="cx-layout__main">
+      {%- if block.settings.show_media_strip -%}
+      <section class="cx-strip" data-cx="media-strip" hidden>
+        <h3 class="cx-strip__title">{{ 'cellexia.widget.media_strip_title' | t }}</h3>
+        <div class="cx-strip__list" tabindex="0" role="group" aria-label="{{ 'cellexia.widget.gallery_title' | t | escape }}"></div>
+      </section>
+      {%- endif -%}
+
+      <div class="cx-controls" data-cx="controls"></div>
+      <div class="cx-pills" data-cx="active-filters" hidden></div>
+
+      <div class="cx-list" data-cx="list" aria-live="polite">
+        {%- if cx_top_size > 0 -%}
+        {%- for cx_r in cx_top limit: 3 -%}
+        {%- liquid
+          assign cx_r_author = cx_r.author | default: ''
+          assign cx_r_initial = cx_r_author | strip | slice: 0 | upcase
+          assign cx_r_date_fmt = cx_r.date | date: '%B %d, %Y'
+        -%}
+        <article class="cx-card" data-cx-ssr>
+          <div class="cx-card__head">
+            <span class="cx-avatar" aria-hidden="true">{{ cx_r_initial | escape }}</span>
+            <span class="cx-card__author">{{ cx_r_author | escape }}</span>
+          </div>
+          <div class="cx-card__titleline">
+            {% render 'cx-stars', rating: cx_r.rating, size: 16 %}
+            {%- if cx_r.title != blank -%}<span class="cx-card__title">{{ cx_r.title | escape }}</span>{%- endif -%}
+          </div>
+          {%- if cx_r_date_fmt -%}
+          <p class="cx-card__meta">{{ 'cellexia.review.reviewed_on' | t: date: cx_r_date_fmt | replace: '[[date]]', cx_r_date_fmt }}</p>
+          {%- endif -%}
+          {%- if cx_r.verified -%}
+          <p class="cx-badge-verified">{{ 'cellexia.review.verified' | t }}</p>
+          {%- endif -%}
+          <div class="cx-card__body"><p>{{ cx_r.body | escape | newline_to_br }}</p></div>
+        </article>
+        {%- endfor -%}
+        {%- else -%}
+        <p class="cx-empty" data-cx-empty>{{ 'cellexia.widget.no_reviews' | t }}</p>
+        {%- endif -%}
+      </div>
+
+      <div class="cx-pagination" data-cx="pagination"></div>
+    </div>
+  </div>
+
+  <noscript>
+    <style>
+      #cellexia-reviews .cx-controls,
+      #cellexia-reviews .cx-strip,
+      #cellexia-reviews .cx-pagination,
+      #cellexia-reviews .cx-write,
+      #cellexia-reviews .cx-pills { display: none !important; }
+    </style>
+    {%- if cx_top_size > 0 -%}
+    {%- assign cx_to_str = cx_top_size | append: '' -%}
+    <p class="cx-noscript">{{ 'cellexia.widget.showing_count' | t: from: '1', to: cx_to_str, total: cx_count_str | replace: '[[from]]', '1' | replace: '[[to]]', cx_to_str | replace: '[[total]]', cx_count_str }}</p>
+    {%- endif -%}
+  </noscript>
+  {%- else -%}
+  {%- comment -%}
+    Not live, real storefront: minimal hidden shell. The i18n dictionary rides
+    inside the root; the JS builds every container itself when previewing.
+  {%- endcomment -%}
+  {% render 'cx-i18n' %}
+  {%- endif -%}
+</div>
+
+{% if cx_show_full %}
+{% render 'cx-i18n' %}
+{% render 'cx-jsonld', product: product %}
+{% endif %}
+<script src="{{ 'cellexia-reviews.js' | asset_url }}" defer></script>
+{%- endif -%}
+
+{% schema %}
+{
+  "name": "t:cellexia.reviews_block.name",
+  "target": "section",
+  "templates": ["product"],
+  "settings": [
+    {
+      "type": "text",
+      "id": "heading",
+      "label": "t:cellexia.reviews_block.settings.heading.label",
+      "info": "t:cellexia.reviews_block.settings.heading.info",
+      "default": "t:cellexia.defaults.heading"
+    },
+    {
+      "type": "checkbox",
+      "id": "show_summary",
+      "label": "t:cellexia.reviews_block.settings.show_summary.label",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "show_media_strip",
+      "label": "t:cellexia.reviews_block.settings.show_media_strip.label",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "show_form",
+      "label": "t:cellexia.reviews_block.settings.show_form.label",
+      "default": true
+    },
+    {
+      "type": "range",
+      "id": "per_page",
+      "label": "t:cellexia.reviews_block.settings.per_page.label",
+      "min": 5,
+      "max": 30,
+      "step": 1,
+      "default": 10
+    },
+    {
+      "type": "color",
+      "id": "accent_color",
+      "label": "t:cellexia.reviews_block.settings.accent_color.label",
+      "info": "t:cellexia.reviews_block.settings.accent_color.info",
+      "default": "#FFA41C"
+    }
+  ]
+}
+{% endschema %}

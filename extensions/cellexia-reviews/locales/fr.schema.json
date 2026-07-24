@@ -1,0 +1,40 @@
+{
+  "cellexia": {
+    "reviews_block": {
+      "name": "Avis Cellexia",
+      "settings": {
+        "heading": {
+          "label": "Titre",
+          "info": "Affiché en haut du widget d'avis. Traduisible dans Translate & Adapt."
+        },
+        "show_summary": {
+          "label": "Afficher le résumé IA et les thèmes"
+        },
+        "show_media_strip": {
+          "label": "Afficher le bandeau de photos clients"
+        },
+        "show_form": {
+          "label": "Autoriser la rédaction d'avis"
+        },
+        "per_page": {
+          "label": "Avis par page"
+        },
+        "accent_color": {
+          "label": "Couleur des étoiles",
+          "info": "La valeur par défaut correspond à l'orange de style Amazon."
+        }
+      }
+    },
+    "star_rating_block": {
+      "name": "Badge d'étoiles Cellexia",
+      "settings": {
+        "show_count": {
+          "label": "Afficher le nombre d'évaluations"
+        }
+      }
+    },
+    "defaults": {
+      "heading": "Avis clients"
+    }
+  }
+}

@@ -1,0 +1,73 @@
+{% comment %}
+  Cellexia Star Badge — small star + rating line for placement under the product title.
+  SSR-only from the `cellexia` product metafields; renders nothing when there are no
+  reviews yet. The count links to #cellexia-reviews (the main widget) with a
+  progressive-enhancement smooth scroll (plain anchor fallback, reduced motion respected).
+
+  v1.2 live/preview gating (SPEC-1.2): when the app-synced `cellexia.live` SHOP
+  metafield is explicitly false (and we are not in the theme editor), the badge
+  wrapper ships hidden with data-cx-live="false", plus one tiny inline script that
+  un-hides it when sessionStorage.cx_preview_token is set (tokenized admin preview).
+  SSR-only block: the aggregate numbers are non-sensitive, server-verified data
+  never flows here. Absent metafield counts as live (upgrade-neutral).
+{% endcomment %}
+{%- if product -%}
+{%- assign cx_b_rating_mf = product.metafields.cellexia.rating -%}
+{%- assign cx_b_count_mf = product.metafields.cellexia.rating_count -%}
+{%- if cx_b_rating_mf and cx_b_count_mf -%}
+{%- assign cx_b_rating = cx_b_rating_mf.value | times: 1.0 -%}
+{%- assign cx_b_count = cx_b_count_mf.value | times: 1 -%}
+{%- if cx_b_count > 0 and cx_b_rating > 0 -%}
+{{ 'cellexia-reviews.css' | asset_url | stylesheet_tag }}
+{%- assign cx_b_lang = request.locale.iso_code | split: '-' | first -%}
+{%- assign cx_b_count_str = cx_b_count | append: '' -%}
+{%- comment -%}
+  v1.1 design version (SPEC-1.1) + v1.3 "luxe" skin (SPEC-1.3): app-synced
+  `cellexia.design_theme` shop metafield; the case/when guards unknown or
+  missing values back to "amazon".
+{%- endcomment -%}
+{%- assign cx_b_skin = 'amazon' -%}
+{%- case shop.metafields.cellexia.design_theme.value -%}
+  {%- when 'cellexia' -%}
+    {%- assign cx_b_skin = 'cellexia' -%}
+  {%- when 'luxe' -%}
+    {%- assign cx_b_skin = 'luxe' -%}
+{%- endcase -%}
+{%- assign cx_b_show = true -%}
+{%- if shop.metafields.cellexia.live.value == false -%}
+  {%- unless request.design_mode -%}
+    {%- assign cx_b_show = false -%}
+  {%- endunless -%}
+{%- endif -%}
+<div class="cx cx-badge" data-cx-skin="{{ cx_b_skin }}"{% if cx_b_lang == 'ar' %} dir="rtl"{% endif %}{% unless cx_b_show %} data-cx-live="false" hidden{% endunless %}>
+  {% render 'cx-stars', rating: cx_b_rating, size: 16 %}
+  <span class="cx-badge__score">{{ cx_b_rating | round: 1 }}</span>
+  {%- if block.settings.show_count -%}
+  <a
+    class="cx-badge__link"
+    href="#cellexia-reviews"
+    onclick="var cxT=document.getElementById('cellexia-reviews');if(cxT){event.preventDefault();var cxM=window.matchMedia('(prefers-reduced-motion: reduce)').matches;cxT.scrollIntoView({behavior:cxM?'auto':'smooth'});}"
+  >{{ 'cellexia.widget.global_ratings' | t: count: cx_b_count | replace: '[[count]]', cx_b_count_str }}</a>
+  {%- endif -%}
+</div>
+{%- unless cx_b_show -%}
+<script>try{if(sessionStorage.cx_preview_token)document.currentScript.previousElementSibling.hidden=!1}catch(e){}</script>
+{%- endunless -%}
+{%- endif -%}
+{%- endif -%}
+{%- endif -%}
+
+{% schema %}
+{
+  "name": "t:cellexia.star_rating_block.name",
+  "target": "section",
+  "settings": [
+    {
+      "type": "checkbox",
+      "id": "show_count",
+      "label": "t:cellexia.star_rating_block.settings.show_count.label",
+      "default": true
+    }
+  ]
+}
+{% endschema %}

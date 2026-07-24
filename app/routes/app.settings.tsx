@@ -1,0 +1,691 @@
+import type { CSSProperties } from "react";
+import { useCallback, useState } from "react";
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
+import { json } from "@remix-run/node";
+import { useFetcher, useLoaderData } from "@remix-run/react";
+import {
+  Badge,
+  BlockStack,
+  Box,
+  Button,
+  Card,
+  Checkbox,
+  ChoiceList,
+  Divider,
+  FormLayout,
+  InlineStack,
+  Layout,
+  Page,
+  Select,
+  Text,
+  TextField,
+} from "@shopify/polaris";
+import { TitleBar } from "@shopify/app-bridge-react";
+
+import { authenticate } from "~/shopify.server";
+import prisma from "~/db.server";
+import type { DesignTheme } from "~/types/cellexia";
+import { DESIGN_THEMES } from "~/types/cellexia";
+import { getSettings, updateSettings } from "~/services/settings.server";
+import { syncShopSettingsMetafields } from "~/services/metafields.server";
+import { generateSummary } from "~/services/ai.server";
+import { syncProductData } from "~/components/admin/moderation.server";
+import { ConfirmationModal } from "~/components/admin/ConfirmationModal";
+import { useResultToast } from "~/components/admin/useResultToast";
+
+const AI_PROVIDERS = ["anthropic", "off"] as const;
+const AI_MODELS = ["claude-sonnet-5", "claude-haiku-4-5"] as const;
+const TRANSLATION_PROVIDERS = ["anthropic", "deepl", "google", "off"] as const;
+
+export const loader = async ({ request }: LoaderFunctionArgs) => {
+  const { session } = await authenticate.admin(request);
+  const settings = await getSettings(session.shop);
+
+  return json({
+    settings: {
+      isLive: settings.isLive,
+      brandDisplayName: settings.brandDisplayName,
+      autoPublish: settings.autoPublish,
+      notifyEmail: settings.notifyEmail ?? "",
+      aiProvider: settings.aiProvider,
+      aiModel: settings.aiModel,
+      summaryAutoThreshold: settings.summaryAutoThreshold,
+      translationProvider: settings.translationProvider,
+      showTranslate: settings.showTranslate,
+      showSummary: settings.showSummary,
+      showMediaStrip: settings.showMediaStrip,
+      emitJsonLd: settings.emitJsonLd,
+      reviewsPerPage: settings.reviewsPerPage,
+      designTheme: settings.designTheme,
+      hasAnthropicKey: Boolean(settings.anthropicApiKey),
+      hasDeeplKey: Boolean(settings.deeplApiKey),
+      hasGoogleKey: Boolean(settings.googleApiKey),
+    },
+  });
+};
+
+function clampInt(raw: string, fallback: number, min: number, max: number): number {
+  const parsed = Number.parseInt(raw, 10);
+  if (Number.isNaN(parsed)) return fallback;
+  return Math.min(max, Math.max(min, parsed));
+}
+
+export const action = async ({ request }: ActionFunctionArgs) => {
+  const { admin, session } = await authenticate.admin(request);
+  const shop = session.shop;
+  const form = await request.formData();
+  const intent = String(form.get("intent") ?? "");
+  const str = (key: string) => String(form.get(key) ?? "").trim();
+
+  try {
+    if (intent === "save") {
+      const aiProvider = str("aiProvider");
+      const aiModel = str("aiModel");
+      const translationProvider = str("translationProvider");
+      const designTheme = str("designTheme");
+
+      const patch: Record<string, unknown> = {
+        brandDisplayName: str("brandDisplayName") || "Cellexia",
+        autoPublish: form.get("autoPublish") === "true",
+        notifyEmail: str("notifyEmail") || null,
+        aiProvider: (AI_PROVIDERS as readonly string[]).includes(aiProvider)
+          ? aiProvider
+          : "anthropic",
+        aiModel: (AI_MODELS as readonly string[]).includes(aiModel)
+          ? aiModel
+          : "claude-sonnet-5",
+        summaryAutoThreshold: clampInt(str("summaryAutoThreshold"), 5, 1, 100),
+        translationProvider: (TRANSLATION_PROVIDERS as readonly string[]).includes(
+          translationProvider,
+        )
+          ? translationProvider
+          : "anthropic",
+        showTranslate: form.get("showTranslate") === "true",
+        showSummary: form.get("showSummary") === "true",
+        showMediaStrip: form.get("showMediaStrip") === "true",
+        emitJsonLd: form.get("emitJsonLd") === "true",
+        reviewsPerPage: clampInt(str("reviewsPerPage"), 10, 1, 50),
+        designTheme: (DESIGN_THEMES as readonly string[]).includes(designTheme)
+          ? designTheme
+          : "amazon",
+      };
+
+      // API keys: an empty field keeps the stored key.
+      const anthropicApiKey = str("anthropicApiKey");
+      if (anthropicApiKey) patch.anthropicApiKey = anthropicApiKey;
+      const deeplApiKey = str("deeplApiKey");
+      if (deeplApiKey) patch.deeplApiKey = deeplApiKey;
+      const googleApiKey = str("googleApiKey");
+      if (googleApiKey) patch.googleApiKey = googleApiKey;
+
+      const saved = await updateSettings(shop, patch as Parameters<typeof updateSettings>[1]);
+      // Mirror the storefront-relevant settings onto shop metafields so the
+      // theme extension (Liquid) can honor them without a DB round-trip. The
+      // full saved row is passed so isLive (cellexia.live) rides along too.
+      await syncShopSettingsMetafields(admin, saved);
+      return json({ ok: true, message: "Settings saved" });
+    }
+
+    if (intent === "regen-preview-token") {
+      // A fresh token invalidates every previously shared preview link. The
+      // storefront preview flow reads Setting.previewToken (SPEC-1.2).
+      const previewToken = crypto.randomUUID();
+      await prisma.setting.upsert({
+        where: { shop },
+        update: { previewToken },
+        create: { shop, previewToken },
+      });
+      return json({
+        ok: true,
+        message: "Preview link regenerated — old links no longer work.",
+      });
+    }
+
+    if (intent === "regenerate-all") {
+      const groups = await prisma.review.groupBy({
+        by: ["productId"],
+        where: { shop, status: "PUBLISHED" },
+      });
+      if (!groups.length) {
+        return json({ ok: false, message: "No published reviews to summarize yet" });
+      }
+      let generated = 0;
+      for (const group of groups) {
+        try {
+          const summary = await generateSummary(shop, group.productId, "en");
+          if (summary) {
+            await syncProductData(shop, group.productId, admin);
+            generated += 1;
+          }
+        } catch (error) {
+          console.error(`Summary generation failed for product ${group.productId}`, error);
+        }
+      }
+      if (!generated) {
+        return json({
+          ok: false,
+          message: "No summaries could be generated. Check the AI settings and API key.",
+        });
+      }
+      return json({
+        ok: true,
+        message: `AI summaries regenerated for ${generated} of ${groups.length} products`,
+      });
+    }
+
+    if (intent === "delete-all-data") {
+      // v1.2 (SPEC-1.2): the Setting row carries the go-live state and
+      // isLive defaults to false. Capture the current live state before the
+      // wipe — recreating the row from schema defaults would silently flip a
+      // live store to not-live (every proxy route answers 403 not_live, the
+      // widget hides) while the `cellexia.live` shop metafield still said true.
+      const prevIsLive = (await getSettings(shop)).isLive;
+      const reviewIds = (
+        await prisma.review.findMany({ where: { shop }, select: { id: true } })
+      ).map((r) => r.id);
+      if (reviewIds.length) {
+        await prisma.translationCache.deleteMany({ where: { reviewId: { in: reviewIds } } });
+      }
+      // ReviewMedia + Vote rows cascade with their reviews.
+      await prisma.review.deleteMany({ where: { shop } });
+      await prisma.summary.deleteMany({ where: { shop } });
+      await prisma.setting.deleteMany({ where: { shop } });
+      // Recreate the settings row (fresh defaults, new preview token minted
+      // lazily by getSettings) but keep the live state, then re-sync the shop
+      // metafields so the DB and `cellexia.live` agree after the wipe.
+      const fresh = await updateSettings(shop, { isLive: prevIsLive });
+      await syncShopSettingsMetafields(admin, fresh);
+      return json({
+        ok: true,
+        message: "All app data for this store has been deleted",
+      });
+    }
+
+    return json({ ok: false, message: "Unknown action" }, { status: 400 });
+  } catch (error) {
+    console.error("Settings action failed", error);
+    return json(
+      { ok: false, message: "Something went wrong. Please try again." },
+      { status: 500 },
+    );
+  }
+};
+
+/**
+ * Compact inline preview for a design version: star row, primary pill button
+ * and the verified-purchase treatment in that skin's storefront colors, so the
+ * merchant sees the difference at a glance. Pure inline-styled elements — the
+ * admin never loads the storefront CSS.
+ */
+function DesignPreviewSwatches({ theme }: { theme: DesignTheme }) {
+  const rowStyle: CSSProperties = {
+    display: "flex",
+    alignItems: "center",
+    flexWrap: "wrap",
+    gap: "10px",
+    marginTop: "4px",
+  };
+  const starsStyle: CSSProperties = {
+    color: theme === "amazon" ? "#FFA41C" : theme === "luxe" ? "#C8A24B" : "#1D1D1B",
+    fontSize: "14px",
+    letterSpacing: "1px",
+    lineHeight: 1,
+  };
+  const buttonStyle: CSSProperties =
+    theme === "amazon"
+      ? {
+          background: "#FFD814",
+          border: "1px solid #FCD200",
+          borderRadius: "100px",
+          color: "#0F1111",
+          fontSize: "12px",
+          lineHeight: 1,
+          padding: "6px 14px",
+        }
+      : theme === "luxe"
+        ? {
+            // Luxe primary button: charcoal soft rectangle, sentence case
+            // (SPEC-1.3 — radius 10px, NOT a pill).
+            background: "#211E1C",
+            border: "1px solid #211E1C",
+            borderRadius: "10px",
+            color: "#FFFFFF",
+            fontSize: "12px",
+            fontWeight: 600,
+            lineHeight: 1,
+            padding: "6px 14px",
+          }
+        : {
+            background: "#1D1D1B",
+            border: "1px solid #1D1D1B",
+            borderRadius: "999px",
+            color: "#FFFFFF",
+            fontSize: "11px",
+            fontWeight: 600,
+            letterSpacing: "1px",
+            lineHeight: 1,
+            padding: "6px 14px",
+            textTransform: "uppercase",
+          };
+  const verifiedStyle: CSSProperties =
+    theme === "amazon"
+      ? {
+          color: "#C45500",
+          fontSize: "12px",
+          fontWeight: 700,
+          lineHeight: 1,
+        }
+      : theme === "luxe"
+        ? {
+            // Luxe verified chip: filled champagne (SPEC-1.3).
+            background: "#F3EAD7",
+            borderRadius: "6px",
+            color: "#7A5F28",
+            fontSize: "11px",
+            fontWeight: 700,
+            letterSpacing: "0.06em",
+            lineHeight: 1,
+            padding: "2px 8px",
+            textTransform: "uppercase",
+          }
+        : {
+            background: "#B1CDED",
+            borderRadius: "999px",
+            color: "#1D1D1B",
+            fontSize: "11px",
+            fontWeight: 600,
+            letterSpacing: "0.06em",
+            lineHeight: 1,
+            padding: "2px 10px",
+            textTransform: "uppercase",
+          };
+  return (
+    <span style={rowStyle} aria-hidden="true">
+      <span style={starsStyle}>★★★★★</span>
+      <span style={buttonStyle}>Submit review</span>
+      <span style={verifiedStyle}>Verified Purchase</span>
+    </span>
+  );
+}
+
+export default function Settings() {
+  const { settings } = useLoaderData<typeof loader>();
+
+  const saveFetcher = useFetcher<typeof action>();
+  const regenFetcher = useFetcher<typeof action>();
+  const tokenFetcher = useFetcher<typeof action>();
+  const deleteFetcher = useFetcher<typeof action>();
+
+  const [deleteOpen, setDeleteOpen] = useState(false);
+
+  useResultToast(saveFetcher);
+  useResultToast(regenFetcher);
+  useResultToast(tokenFetcher);
+  useResultToast(deleteFetcher, () => setDeleteOpen(false));
+
+  const [form, setForm] = useState({
+    brandDisplayName: settings.brandDisplayName,
+    autoPublish: settings.autoPublish,
+    notifyEmail: settings.notifyEmail,
+    aiProvider: settings.aiProvider,
+    aiModel: settings.aiModel,
+    anthropicApiKey: "",
+    summaryAutoThreshold: String(settings.summaryAutoThreshold),
+    translationProvider: settings.translationProvider,
+    deeplApiKey: "",
+    googleApiKey: "",
+    showTranslate: settings.showTranslate,
+    showSummary: settings.showSummary,
+    showMediaStrip: settings.showMediaStrip,
+    emitJsonLd: settings.emitJsonLd,
+    reviewsPerPage: String(settings.reviewsPerPage),
+    designTheme: settings.designTheme,
+  });
+
+  const set = useCallback(
+    <K extends keyof typeof form>(key: K) =>
+      (value: (typeof form)[K]) =>
+        setForm((prev) => ({ ...prev, [key]: value })),
+    [],
+  );
+
+  const save = () => {
+    saveFetcher.submit(
+      {
+        intent: "save",
+        brandDisplayName: form.brandDisplayName,
+        autoPublish: String(form.autoPublish),
+        notifyEmail: form.notifyEmail,
+        aiProvider: form.aiProvider,
+        aiModel: form.aiModel,
+        anthropicApiKey: form.anthropicApiKey,
+        summaryAutoThreshold: form.summaryAutoThreshold,
+        translationProvider: form.translationProvider,
+        deeplApiKey: form.deeplApiKey,
+        googleApiKey: form.googleApiKey,
+        showTranslate: String(form.showTranslate),
+        showSummary: String(form.showSummary),
+        showMediaStrip: String(form.showMediaStrip),
+        emitJsonLd: String(form.emitJsonLd),
+        reviewsPerPage: form.reviewsPerPage,
+        designTheme: form.designTheme,
+      },
+      { method: "post" },
+    );
+  };
+
+  const saving = saveFetcher.state !== "idle";
+
+  return (
+    <Page
+      title="Settings"
+      primaryAction={{ content: "Save", onAction: save, loading: saving }}
+    >
+      <TitleBar title="Settings" />
+      <Layout>
+        <Layout.Section>
+          <BlockStack gap="400">
+            <Card>
+              <BlockStack gap="300">
+                <Text as="h2" variant="headingMd">
+                  General
+                </Text>
+                <BlockStack gap="150">
+                  <InlineStack gap="200" blockAlign="center" wrap>
+                    <Text as="span" fontWeight="medium">
+                      Storefront status
+                    </Text>
+                    {settings.isLive ? (
+                      <Badge tone="success">Live</Badge>
+                    ) : (
+                      <Badge tone="attention">Not live</Badge>
+                    )}
+                  </InlineStack>
+                  <InlineStack gap="200" blockAlign="center" wrap>
+                    <Text as="span" variant="bodySm" tone="subdued">
+                      {settings.isLive
+                        ? "Store visitors can see the review widget."
+                        : "The review widget is hidden from store visitors until you go live."}
+                    </Text>
+                    <Button url="/app" variant="plain">
+                      Preview & go live on the Dashboard
+                    </Button>
+                  </InlineStack>
+                </BlockStack>
+                <Divider />
+                <FormLayout>
+                  <TextField
+                    label="Brand display name"
+                    value={form.brandDisplayName}
+                    onChange={set("brandDisplayName")}
+                    autoComplete="off"
+                    helpText="Shown on storefront brand replies, e.g. “Response from Cellexia”."
+                  />
+                  <Checkbox
+                    label="Auto-publish new reviews"
+                    checked={form.autoPublish}
+                    onChange={set("autoPublish")}
+                    helpText="When off, new reviews wait in Pending until you approve them (recommended)."
+                  />
+                  <TextField
+                    label="Notification email"
+                    type="email"
+                    value={form.notifyEmail}
+                    onChange={set("notifyEmail")}
+                    autoComplete="email"
+                    helpText="Stored for a future notification feature — the app does not send email notifications yet. New reviews appear under “Needs attention” on the Dashboard."
+                  />
+                </FormLayout>
+              </BlockStack>
+            </Card>
+
+            <Card>
+              <BlockStack gap="300">
+                <Text as="h2" variant="headingMd">
+                  AI summary
+                </Text>
+                <FormLayout>
+                  <Select
+                    label="AI provider"
+                    options={[
+                      { label: "Anthropic (Claude)", value: "anthropic" },
+                      { label: "Off", value: "off" },
+                    ]}
+                    value={form.aiProvider}
+                    onChange={set("aiProvider")}
+                    helpText="Generates the “Customers say” summary and topic chips on your storefront."
+                  />
+                  <TextField
+                    label="Anthropic API key"
+                    type="password"
+                    value={form.anthropicApiKey}
+                    onChange={set("anthropicApiKey")}
+                    autoComplete="off"
+                    placeholder={settings.hasAnthropicKey ? "•••••••• (key saved)" : "sk-ant-…"}
+                    helpText="Leave blank to keep the saved key. Get a key at console.anthropic.com."
+                  />
+                  <Select
+                    label="Model"
+                    options={[
+                      { label: "Claude Sonnet 5 (recommended)", value: "claude-sonnet-5" },
+                      { label: "Claude Haiku 4.5 (faster, lower cost)", value: "claude-haiku-4-5" },
+                    ]}
+                    value={form.aiModel}
+                    onChange={set("aiModel")}
+                  />
+                  <TextField
+                    label="Auto-regenerate threshold"
+                    type="number"
+                    value={form.summaryAutoThreshold}
+                    onChange={set("summaryAutoThreshold")}
+                    autoComplete="off"
+                    min={1}
+                    max={100}
+                    helpText="Regenerate a product's summary after this many newly published reviews."
+                  />
+                  <InlineStack gap="200" blockAlign="center">
+                    <Button
+                      loading={regenFetcher.state !== "idle"}
+                      onClick={() =>
+                        regenFetcher.submit({ intent: "regenerate-all" }, { method: "post" })
+                      }
+                    >
+                      Regenerate all now
+                    </Button>
+                    <Text as="span" variant="bodySm" tone="subdued">
+                      Regenerates the AI summary for every product with published reviews.
+                    </Text>
+                  </InlineStack>
+                </FormLayout>
+              </BlockStack>
+            </Card>
+
+            <Card>
+              <BlockStack gap="300">
+                <Text as="h2" variant="headingMd">
+                  Translation
+                </Text>
+                <FormLayout>
+                  <Select
+                    label="Translation provider"
+                    options={[
+                      { label: "Anthropic (Claude)", value: "anthropic" },
+                      { label: "DeepL", value: "deepl" },
+                      { label: "Google Cloud Translation", value: "google" },
+                      { label: "Off", value: "off" },
+                    ]}
+                    value={form.translationProvider}
+                    onChange={set("translationProvider")}
+                    helpText="Translates customer reviews on demand. Anthropic reuses the API key above."
+                  />
+                  <TextField
+                    label="DeepL API key"
+                    type="password"
+                    value={form.deeplApiKey}
+                    onChange={set("deeplApiKey")}
+                    autoComplete="off"
+                    placeholder={settings.hasDeeplKey ? "•••••••• (key saved)" : ""}
+                    helpText="Leave blank to keep the saved key."
+                  />
+                  <TextField
+                    label="Google API key"
+                    type="password"
+                    value={form.googleApiKey}
+                    onChange={set("googleApiKey")}
+                    autoComplete="off"
+                    placeholder={settings.hasGoogleKey ? "•••••••• (key saved)" : ""}
+                    helpText="Leave blank to keep the saved key."
+                  />
+                  <Checkbox
+                    label="Show “Translate” buttons on the storefront"
+                    checked={form.showTranslate}
+                    onChange={set("showTranslate")}
+                  />
+                </FormLayout>
+              </BlockStack>
+            </Card>
+
+            <Card>
+              <BlockStack gap="300">
+                <Text as="h2" variant="headingMd">
+                  Design
+                </Text>
+                <ChoiceList
+                  title="Design version"
+                  titleHidden
+                  choices={[
+                    {
+                      value: "amazon",
+                      label:
+                        "Amazon like — the battle-tested review layout shoppers know from Amazon",
+                      helpText: <DesignPreviewSwatches theme="amazon" />,
+                    },
+                    {
+                      value: "cellexia",
+                      label:
+                        "Cellexia — same trusted layout, styled to match cellexialabs.com (ink & periwinkle, Gobold headings, pill buttons)",
+                      helpText: <DesignPreviewSwatches theme="cellexia" />,
+                    },
+                    {
+                      value: "luxe",
+                      label: "Luxe — premium skincare",
+                      helpText: (
+                        <>
+                          The same trusted layout with the warmth of a premium skincare brand:
+                          porcelain neutrals, champagne-gold stars, refined serif headings, soft
+                          edges.
+                          <DesignPreviewSwatches theme="luxe" />
+                        </>
+                      ),
+                    },
+                  ]}
+                  selected={[form.designTheme]}
+                  onChange={(selected) => set("designTheme")(selected[0] ?? "amazon")}
+                />
+                <Text as="p" variant="bodySm" tone="subdued">
+                  Applies storefront-wide. Changes take effect within a minute (metafield sync).
+                </Text>
+              </BlockStack>
+            </Card>
+
+            <Card>
+              <BlockStack gap="300">
+                <Text as="h2" variant="headingMd">
+                  Display
+                </Text>
+                <FormLayout>
+                  <TextField
+                    label="Reviews per page"
+                    type="number"
+                    value={form.reviewsPerPage}
+                    onChange={set("reviewsPerPage")}
+                    autoComplete="off"
+                    min={1}
+                    max={50}
+                    helpText="Default page size for the storefront widget (1–50)."
+                  />
+                  <Checkbox
+                    label="Show the “Reviews with images” media strip"
+                    checked={form.showMediaStrip}
+                    onChange={set("showMediaStrip")}
+                  />
+                  <Checkbox
+                    label="Show the AI “Customers say” summary section"
+                    checked={form.showSummary}
+                    onChange={set("showSummary")}
+                  />
+                  <Checkbox
+                    label="Emit JSON-LD structured data (Google star rich snippets)"
+                    checked={form.emitJsonLd}
+                    onChange={set("emitJsonLd")}
+                  />
+                </FormLayout>
+              </BlockStack>
+            </Card>
+
+            <Card>
+              <BlockStack gap="300">
+                <Text as="h2" variant="headingMd">
+                  Data
+                </Text>
+                <InlineStack gap="200" blockAlign="center" wrap>
+                  <Button url="/app/import-export">Export reviews CSV</Button>
+                  <Text as="span" variant="bodySm" tone="subdued">
+                    Download every review as a CSV from the Import / Export page.
+                  </Text>
+                </InlineStack>
+                <InlineStack gap="200" blockAlign="center" wrap>
+                  <Button
+                    loading={tokenFetcher.state !== "idle"}
+                    onClick={() =>
+                      tokenFetcher.submit({ intent: "regen-preview-token" }, { method: "post" })
+                    }
+                  >
+                    Regenerate preview link
+                  </Button>
+                  <Text as="span" variant="bodySm" tone="subdued">
+                    Creates a new storefront preview URL — previously shared preview links stop
+                    working.
+                  </Text>
+                </InlineStack>
+                <Divider />
+                <BlockStack gap="200">
+                  <Text as="h3" variant="headingSm" tone="critical">
+                    Danger zone
+                  </Text>
+                  <InlineStack gap="200" blockAlign="center" wrap>
+                    <Button tone="critical" onClick={() => setDeleteOpen(true)}>
+                      Delete all app data
+                    </Button>
+                    <Text as="span" variant="bodySm" tone="subdued">
+                      Permanently removes every review, vote, summary, translation and this
+                      settings record for the store.
+                    </Text>
+                  </InlineStack>
+                </BlockStack>
+              </BlockStack>
+            </Card>
+
+            <Box paddingBlockEnd="400">
+              <InlineStack align="end">
+                <Button variant="primary" onClick={save} loading={saving}>
+                  Save
+                </Button>
+              </InlineStack>
+            </Box>
+          </BlockStack>
+        </Layout.Section>
+      </Layout>
+
+      <ConfirmationModal
+        open={deleteOpen}
+        title="Delete all app data?"
+        message="This permanently deletes every review, media reference, vote, AI summary, cached translation and the app settings for this store. Product metafields are not cleared automatically. This cannot be undone."
+        confirmLabel="Delete all data"
+        loading={deleteFetcher.state !== "idle"}
+        onConfirm={() => deleteFetcher.submit({ intent: "delete-all-data" }, { method: "post" })}
+        onCancel={() => setDeleteOpen(false)}
+      />
+    </Page>
+  );
+}

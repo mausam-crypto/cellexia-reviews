@@ -1,0 +1,140 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Session {
+  id            String    @id
+  shop          String
+  state         String
+  isOnline      Boolean   @default(false)
+  scope         String?
+  expires       DateTime?
+  accessToken   String
+  userId        BigInt?
+  firstName     String?
+  lastName      String?
+  email         String?
+  accountOwner  Boolean   @default(false)
+  locale        String?
+  collaborator  Boolean?  @default(false)
+  emailVerified Boolean?  @default(false)
+}
+
+model Review {
+  id           String        @id @default(cuid())
+  shop         String
+  productId    String        // numeric Shopify product id as string, e.g. "8654321098765"
+  productTitle String?
+  productHandle String?
+  rating       Int           // 1..5
+  title        String?
+  body         String
+  language     String        @default("en") // ISO 639-1 (+region for pt-PT)
+  authorName   String
+  authorEmail  String?
+  customerId   String?
+  country      String?       // ISO 3166-1 alpha-2, optional
+  variantTitle String?
+  verified     Boolean       @default(false)
+  status       String        @default("PENDING") // PENDING | PUBLISHED | REJECTED | SPAM
+  ageRange     String?       // AGE_RANGES key
+  skinConcerns String        @default("[]") // JSON array of SKIN_CONCERNS keys
+  timeUsing    String?       // TIME_USING key
+  resultsSeen  String        @default("[]") // JSON array of RESULTS_SEEN keys
+  helpfulCount Int           @default(0)
+  reportCount  Int           @default(0)
+  reply        String?
+  replyAt      DateTime?
+  ipHash       String?
+  isSynthetic  Boolean       @default(false) // v1.4 QA generator flag — admin-only, never serialized to the storefront
+  source       String?       // "storefront" | "csv-import" | "bulk-add" | "synthetic" (null = pre-1.4 rows)
+  syntheticBatchId     String?   // groups one QA-generator run; null for non-synthetic rows
+  syntheticGeneratedAt DateTime? // when the QA generator created the row (createdAt holds the backdated review date)
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  media        ReviewMedia[]
+  votes        Vote[]
+
+  @@index([shop, productId, status])
+  @@index([shop, status])
+  @@index([shop, createdAt])
+  @@index([shop, isSynthetic])
+}
+
+model ReviewMedia {
+  id        String  @id @default(cuid())
+  review    Review  @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  reviewId  String
+  type      String  // IMAGE | VIDEO
+  fileGid   String? // Shopify File GID
+  url       String? // resolved CDN URL (nullable until Shopify finishes processing)
+  thumbUrl  String?
+  position  Int     @default(0)
+
+  @@index([reviewId])
+}
+
+model Vote {
+  id           String   @id @default(cuid())
+  review       Review   @relation(fields: [reviewId], references: [id], onDelete: Cascade)
+  reviewId     String
+  visitorToken String
+  type         String   // HELPFUL | REPORT
+  reason       String?  // REPORT_REASONS key
+  createdAt    DateTime @default(now())
+
+  @@unique([reviewId, visitorToken, type])
+}
+
+model Summary {
+  id          String   @id @default(cuid())
+  shop        String
+  productId   String
+  locale      String
+  text        String
+  topics      String   @default("[]") // JSON: TopicJSON[] (see §6)
+  reviewCount Int      @default(0)
+  model       String?
+  updatedAt   DateTime @updatedAt
+
+  @@unique([shop, productId, locale])
+}
+
+model TranslationCache {
+  id        String   @id @default(cuid())
+  reviewId  String
+  target    String
+  title     String?
+  body      String?
+  reply     String?
+  createdAt DateTime @default(now())
+
+  @@unique([reviewId, target])
+}
+
+model Setting {
+  shop                 String  @id
+  autoPublish          Boolean @default(false)
+  brandDisplayName     String  @default("Cellexia")
+  notifyEmail          String?
+  aiProvider           String  @default("anthropic") // anthropic | off
+  anthropicApiKey      String?
+  aiModel              String  @default("claude-sonnet-5")
+  translationProvider  String  @default("anthropic") // anthropic | deepl | google | off
+  deeplApiKey          String?
+  googleApiKey         String?
+  showTranslate        Boolean @default(true)
+  showSummary          Boolean @default(true)
+  showMediaStrip       Boolean @default(true)
+  emitJsonLd           Boolean @default(true)
+  reviewsPerPage       Int     @default(10)
+  summaryAutoThreshold Int     @default(5) // regenerate after N new published reviews
+  designTheme          String  @default("amazon") // amazon | cellexia
+  isLive               Boolean @default(false) // storefront visibility gate; new installs start NOT live
+  previewToken         String? // tokenized live-theme preview; lazily generated in getSettings
+}

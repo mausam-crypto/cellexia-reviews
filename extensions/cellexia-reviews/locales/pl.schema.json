@@ -1,0 +1,40 @@
+{
+  "cellexia": {
+    "reviews_block": {
+      "name": "Cellexia Opinie",
+      "settings": {
+        "heading": {
+          "label": "Nagłówek",
+          "info": "Wyświetlany u góry widżetu opinii. Można przetłumaczyć w Translate & Adapt."
+        },
+        "show_summary": {
+          "label": "Pokaż podsumowanie AI i tematy"
+        },
+        "show_media_strip": {
+          "label": "Pokaż pasek zdjęć klientów"
+        },
+        "show_form": {
+          "label": "Zezwól na pisanie opinii"
+        },
+        "per_page": {
+          "label": "Liczba opinii na stronę"
+        },
+        "accent_color": {
+          "label": "Kolor gwiazdek",
+          "info": "Domyślnie odpowiada pomarańczowemu w stylu Amazon."
+        }
+      }
+    },
+    "star_rating_block": {
+      "name": "Cellexia Odznaka gwiazdkowa",
+      "settings": {
+        "show_count": {
+          "label": "Pokaż liczbę ocen"
+        }
+      }
+    },
+    "defaults": {
+      "heading": "Opinie klientów"
+    }
+  }
+}

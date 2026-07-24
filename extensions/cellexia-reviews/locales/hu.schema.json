@@ -1,0 +1,40 @@
+{
+  "cellexia": {
+    "reviews_block": {
+      "name": "Cellexia értékelések",
+      "settings": {
+        "heading": {
+          "label": "Címsor",
+          "info": "Az értékelési modul tetején jelenik meg. A Translate & Adapt alkalmazásban fordítható."
+        },
+        "show_summary": {
+          "label": "AI-összefoglaló és témák megjelenítése"
+        },
+        "show_media_strip": {
+          "label": "Vásárlói fotósáv megjelenítése"
+        },
+        "show_form": {
+          "label": "Értékelés írásának engedélyezése"
+        },
+        "per_page": {
+          "label": "Értékelések száma oldalanként"
+        },
+        "accent_color": {
+          "label": "Csillagok színe",
+          "info": "Az alapértelmezett az Amazon-stílusú narancssárgához igazodik."
+        }
+      }
+    },
+    "star_rating_block": {
+      "name": "Cellexia csillagjelvény",
+      "settings": {
+        "show_count": {
+          "label": "Értékelések számának megjelenítése"
+        }
+      }
+    },
+    "defaults": {
+      "heading": "Vásárlói értékelések"
+    }
+  }
+}

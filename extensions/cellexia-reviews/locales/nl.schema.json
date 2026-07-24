@@ -1,0 +1,40 @@
+{
+  "cellexia": {
+    "reviews_block": {
+      "name": "Cellexia Reviews",
+      "settings": {
+        "heading": {
+          "label": "Kop",
+          "info": "Wordt bovenaan de beoordelingswidget getoond. Vertaalbaar in Translate & Adapt."
+        },
+        "show_summary": {
+          "label": "AI-samenvatting en onderwerpen tonen"
+        },
+        "show_media_strip": {
+          "label": "Fotostrook van klanten tonen"
+        },
+        "show_form": {
+          "label": "Schrijven van beoordelingen toestaan"
+        },
+        "per_page": {
+          "label": "Beoordelingen per pagina"
+        },
+        "accent_color": {
+          "label": "Sterkleur",
+          "info": "Standaard komt overeen met het oranje in Amazon-stijl."
+        }
+      }
+    },
+    "star_rating_block": {
+      "name": "Cellexia Star Badge",
+      "settings": {
+        "show_count": {
+          "label": "Aantal beoordelingen tonen"
+        }
+      }
+    },
+    "defaults": {
+      "heading": "Klantbeoordelingen"
+    }
+  }
+}

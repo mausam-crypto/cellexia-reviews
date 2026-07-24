@@ -1,0 +1,30 @@
+# Dependencies
+node_modules
+
+# Build output
+/.cache
+/build
+/dist
+/public/build
+
+# Environment — commit only the example file
+.env
+.env.*
+!.env.example
+
+# SQLite databases (created by prisma migrate / at runtime)
+*.sqlite
+*.sqlite-journal
+/prisma/dev.sqlite
+/prisma/dev.sqlite-journal
+
+# Shopify CLI state + the linked app config (contains your client_id —
+# regenerate it any time with `npm run config:link`)
+.shopify
+shopify.app.toml
+
+# Editors / OS
+.DS_Store
+.vscode
+.idea
+*.log

@@ -1,0 +1,414 @@
+/**
+ * Cellexia Reviews — review translation service.
+ *
+ * Translates reviews (title, body, brand reply) into a target SHOP_LOCALES
+ * locale using the provider configured in settings. Storefront callers get
+ * PUBLISHED reviews only (the default); the authenticated admin moderation
+ * preview (SPEC §11) passes `includeUnpublished: true` to translate reviews
+ * in any status. Providers:
+ *   - anthropic : reuses the Claude API key from the AI settings
+ *   - deepl     : api-free.deepl.com for ":fx"-suffixed keys, api.deepl.com
+ *                 otherwise, with a one-shot fallback to the other host on
+ *                 auth errors
+ *   - google    : Cloud Translation v2 (translation.googleapis.com)
+ *   - off       : cache-only
+ *
+ * Results are cached per (reviewId, target) in TranslationCache and served
+ * from cache first. Missing API keys, provider failures and unknown ids all
+ * degrade gracefully — the function returns whatever it could translate and
+ * never throws to the route.
+ */
+import type { Review } from "@prisma/client";
+import prisma from "~/db.server";
+import { SHOP_LOCALES } from "~/types/cellexia";
+import { callClaude, extractJson } from "./ai.server";
+import { getSettings } from "./settings.server";
+
+/** Per-review translation payload returned to the proxy route (§6). */
+export interface ReviewTranslation {
+  title?: string | null;
+  body: string;
+  reply?: string | null;
+}
+
+const MAX_IDS = 20;
+
+/** Options for translateReviews. */
+export interface TranslateReviewsOptions {
+  /**
+   * When true, non-PUBLISHED (PENDING/REJECTED/SPAM) reviews are translated
+   * too. Only the authenticated admin translation preview (app.reviews.$id)
+   * may set this — storefront proxy callers MUST keep the default
+   * published-only behaviour so unpublished content never leaks (§6).
+   */
+  includeUnpublished?: boolean;
+}
+
+export async function translateReviews(
+  shop: string,
+  ids: string[],
+  target: string,
+  options: TranslateReviewsOptions = {},
+): Promise<Record<string, ReviewTranslation>> {
+  const result: Record<string, ReviewTranslation> = {};
+  if (!Array.isArray(ids) || ids.length === 0) return result;
+  if (!(SHOP_LOCALES as readonly string[]).includes(target)) return result;
+
+  const uniqueIds = [...new Set(ids.filter((id) => typeof id === "string" && id))].slice(
+    0,
+    MAX_IDS,
+  );
+  if (uniqueIds.length === 0) return result;
+
+  const reviews = await prisma.review.findMany({
+    where: {
+      id: { in: uniqueIds },
+      shop,
+      ...(options.includeUnpublished ? {} : { status: "PUBLISHED" }),
+    },
+  });
+  if (reviews.length === 0) return result;
+
+  // Reviews already written in the target language pass through unchanged.
+  const toTranslate: Review[] = [];
+  for (const review of reviews) {
+    if (review.language === target) {
+      result[review.id] = { title: review.title, body: review.body, reply: review.reply };
+    } else {
+      toTranslate.push(review);
+    }
+  }
+  if (toTranslate.length === 0) return result;
+
+  // Cache first.
+  const cached = await prisma.translationCache.findMany({
+    where: { target, reviewId: { in: toTranslate.map((r) => r.id) } },
+  });
+  const cachedByReview = new Map(cached.map((c) => [c.reviewId, c]));
+  const missing: Review[] = [];
+  for (const review of toTranslate) {
+    const hit = cachedByReview.get(review.id);
+    if (hit && hit.body) {
+      result[review.id] = { title: hit.title, body: hit.body, reply: hit.reply };
+    } else {
+      missing.push(review);
+    }
+  }
+  if (missing.length === 0) return result;
+
+  const settings = await getSettings(shop);
+  let translated: Record<string, ReviewTranslation> = {};
+  try {
+    switch (settings.translationProvider) {
+      case "anthropic":
+        translated = await translateWithAnthropic(
+          settings.anthropicApiKey,
+          settings.aiModel,
+          missing,
+          target,
+        );
+        break;
+      case "deepl":
+        translated = await translateWithDeepl(settings.deeplApiKey, missing, target);
+        break;
+      case "google":
+        translated = await translateWithGoogle(settings.googleApiKey, missing, target);
+        break;
+      default:
+        translated = {}; // provider "off" — cache-only
+    }
+  } catch (error) {
+    console.error("[cellexia] translation provider failed", error);
+    translated = {};
+  }
+
+  for (const [reviewId, translation] of Object.entries(translated)) {
+    if (!translation || !translation.body) continue;
+    result[reviewId] = translation;
+    try {
+      await prisma.translationCache.upsert({
+        where: { reviewId_target: { reviewId, target } },
+        update: {
+          title: translation.title ?? null,
+          body: translation.body,
+          reply: translation.reply ?? null,
+        },
+        create: {
+          reviewId,
+          target,
+          title: translation.title ?? null,
+          body: translation.body,
+          reply: translation.reply ?? null,
+        },
+      });
+    } catch (error) {
+      console.error("[cellexia] translation cache write failed", error);
+    }
+  }
+
+  return result;
+}
+
+/* ------------------------------------------------------------------------- *
+ * Provider: Anthropic (Claude)
+ * ------------------------------------------------------------------------- */
+
+const TRANSLATE_SYSTEM_PROMPT = `You are a professional translator for a premium skincare brand's customer reviews.
+
+You receive a target locale and a JSON array of reviews: [{ "id": string, "title": string|null, "body": string, "reply": string|null }].
+
+Respond with a single JSON object and NOTHING else:
+{ "translations": { "<id>": { "title": string|null, "body": string, "reply": string|null } } }
+
+Rules: translate "title", "body" and "reply" into the target locale, preserving each reviewer's tone and meaning. Keep null values null. Do not add, remove or reorder reviews, and do not add commentary.`;
+
+async function translateWithAnthropic(
+  apiKey: string | null,
+  model: string,
+  reviews: Review[],
+  target: string,
+): Promise<Record<string, ReviewTranslation>> {
+  const out: Record<string, ReviewTranslation> = {};
+  if (!apiKey) return out;
+
+  for (const batch of chunkReviews(reviews, 5, 12000)) {
+    const payload = batch.map((review) => ({
+      id: review.id,
+      title: review.title,
+      body: review.body.slice(0, 5000),
+      reply: review.reply,
+    }));
+    const raw = await callClaude(
+      apiKey,
+      model,
+      TRANSLATE_SYSTEM_PROMPT,
+      `Target locale: "${target}"\n\nReviews:\n${JSON.stringify(payload)}`,
+      6000,
+    );
+    if (!raw) continue;
+
+    const parsed = extractJson(raw) as { translations?: unknown } | null;
+    const translations =
+      parsed && typeof parsed === "object" && parsed.translations && typeof parsed.translations === "object"
+        ? (parsed.translations as Record<string, unknown>)
+        : null;
+    if (!translations) continue;
+
+    for (const review of batch) {
+      const entry = translations[review.id];
+      if (!entry || typeof entry !== "object") continue;
+      const t = entry as Record<string, unknown>;
+      const body = typeof t.body === "string" && t.body.trim() ? t.body.trim() : null;
+      if (!body) continue;
+      out[review.id] = {
+        title: typeof t.title === "string" && t.title.trim() ? t.title.trim() : null,
+        body,
+        reply: typeof t.reply === "string" && t.reply.trim() ? t.reply.trim() : null,
+      };
+    }
+  }
+  return out;
+}
+
+/* ------------------------------------------------------------------------- *
+ * Provider: DeepL
+ * ------------------------------------------------------------------------- */
+
+function deeplTarget(locale: string): string {
+  const map: Record<string, string> = { en: "EN-US", "pt-PT": "PT-PT", nb: "NB" };
+  return map[locale] ?? locale.toUpperCase();
+}
+
+async function translateWithDeepl(
+  apiKey: string | null,
+  reviews: Review[],
+  target: string,
+): Promise<Record<string, ReviewTranslation>> {
+  if (!apiKey) return {};
+  const segments = collectSegments(reviews);
+  const translatedTexts: (string | null)[] = new Array(segments.length).fill(null);
+
+  // DeepL accepts up to 50 text params per request — chunk conservatively.
+  for (let offset = 0; offset < segments.length; offset += 45) {
+    const chunk = segments.slice(offset, offset + 45);
+    const texts = await deeplRequest(
+      apiKey,
+      chunk.map((segment) => segment.text),
+      deeplTarget(target),
+    );
+    if (!texts) continue;
+    for (let i = 0; i < chunk.length; i += 1) {
+      translatedTexts[offset + i] = texts[i] ?? null;
+    }
+  }
+
+  return assembleFromSegments(reviews, segments, translatedTexts);
+}
+
+async function deeplRequest(
+  apiKey: string,
+  texts: string[],
+  targetLang: string,
+): Promise<string[] | null> {
+  const key = apiKey.trim();
+  // Free-tier keys end with ":fx" and live on api-free.deepl.com; keep the
+  // other host as a fallback in case the key type was misdetected.
+  const hosts = key.endsWith(":fx")
+    ? ["https://api-free.deepl.com", "https://api.deepl.com"]
+    : ["https://api.deepl.com", "https://api-free.deepl.com"];
+
+  for (const host of hosts) {
+    try {
+      const body = new URLSearchParams();
+      for (const text of texts) body.append("text", text);
+      body.set("target_lang", targetLang);
+
+      const response = await fetch(`${host}/v2/translate`, {
+        method: "POST",
+        headers: {
+          Authorization: `DeepL-Auth-Key ${key}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body,
+      });
+
+      if (response.status === 401 || response.status === 403) {
+        continue; // wrong host for this key type — try the other one
+      }
+      if (!response.ok) {
+        console.error(`[cellexia] DeepL error ${response.status} at ${host}`);
+        return null;
+      }
+
+      const json = (await response.json()) as {
+        translations?: Array<{ text?: string }>;
+      };
+      const translations = json.translations;
+      if (!Array.isArray(translations) || translations.length !== texts.length) return null;
+      return translations.map((t) => String(t?.text ?? ""));
+    } catch (error) {
+      console.error(`[cellexia] DeepL request failed at ${host}`, error);
+    }
+  }
+  return null;
+}
+
+/* ------------------------------------------------------------------------- *
+ * Provider: Google Cloud Translation v2
+ * ------------------------------------------------------------------------- */
+
+function googleTarget(locale: string): string {
+  const map: Record<string, string> = { "pt-PT": "pt", nb: "no" };
+  return map[locale] ?? locale;
+}
+
+async function translateWithGoogle(
+  apiKey: string | null,
+  reviews: Review[],
+  target: string,
+): Promise<Record<string, ReviewTranslation>> {
+  if (!apiKey) return {};
+  const segments = collectSegments(reviews);
+  const translatedTexts: (string | null)[] = new Array(segments.length).fill(null);
+
+  for (let offset = 0; offset < segments.length; offset += 100) {
+    const chunk = segments.slice(offset, offset + 100);
+    try {
+      const response = await fetch(
+        `https://translation.googleapis.com/language/translate/v2?key=${encodeURIComponent(apiKey.trim())}`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            q: chunk.map((segment) => segment.text),
+            target: googleTarget(target),
+            format: "text",
+          }),
+        },
+      );
+      if (!response.ok) {
+        console.error(`[cellexia] Google Translate error ${response.status}`);
+        continue;
+      }
+      const json = (await response.json()) as {
+        data?: { translations?: Array<{ translatedText?: string }> };
+      };
+      const translations = json.data?.translations;
+      if (!Array.isArray(translations) || translations.length !== chunk.length) continue;
+      for (let i = 0; i < chunk.length; i += 1) {
+        translatedTexts[offset + i] = String(translations[i]?.translatedText ?? "");
+      }
+    } catch (error) {
+      console.error("[cellexia] Google Translate request failed", error);
+    }
+  }
+
+  return assembleFromSegments(reviews, segments, translatedTexts);
+}
+
+/* ------------------------------------------------------------------------- *
+ * Segment plumbing shared by DeepL/Google
+ * ------------------------------------------------------------------------- */
+
+interface Segment {
+  reviewId: string;
+  field: "title" | "body" | "reply";
+  text: string;
+}
+
+function collectSegments(reviews: Review[]): Segment[] {
+  const segments: Segment[] = [];
+  for (const review of reviews) {
+    if (review.title && review.title.trim()) {
+      segments.push({ reviewId: review.id, field: "title", text: review.title });
+    }
+    segments.push({ reviewId: review.id, field: "body", text: review.body.slice(0, 5000) });
+    if (review.reply && review.reply.trim()) {
+      segments.push({ reviewId: review.id, field: "reply", text: review.reply });
+    }
+  }
+  return segments;
+}
+
+function assembleFromSegments(
+  reviews: Review[],
+  segments: Segment[],
+  translatedTexts: (string | null)[],
+): Record<string, ReviewTranslation> {
+  const byReview = new Map<string, { title: string | null; body: string | null; reply: string | null }>();
+  for (const review of reviews) {
+    byReview.set(review.id, { title: null, body: null, reply: null });
+  }
+  for (let i = 0; i < segments.length; i += 1) {
+    const text = translatedTexts[i];
+    if (text === null || text === "") continue;
+    const entry = byReview.get(segments[i].reviewId);
+    if (entry) entry[segments[i].field] = text;
+  }
+
+  const out: Record<string, ReviewTranslation> = {};
+  for (const [reviewId, entry] of byReview) {
+    if (!entry.body) continue; // body is mandatory — drop incomplete results
+    out[reviewId] = { title: entry.title, body: entry.body, reply: entry.reply };
+  }
+  return out;
+}
+
+/** Batches reviews for the Claude provider by count and cumulative body size. */
+function chunkReviews(reviews: Review[], maxItems: number, maxChars: number): Review[][] {
+  const batches: Review[][] = [];
+  let current: Review[] = [];
+  let currentChars = 0;
+  for (const review of reviews) {
+    const size = review.body.length + (review.title?.length ?? 0) + (review.reply?.length ?? 0);
+    if (current.length > 0 && (current.length >= maxItems || currentChars + size > maxChars)) {
+      batches.push(current);
+      current = [];
+      currentChars = 0;
+    }
+    current.push(review);
+    currentChars += size;
+  }
+  if (current.length > 0) batches.push(current);
+  return batches;
+}

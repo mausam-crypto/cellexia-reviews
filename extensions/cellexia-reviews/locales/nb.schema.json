@@ -1,0 +1,40 @@
+{
+  "cellexia": {
+    "reviews_block": {
+      "name": "Cellexia-anmeldelser",
+      "settings": {
+        "heading": {
+          "label": "Overskrift",
+          "info": "Vises øverst i anmeldelsesmodulen. Kan oversettes i Translate & Adapt."
+        },
+        "show_summary": {
+          "label": "Vis KI-sammendrag og emner"
+        },
+        "show_media_strip": {
+          "label": "Vis kundebildestripe"
+        },
+        "show_form": {
+          "label": "Tillat å skrive anmeldelser"
+        },
+        "per_page": {
+          "label": "Anmeldelser per side"
+        },
+        "accent_color": {
+          "label": "Stjernefarge",
+          "info": "Standarden samsvarer med den Amazon-inspirerte oransjefargen."
+        }
+      }
+    },
+    "star_rating_block": {
+      "name": "Cellexia-stjernemerke",
+      "settings": {
+        "show_count": {
+          "label": "Vis antall vurderinger"
+        }
+      }
+    },
+    "defaults": {
+      "heading": "Kundeanmeldelser"
+    }
+  }
+}

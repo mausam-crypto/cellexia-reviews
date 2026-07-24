@@ -1,0 +1,40 @@
+{
+  "cellexia": {
+    "reviews_block": {
+      "name": "مراجعات Cellexia",
+      "settings": {
+        "heading": {
+          "label": "العنوان",
+          "info": "يظهر أعلى أداة المراجعات. قابل للترجمة في Translate & Adapt."
+        },
+        "show_summary": {
+          "label": "عرض ملخص الذكاء الاصطناعي والمواضيع"
+        },
+        "show_media_strip": {
+          "label": "عرض شريط صور العملاء"
+        },
+        "show_form": {
+          "label": "السماح بكتابة المراجعات"
+        },
+        "per_page": {
+          "label": "عدد المراجعات في الصفحة"
+        },
+        "accent_color": {
+          "label": "لون النجوم",
+          "info": "اللون الافتراضي يطابق البرتقالي بأسلوب أمازون."
+        }
+      }
+    },
+    "star_rating_block": {
+      "name": "شارة نجوم Cellexia",
+      "settings": {
+        "show_count": {
+          "label": "عرض عدد التقييمات"
+        }
+      }
+    },
+    "defaults": {
+      "heading": "تقييمات العملاء"
+    }
+  }
+}

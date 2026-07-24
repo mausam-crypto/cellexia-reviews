@@ -1,0 +1,44 @@
+{% comment %}
+  cx-stars — reusable Amazon-style star row (SSR only, no JS dependency).
+
+  Params:
+    rating — required, float 0..5
+    size   — optional, star size in px (default 18)
+
+  Technique: a base row of five white stars with orange stroke, overlaid by a row of
+  five filled stars clipped to (rating / 5 * 100)% width. Logical properties are used
+  for the overlay anchor so the partial fill mirrors correctly under dir="rtl".
+  Colors flow through the CSS custom properties --cx-star / --cx-star-stroke so the
+  block-level accent color override applies automatically.
+{% endcomment %}
+{%- liquid
+  assign cx_s_rating = rating | default: 0 | times: 1.0
+  if cx_s_rating > 5
+    assign cx_s_rating = 5.0
+  endif
+  if cx_s_rating < 0
+    assign cx_s_rating = 0.0
+  endif
+  assign cx_s_size = size | default: 18
+  assign cx_s_pct = cx_s_rating | times: 20.0 | round: 2
+  assign cx_s_display = cx_s_rating | round: 1
+  assign cx_s_display_str = cx_s_display | append: ''
+  assign cx_s_label = 'cellexia.a11y.stars_label' | t: rating: cx_s_display_str | replace: '[[rating]]', cx_s_display_str
+-%}
+<span
+  class="cx-stars"
+  role="img"
+  aria-label="{{ cx_s_label | escape }}"
+  style="position:relative;display:inline-block;line-height:0;white-space:nowrap;--cx-star-size:{{ cx_s_size }}px;"
+>
+  <span class="cx-stars__row cx-stars__row--empty" aria-hidden="true" style="display:inline-block;white-space:nowrap;">
+    {%- for cx_s_i in (1..5) -%}
+    <svg class="cx-stars__star" width="{{ cx_s_size }}" height="{{ cx_s_size }}" viewBox="0 0 20 20" aria-hidden="true" focusable="false" style="vertical-align:top;"><path d="M10 2 L12.35 6.76 L17.61 7.53 L13.8 11.24 L14.7 16.47 L10 14 L5.3 16.47 L6.2 11.24 L2.39 7.53 L7.65 6.76 Z" fill="#FFFFFF" stroke="var(--cx-star-stroke, #DE7921)" stroke-width="1" stroke-linejoin="round"/></svg>
+    {%- endfor -%}
+  </span>
+  <span class="cx-stars__row cx-stars__row--fill" aria-hidden="true" style="position:absolute;inset-block-start:0;inset-inline-start:0;overflow:hidden;white-space:nowrap;width:{{ cx_s_pct }}%;">
+    {%- for cx_s_i in (1..5) -%}
+    <svg class="cx-stars__star" width="{{ cx_s_size }}" height="{{ cx_s_size }}" viewBox="0 0 20 20" aria-hidden="true" focusable="false" style="vertical-align:top;"><path d="M10 2 L12.35 6.76 L17.61 7.53 L13.8 11.24 L14.7 16.47 L10 14 L5.3 16.47 L6.2 11.24 L2.39 7.53 L7.65 6.76 Z" fill="var(--cx-star, #FFA41C)" stroke="var(--cx-star-stroke, #DE7921)" stroke-width="1" stroke-linejoin="round"/></svg>
+    {%- endfor -%}
+  </span>
+</span>

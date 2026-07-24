@@ -1,0 +1,40 @@
+{
+  "cellexia": {
+    "reviews_block": {
+      "name": "Cellexia レビュー",
+      "settings": {
+        "heading": {
+          "label": "見出し",
+          "info": "レビューウィジェットの上部に表示されます。「Translate & Adapt」で翻訳できます。"
+        },
+        "show_summary": {
+          "label": "AI要約とトピックを表示"
+        },
+        "show_media_strip": {
+          "label": "お客様の写真ストリップを表示"
+        },
+        "show_form": {
+          "label": "レビューの投稿を許可"
+        },
+        "per_page": {
+          "label": "1ページあたりのレビュー数"
+        },
+        "accent_color": {
+          "label": "星の色",
+          "info": "デフォルトはAmazonスタイルのオレンジに合わせています。"
+        }
+      }
+    },
+    "star_rating_block": {
+      "name": "Cellexia 星バッジ",
+      "settings": {
+        "show_count": {
+          "label": "評価件数を表示"
+        }
+      }
+    },
+    "defaults": {
+      "heading": "カスタマーレビュー"
+    }
+  }
+}

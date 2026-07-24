@@ -1,0 +1,40 @@
+{
+  "cellexia": {
+    "reviews_block": {
+      "name": "Cellexia Anmeldelser",
+      "settings": {
+        "heading": {
+          "label": "Overskrift",
+          "info": "Vises øverst i anmeldelseswidgetten. Kan oversættes i Translate & Adapt."
+        },
+        "show_summary": {
+          "label": "Vis AI-resumé og emner"
+        },
+        "show_media_strip": {
+          "label": "Vis stribe med kundefotos"
+        },
+        "show_form": {
+          "label": "Tillad at skrive anmeldelser"
+        },
+        "per_page": {
+          "label": "Anmeldelser pr. side"
+        },
+        "accent_color": {
+          "label": "Stjernefarve",
+          "info": "Standarden matcher den Amazon-lignende orange."
+        }
+      }
+    },
+    "star_rating_block": {
+      "name": "Cellexia Stjernebadge",
+      "settings": {
+        "show_count": {
+          "label": "Vis antal bedømmelser"
+        }
+      }
+    },
+    "defaults": {
+      "heading": "Kundeanmeldelser"
+    }
+  }
+}

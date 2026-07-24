@@ -1,0 +1,106 @@
+{% comment %}
+  cx-jsonld — Product structured data (schema.org JSON-LD) for Google star rich snippets.
+
+  Usage: {% render 'cx-jsonld', product: product %}
+
+  Emits a single <script type="application/ld+json"> only when the admin
+  "Emit JSON-LD structured data" setting allows it (boolean SHOP metafield
+  cellexia.emit_jsonld, synced on settings save — anything but an explicit
+  false emits, so stores whose metafields predate the flag keep their rich
+  snippets), the widget is live (v1.2 SPEC-1.2: boolean SHOP metafield
+  cellexia.live — only an explicit false suppresses, so pre-1.2 stores with
+  no metafield keep emitting), and the product has
+  published reviews (metafield cellexia.rating_count > 0 and cellexia.rating present).
+  aggregateRating comes from the `cellexia` product metafields; up to 3 reviews come
+  from the cellexia.top_reviews JSON metafield
+  ({rating, title, body, author, date, verified} entries).
+  All strings pass through the `json` filter (proper escaping for the JSON context);
+  numbers are coerced with `times` before output.
+{% endcomment %}
+{%- if product -%}
+{%- if shop.metafields.cellexia.emit_jsonld.value != false -%}
+{%- if shop.metafields.cellexia.live.value != false -%}
+{%- assign cx_j_rating_mf = product.metafields.cellexia.rating -%}
+{%- assign cx_j_count_mf = product.metafields.cellexia.rating_count -%}
+{%- if cx_j_rating_mf and cx_j_count_mf -%}
+{%- assign cx_j_rating = cx_j_rating_mf.value | times: 1.0 | round: 2 -%}
+{%- assign cx_j_count = cx_j_count_mf.value | times: 1 -%}
+{%- if cx_j_count > 0 and cx_j_rating > 0 -%}
+{%- liquid
+  assign cx_j_top = nil
+  assign cx_j_top_size = 0
+  if product.metafields.cellexia.top_reviews
+    assign cx_j_top = product.metafields.cellexia.top_reviews.value
+    if cx_j_top
+      assign cx_j_top_size = cx_j_top.size
+    endif
+  endif
+  assign cx_j_variant = product.selected_or_first_available_variant
+-%}
+{%- capture cx_j_url -%}{{ shop.url }}{{ product.url }}{%- endcapture -%}
+{%- capture cx_j_id -%}{{ cx_j_url }}#cellexia-product{%- endcapture -%}
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "Product",
+  "@id": {{ cx_j_id | json }},
+  "name": {{ product.title | json }},
+  {%- if product.images.size > 0 %}
+  "image": [
+    {%- for cx_j_img in product.images limit: 3 %}
+    {{ cx_j_img | image_url: width: 1600 | prepend: 'https:' | json }}{%- unless forloop.last %},{%- endunless %}
+    {%- endfor %}
+  ],
+  {%- endif %}
+  "description": {{ product.description | strip_html | truncatewords: 80 | json }},
+  {%- if cx_j_variant.sku != blank %}
+  "sku": {{ cx_j_variant.sku | json }},
+  {%- endif %}
+  "brand": {
+    "@type": "Brand",
+    "name": {{ product.vendor | json }}
+  },
+  "offers": {
+    "@type": "Offer",
+    "url": {{ cx_j_url | json }},
+    "priceCurrency": {{ cart.currency.iso_code | json }},
+    "price": {{ cx_j_variant.price | divided_by: 100.0 | json }},
+    "availability": {% if cx_j_variant.available %}"https://schema.org/InStock"{% else %}"https://schema.org/OutOfStock"{% endif %},
+    "itemCondition": "https://schema.org/NewCondition"
+  },
+  "aggregateRating": {
+    "@type": "AggregateRating",
+    "ratingValue": {{ cx_j_rating | json }},
+    "reviewCount": {{ cx_j_count | json }},
+    "bestRating": 5,
+    "worstRating": 1
+  }{% if cx_j_top_size > 0 %},
+  "review": [
+    {%- for cx_j_r in cx_j_top limit: 3 %}
+    {
+      "@type": "Review",
+      "author": {
+        "@type": "Person",
+        "name": {{ cx_j_r.author | json }}
+      },
+      "datePublished": {{ cx_j_r.date | json }},
+      {%- if cx_j_r.title != blank %}
+      "name": {{ cx_j_r.title | json }},
+      {%- endif %}
+      "reviewBody": {{ cx_j_r.body | json }},
+      "reviewRating": {
+        "@type": "Rating",
+        "ratingValue": {{ cx_j_r.rating | times: 1 | json }},
+        "bestRating": 5,
+        "worstRating": 1
+      }
+    }{%- unless forloop.last %},{%- endunless %}
+    {%- endfor %}
+  ]{% endif %}
+}
+</script>
+{%- endif -%}
+{%- endif -%}
+{%- endif -%}
+{%- endif -%}
+{%- endif -%}

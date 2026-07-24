@@ -1,0 +1,40 @@
+{
+  "cellexia": {
+    "reviews_block": {
+      "name": "Cellexia-arvostelut",
+      "settings": {
+        "heading": {
+          "label": "Otsikko",
+          "info": "Näytetään arvosteluosion yläreunassa. Käännettävissä Translate & Adapt -sovelluksessa."
+        },
+        "show_summary": {
+          "label": "Näytä tekoälyn yhteenveto ja aiheet"
+        },
+        "show_media_strip": {
+          "label": "Näytä asiakkaiden kuvarivi"
+        },
+        "show_form": {
+          "label": "Salli arvostelujen kirjoittaminen"
+        },
+        "per_page": {
+          "label": "Arvosteluja sivua kohden"
+        },
+        "accent_color": {
+          "label": "Tähtien väri",
+          "info": "Oletus vastaa Amazon-tyylistä oranssia."
+        }
+      }
+    },
+    "star_rating_block": {
+      "name": "Cellexia-tähtimerkki",
+      "settings": {
+        "show_count": {
+          "label": "Näytä arvioiden määrä"
+        }
+      }
+    },
+    "defaults": {
+      "heading": "Asiakasarvostelut"
+    }
+  }
+}

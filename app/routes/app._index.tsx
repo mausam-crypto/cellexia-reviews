@@ -516,7 +516,7 @@ export default function Dashboard() {
                 text="Add the Cellexia Reviews block to your product template in the theme editor."
                 done={false}
                 action={
-                  <Button url={themeEditorUrl} external>
+                  <Button url={themeEditorUrl} target="_blank">
                     Open theme editor
                   </Button>
                 }

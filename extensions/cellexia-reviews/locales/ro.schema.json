@@ -33,6 +33,39 @@
         }
       }
     },
+    "embed_block": {
+      "name": "Cellexia Reviews",
+      "settings": {
+        "enable_product_widget": {
+          "label": "Afișează widgetul de recenzii pe paginile de produs",
+          "info": "Montează automat widgetul complet de recenzii — nu este necesar niciun bloc de aplicație. Funcționează cu orice temă."
+        },
+        "placement_selector": {
+          "label": "Poziționarea widgetului (selector CSS, opțional)",
+          "info": "Lăsați gol pentru poziționarea automată sub informațiile despre produs. Introduceți un selector CSS pentru a monta widgetul după un anumit element."
+        },
+        "show_pdp_title_badge": {
+          "label": "Afișează stelele sub titlul produsului"
+        },
+        "enable_badges": {
+          "label": "Afișează insigne cu stele pe cardurile de produs din întregul site",
+          "info": "Adaugă evaluări cu stele lângă numele produselor pe pagina principală, în colecții și în rezultatele căutării pentru produsele cu recenzii publicate."
+        },
+        "badge_style": {
+          "label": "Stilul insignei",
+          "options__1": {
+            "label": "Stele și numărul de recenzii"
+          },
+          "options__2": {
+            "label": "Doar stele"
+          }
+        },
+        "badge_selector": {
+          "label": "Elementul titlului cardului (selector CSS, opțional)",
+          "info": "Avansat: necesar doar dacă insignele nu găsesc automat titlurile cardurilor de produs din tema dvs."
+        }
+      }
+    },
     "defaults": {
       "heading": "Recenziile clienților"
     }

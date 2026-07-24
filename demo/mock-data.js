@@ -9,6 +9,9 @@
  *   total_pages mirror GET /apps/cellexia/api/reviews.
  * - translations["<reviewId>"]["<target>"] mirrors the per-id payload of
  *   POST /apps/cellexia/api/translate so "Translate" works offline.
+ * - badges["<handle>"] mirrors the inner "badges" map of
+ *   GET /apps/cellexia/api/badges (SPEC-1.5 §2) so the v1.5 site-wide star
+ *   badges render offline on the demo page's product card grid.
  * - All media are inline SVG data URIs (gradient placeholders, one "video").
  *   Zero network requests are made by this file.
  */
@@ -861,6 +864,24 @@
     per_page: 10,
     total: reviews.length,
     total_pages: Math.ceil(reviews.length / 10),
-    translations: translations
+    translations: translations,
+
+    /* v1.5 (SPEC-1.5 §2 + §3.4): the inner "badges" map of the response to
+     * GET /apps/cellexia/api/badges?handles=…
+     *   { "badges": { "<handle>": { "average": 4.6, "count": 128 } } }
+     * In demo mode the widget's site-wide badge injector reads this map
+     * instead of fetching, exactly like `summary`/`translations` above.
+     * It drives the "product card grid" showcase in demo/index.html:
+     * four of the six cards below have data; the other two handles
+     * (purete-gentle-cleansing-foam — zero published reviews — and
+     * velours-solaire-spf50) are intentionally ABSENT, because the real
+     * endpoint omits handles without published reviews and their cards
+     * must stay clean. */
+    badges: {
+      'regenerant-cellular-renewal-cream': { average: 4.6, count: 50506 },
+      'eclat-vitamin-c-serum': { average: 4.8, count: 1234 },
+      'hydra-riche-night-balm': { average: 4.2, count: 87 },
+      'lumiere-eye-contour-gel': { average: 3.4, count: 412 }
+    }
   };
 })();

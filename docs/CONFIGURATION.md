@@ -14,7 +14,7 @@ from its navigation menu: **Dashboard**, **Reviews**, **Bulk add**, **Import / E
 - **Status banner** — the very top of the Dashboard always shows whether the review widget is
   **Live** or **Not live** for store visitors, with the buttons to preview and to switch. This
   is where going live happens — see §2, "Going live & previewing".
-- **Synthetic-data warning** — shown whenever published synthetic test reviews exist (§9,
+- **Synthetic-data warning** — shown whenever published synthetic test reviews exist (§10,
   "QA data"). While the store is not live it is informational; once the store is live it turns
   **critical** ("… visible to real shoppers — delete them before customers see them."),
   because synthetic reviews look completely real to shoppers. It links straight to the QA data
@@ -36,7 +36,7 @@ from its navigation menu: **Dashboard**, **Reviews**, **Bulk add**, **Import / E
 Your storefront is always in one of two states:
 
 - **Not live** — every new install starts here. Visitors see **nothing at all**: no widget, no
-  star badge, no review data, no Google structured data. You can take your time — add the
+  star badge, no star badges on product cards, no review data, no Google structured data. You can take your time — add the
   blocks, adjust settings, import reviews — without shoppers noticing any change. (The **theme
   editor always shows the full widget**, live or not, so you can place and configure the
   blocks.)
@@ -55,7 +55,7 @@ Only you can see this — the widget is not live for visitors." with an **Exit p
 The preview works whether the store is live or not. If the button is disabled, the store has no
 products to preview on yet.
 
-**Before you go live**: if you generated synthetic test reviews (§9, "QA data"), delete every
+**Before you go live**: if you generated synthetic test reviews (§10, "QA data"), delete every
 batch first. Published synthetic reviews are indistinguishable from real ones on the
 storefront — they are labeled only inside this admin — and the Dashboard banner turns critical
 the moment you go live with any still published.
@@ -186,7 +186,7 @@ downloads font files.
 ### Data
 
 - **Export reviews CSV** — takes you to the Import / Export page, where the export downloads
-  all reviews (the template columns — see §7 —
+  all reviews (the template columns — see §8 —
   plus three tracking columns: `is_synthetic`, `source`, `synthetic_batch_id`). Do this
   periodically as a backup; the file re-imports cleanly via the Generic template preset.
 - **Regenerate preview link** — creates a new private preview link and invalidates every
@@ -215,9 +215,71 @@ and shows nothing until a product has published reviews.
 The theme editor always shows the full widget while you work in it, even when the store is
 **Not live** — placing and styling the blocks never requires going live first (§2).
 
+If your theme refuses the blocks on the product template — or you want star badges on your
+product cards everywhere — use the **app embed** instead: §5.
+
 ---
 
-## 5. Moderation workflow
+## 5. App embed & star badges
+
+Some themes do not accept app blocks on product templates at all ("Add section → Apps" shows
+no Cellexia blocks there). The **app embed** solves that — it works on **every** theme with a
+single toggle — and it adds something the blocks don't have: **star badges next to product
+names across your whole store** (home page, collections, search results, featured sections)
+for products with published reviews.
+
+**Turning it on**: Shopify admin → **Online Store → Themes → Customize** → open
+**Theme settings** in the left sidebar → **App embeds** (in some theme-editor versions it's
+the puzzle-piece **App embeds** icon) → switch **Cellexia Reviews** on → **Save**. The embed
+ships **off** — enabling it is always your explicit choice. And as everywhere else in the app,
+even an enabled embed shows visitors nothing until the store is **live** (§2); the private
+preview and the theme editor show it fully.
+
+**If you already use the blocks**: keep using them — nothing double-renders. On any product
+page where the Cellexia Reviews block is placed, the block wins and the embed's own widget
+steps aside automatically. Enabling the embed alongside the blocks is still worthwhile purely
+for the product-card badges.
+
+### The settings
+
+Expand the embed's row (▸) under App embeds to reach them:
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| Show the review widget on product pages | On | Mounts the full review widget on every product page automatically — no app block needed. It appears right after the product information / add-to-cart area (see the placement setting below to override). |
+| Widget placement (CSS selector, optional) | empty | Leave empty for automatic placement below the product information. Enter a CSS selector to mount the widget after a specific element instead — the widget is inserted after the first match. See "Finding a CSS selector" below. |
+| Show stars under the product title | On | A compact star row with the review count under the product page's own title, linking down to the widget — the same idea as the Cellexia Star Badge block, and skipped automatically when that block is already on the page. Shows nothing while the product has no published reviews. |
+| Show star badges on product cards site-wide | On | Adds star ratings next to product names on the home page, collections, and search results for products with published reviews. |
+| Badge style | Stars and review count | **Stars and review count** shows the stars followed by the number of reviews in parentheses; **Stars only** drops the number. |
+| Card title element (CSS selector, optional) | empty | Advanced: only needed if badges don't find your theme's product card titles automatically — enter the selector of the card-title element and badges attach right after it. |
+
+### How badges pick your products up automatically
+
+You never tell the app which products to badge. On every page, the widget script looks for
+links to product pages, works out which products the page is showing, and asks the backend for
+all of their ratings in **one** batched request (up to 48 products per page, answered from a
+5-minute cache). Each card whose product has at least one published review gets a small star
+badge right after its title; products without published reviews are simply left alone — the
+card stays exactly as your theme made it. Grids that load more products as you scroll are
+picked up too. The badge inherits the card's own text size and follows your design version
+(§3, "Design") — Amazon-orange, Cellexia-ink or Luxe-gold stars, automatically.
+
+While the store is **not live**, the badges do nothing at all for visitors — no badges, no
+requests — exactly like the widget (§2).
+
+### Finding a CSS selector (for the two optional overrides)
+
+You only need this if the automatic placement or the automatic card detection doesn't suit
+your theme. In Chrome/Edge/Firefox: right-click the element on your storefront (the element
+the widget should follow, or a product card's title) → **Inspect** → read the highlighted
+element's class in the panel, e.g. `product-info__blocks` or `card__heading`, and enter it
+with a leading dot (`.product-info__blocks`, `.card__heading`). Your theme's developer can
+supply these in seconds if in doubt — and if a selector never matches, the app quietly falls
+back to the automatic behavior rather than breaking anything.
+
+---
+
+## 6. Moderation workflow
 
 Every review is in one of four states: **Pending**, **Published**, **Rejected**, **Spam**.
 Only Published reviews appear on the storefront or count toward the rating.
@@ -226,7 +288,7 @@ Only Published reviews appear on the storefront or count toward the rating.
 2. Work from **Dashboard → Needs attention** or the **Reviews** page. Tabs filter by status;
    you can also filter to reviews flagged by shopper reports, or by **Source** — Storefront,
    CSV import, Bulk add, or Synthetic (reviews from before version 1.4 count as Storefront).
-   Synthetic test reviews additionally carry a blue **Synthetic** badge (§9). Search, sort,
+   Synthetic test reviews additionally carry a blue **Synthetic** badge (§10). Search, sort,
    and use bulk actions (Approve, Reject, Mark as spam, Delete) for volume.
 3. Click a review to open it: full text, photos/videos, the shopper's structured answers (age
    range, skin concerns, time using, results seen), whether and how the purchase was verified,
@@ -241,7 +303,7 @@ to read the review in your own language before moderating (requires a translatio
 
 ---
 
-## 6. Replying to reviews
+## 7. Replying to reviews
 
 Replying is how Cellexia answers customers publicly.
 
@@ -256,7 +318,7 @@ Editing the reply text and saving again updates it; clearing it removes the repl
 
 ---
 
-## 7. Importing reviews (Judge.me, Loox, Yotpo, CSV)
+## 8. Importing reviews (Judge.me, Loox, Yotpo, CSV)
 
 Bringing reviews from a previous app — or from any spreadsheet: **Import / Export** page.
 
@@ -324,13 +386,13 @@ reported, never silently dropped.
 - Photos and videos in imported reviews keep pointing at their original web addresses (they
   are not copied to Shopify). They display fine as long as those addresses stay online — a
   known limitation worth remembering before you close the old app's account. (Reviews added
-  on the **Bulk add** page can upload files properly — see §8.)
+  on the **Bulk add** page can upload files properly — see §9.)
 - Imported reviews keep their original dates and their verified flag when the source file has
   one; the presets map each old app's columns onto the template automatically.
 
 ---
 
-## 8. Bulk add (typing reviews straight into the admin)
+## 9. Bulk add (typing reviews straight into the admin)
 
 For a handful — or a few dozen — reviews you have on paper, in emails, or from a photoshoot,
 the **Bulk add** page is faster than building a CSV. It works on **one product at a time**
@@ -353,7 +415,7 @@ the **Bulk add** page is faster than building a CSV. It works on **one product a
 
 ---
 
-## 9. QA data (synthetic reviews)
+## 10. QA data (synthetic reviews)
 
 The **QA data** page generates realistic, AI-written test reviews so you can check the widget
 with believable content — layout with long and short texts, the filters, translations, the
@@ -387,16 +449,20 @@ ratings, distribution bars and metafields — no trace remains.
 
 ---
 
-## 10. Quick answers
+## 11. Quick answers
 
 - **Nothing shows on the product page** → the store may not be **live** yet (check the
-  Dashboard banner — §2), the block isn't added in the theme editor yet (Dashboard setup
-  guide, step 1), or the product has no published reviews.
+  Dashboard banner — §2), neither the block is added nor the app embed enabled in the theme
+  editor (§4/§5; Dashboard setup guide, step 1), or the product has no published reviews.
+- **No star badges on my product cards** → the app embed isn't enabled, or its
+  "Show star badges on product cards site-wide" setting is off (§5); the store isn't live yet
+  (§2); or those products have no published reviews — badges only appear for reviewed
+  products. Unusual theme? See "Card title element (CSS selector, optional)" in §5.
 - **No "Customers say" section** → no Anthropic API key in Settings → AI summary, or the
   product doesn't have enough published reviews yet (threshold setting, default 5).
 - **No stars in Google** → see `docs/SEO.md`; it takes valid data *and* time, and Google
   decides case by case.
 - **Test reviews are showing to real shoppers** → they are synthetic QA data still published
   while the store is live. **QA data** page → delete the batch (or all synthetic reviews) —
-  §9. The Dashboard's critical banner links straight there.
+  §10. The Dashboard's critical banner links straight there.
 - More in `docs/FAQ.md`.

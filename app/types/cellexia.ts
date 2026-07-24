@@ -213,7 +213,7 @@ export interface MediaGalleryItemDTO {
   rating: number;
 }
 
-/** GET /apps/cellexia/api/reviews response body. */
+/** GET /apps/cellexia-reviews/api/reviews response body. */
 export interface ListResponse {
   product: ProductStatsDTO;
   summary: SummaryDTO | null;
@@ -236,13 +236,33 @@ export interface ListResponse {
   };
 }
 
-/** POST /apps/cellexia/api/reviews response body. */
+/** POST /apps/cellexia-reviews/api/reviews response body. */
 export interface SubmitResponse {
   ok: boolean;
   /** Present when ok is true. */
   status?: "PENDING" | "PUBLISHED";
   /** Present when ok is false: field name (or "_") → error code. */
   errors?: Record<string, string>;
+}
+
+/**
+ * One product's sitewide star-badge stats (SPEC-1.5 §2), computed over
+ * PUBLISHED reviews only with the same one-decimal average rounding as
+ * ProductStatsDTO.
+ */
+export interface BadgeStatsDTO {
+  /** Rounded to one decimal, e.g. 4.6. */
+  average: number;
+  count: number;
+}
+
+/** GET /apps/cellexia-reviews/api/badges response body (SPEC-1.5 §2). */
+export interface BadgesResponse {
+  /**
+   * Keyed by product handle. Only handles with at least one PUBLISHED review
+   * appear — unknown or reviewless handles are simply omitted.
+   */
+  badges: Record<string, BadgeStatsDTO>;
 }
 
 // ─── Service-layer inputs (SPEC §7 signatures) ───────────────────────────────

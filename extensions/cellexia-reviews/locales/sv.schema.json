@@ -33,6 +33,39 @@
         }
       }
     },
+    "embed_block": {
+      "name": "Cellexia Reviews",
+      "settings": {
+        "enable_product_widget": {
+          "label": "Visa recensionswidgeten på produktsidor",
+          "info": "Monterar hela recensionswidgeten automatiskt — inget appblock behövs. Fungerar med alla teman."
+        },
+        "placement_selector": {
+          "label": "Widgetens placering (CSS-selektor, valfritt)",
+          "info": "Lämna tomt för automatisk placering under produktinformationen. Ange en CSS-selektor för att i stället montera widgeten efter ett visst element."
+        },
+        "show_pdp_title_badge": {
+          "label": "Visa stjärnor under produkttiteln"
+        },
+        "enable_badges": {
+          "label": "Visa stjärnbadges på produktkort på hela webbplatsen",
+          "info": "Lägger till stjärnbetyg bredvid produktnamn på startsidan, i kollektioner och i sökresultat för produkter med publicerade recensioner."
+        },
+        "badge_style": {
+          "label": "Badgestil",
+          "options__1": {
+            "label": "Stjärnor och antal recensioner"
+          },
+          "options__2": {
+            "label": "Endast stjärnor"
+          }
+        },
+        "badge_selector": {
+          "label": "Element för korttitel (CSS-selektor, valfritt)",
+          "info": "Avancerat: behövs bara om badges inte hittar ditt temas produktkorttitlar automatiskt."
+        }
+      }
+    },
     "defaults": {
       "heading": "Kundrecensioner"
     }

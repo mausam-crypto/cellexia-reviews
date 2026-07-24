@@ -33,6 +33,39 @@
         }
       }
     },
+    "embed_block": {
+      "name": "Cellexia Reviews",
+      "settings": {
+        "enable_product_widget": {
+          "label": "Näytä arvosteluwidget tuotesivuilla",
+          "info": "Liittää koko arvosteluwidgetin automaattisesti — sovelluslohkoa ei tarvita. Toimii kaikissa teemoissa."
+        },
+        "placement_selector": {
+          "label": "Widgetin sijoittelu (CSS-valitsin, valinnainen)",
+          "info": "Jätä tyhjäksi, niin widget sijoitetaan automaattisesti tuotetietojen alle. Syötä CSS-valitsin, jos haluat liittää widgetin tietyn elementin jälkeen."
+        },
+        "show_pdp_title_badge": {
+          "label": "Näytä tähdet tuotteen otsikon alla"
+        },
+        "enable_badges": {
+          "label": "Näytä tähtimerkit tuotekorteissa koko sivustolla",
+          "info": "Lisää tähtiarviot tuotenimien viereen etusivulla, kokoelmissa ja hakutuloksissa tuotteille, joilla on julkaistuja arvosteluja."
+        },
+        "badge_style": {
+          "label": "Merkin tyyli",
+          "options__1": {
+            "label": "Tähdet ja arvostelujen määrä"
+          },
+          "options__2": {
+            "label": "Vain tähdet"
+          }
+        },
+        "badge_selector": {
+          "label": "Kortin otsikkoelementti (CSS-valitsin, valinnainen)",
+          "info": "Edistynyt: tarvitaan vain, jos merkit eivät löydä teemasi tuotekorttien otsikoita automaattisesti."
+        }
+      }
+    },
     "defaults": {
       "heading": "Asiakasarvostelut"
     }

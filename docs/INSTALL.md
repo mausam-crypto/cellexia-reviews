@@ -9,8 +9,10 @@ What you are installing:
    walkthroughs below; a production `Dockerfile` is included).
 2. A **Shopify app** entry on your Partner account (created/linked by the Shopify CLI) with an
    **app proxy** so the storefront can call the backend.
-3. A **theme app extension** (deployed to Shopify by the CLI) whose two blocks the merchant adds
-   in the theme editor.
+3. A **theme app extension** (deployed to Shopify by the CLI): an **app embed** that mounts the
+   widget on product pages automatically and adds star badges to product cards site-wide
+   (works on every theme, one toggle), plus two **app blocks** for precise manual placement on
+   themes that support them. The merchant enables either — or both — in the theme editor.
 
 **Pre-flight — decide these five things before you start** (everything else follows mechanically):
 
@@ -294,10 +296,59 @@ without store visitors noticing anything.
 
 ---
 
-## 8. Add the blocks in the theme editor
+## 8. Put the widget on the storefront — app embed or blocks
 
-Both blocks are app blocks: no theme code is edited, and they disappear cleanly if the app is
+There are two ways to get the widget onto the theme, both part of the same theme app
+extension: no theme code is edited either way, and everything disappears cleanly if the app is
 uninstalled.
+
+- **Option A — the app embed**: one toggle, works on **every** theme, mounts the widget on
+  product pages automatically and adds star badges to product cards site-wide.
+- **Option B — the app blocks**: drag-and-drop placement, for themes that support app blocks
+  on product templates.
+
+If both end up active on the same product page, nothing renders twice: the block wins and the
+embed's product-page widget steps aside automatically. (Keeping the embed enabled alongside
+blocks is in fact useful — the site-wide card badges only come from the embed.)
+
+> **Theme won't take the block? Use Option A.** On some themes, opening the product template
+> and clicking **Add section → Apps** shows no Cellexia blocks at all. That means the theme
+> does not support app blocks on product templates — nothing is wrong with your deploy. The
+> app embed exists precisely for this case; it works on every theme.
+
+### Option A — App embed (works on every theme, one click)
+
+1. Shopify admin → **Online Store → Themes → Customize** (on the live theme).
+2. In the theme editor's left sidebar, open **Theme settings** and select **App embeds**
+   (in some theme-editor versions this is the puzzle-piece **App embeds** icon on the
+   sidebar's edge).
+3. Find **Cellexia Reviews** in the list and switch its toggle **on**.
+4. Click **Save**.
+
+That's it. The embed now mounts the full review widget on every product page automatically —
+right after the product-information / add-to-cart area — and adds star badges next to product
+names on the home page, collections and search results (only for products that have published
+reviews). Then continue with §9 exactly as written: the embed follows the same not-live rules
+as the blocks, so real visitors still see nothing until you go live.
+
+Expand the embed's row (▸) to adjust its settings:
+
+| Setting | Default |
+| --- | --- |
+| Show the review widget on product pages | On |
+| Widget placement (CSS selector, optional) | empty — automatic placement |
+| Show stars under the product title | On |
+| Show star badges on product cards site-wide | On |
+| Badge style | Stars and review count |
+| Card title element (CSS selector, optional) | empty — automatic detection |
+
+Setting-by-setting detail (including when to use the two CSS-selector overrides):
+`docs/CONFIGURATION.md`, "App embed & star badges".
+
+### Option B — App blocks (themes that support them)
+
+Use the blocks when the theme accepts them and you want to place the widget by hand — per
+template, exactly where you drag it.
 
 **Main widget — "Cellexia Reviews"** (product pages):
 
@@ -321,8 +372,8 @@ The badge renders nothing until the product has at least one published review, s
 placement is normal at first.
 
 Note that the **theme editor always shows the full widget**, whether or not the store is live —
-that is intentional, so you can place and configure the blocks here before anyone can see them.
-On the real storefront both blocks stay invisible until you go live (next section).
+that is intentional, so you can place and configure the widget here before anyone can see it.
+On the real storefront, block and embed alike stay invisible until you go live (next section).
 
 ---
 
@@ -337,8 +388,8 @@ Dashboard:
    "Not live yet — store visitors can't see the review widget."
 2. Click **Preview on your store**. A product page on the live theme opens in a new tab with
    the widget fully working and a "Preview mode" ribbon fixed at the bottom. Only your browser
-   sees this — the link carries a private token — so check the placement and block settings
-   from §8 exactly as shoppers will get them. **Exit preview** on the ribbon ends it. (The
+   sees this — the link carries a private token — so check the placement and settings
+   from §8 (block or embed) exactly as shoppers will get them. **Exit preview** on the ribbon ends it. (The
    button is disabled with an explanation while the store has no products.)
 3. Back on the Dashboard, click **Go live** and confirm
    ("Make Cellexia Reviews visible to all store visitors?"). The banner switches to
@@ -367,14 +418,18 @@ Work through every line; each has an unambiguous pass signal.
       is misconfigured. (Get the numeric id from the product's admin URL; after going live
       below, the same URL returns full JSON: `{"product": ..., "reviews": [...]}`.)
 - [ ] **Not-live storefront is clean**: open the product page as a normal visitor (no preview
-      link, or after "Exit preview") — no review widget, no star badge, nothing visible.
-- [ ] **Preview works**: Dashboard → **Preview on your store** — the widget renders fully on
-      the live theme with the "Preview mode" ribbon at the bottom; **Exit preview** hides it
-      again.
+      link, or after "Exit preview") — no review widget, no star badge, no card badges,
+      nothing visible.
+- [ ] **Preview works**: Dashboard → **Preview on your store** — the widget (block or embed)
+      renders fully on the live theme with the "Preview mode" ribbon at the bottom;
+      **Exit preview** hides it again.
 - [ ] **Go live**: Dashboard → **Go live** → confirm. The banner switches to "Live — visitors
       can see the review widget."
-- [ ] **Widget renders**: the product page now shows the "Customer reviews" block for everyone
-      (no preview link needed).
+- [ ] **Widget renders**: the product page now shows the "Customer reviews" widget (block or
+      embed) for everyone (no preview link needed).
+- [ ] **Card badges render** (only with the app embed enabled and its badges setting on):
+      collection/home product cards show star badges for reviewed products; cards of products
+      without published reviews stay clean.
 - [ ] **Submission works**: submit a test review from the storefront form — the success panel
       appears, and the review shows up in the admin under Reviews with status **Pending**
       (unless auto-publish is on).
@@ -432,6 +487,7 @@ apply the fix; re-run the relevant §10 checklist line.
 | Proxy URL returns `{"ok":false,"errors":{"_":"unauthorized"}}` (401) | `SHOPIFY_API_SECRET` on the host doesn't match the app's current Client secret (rotated?). Update the env var and restart. |
 | Proxy URL returns `{"ok":false,"errors":{"_":"not_live"}}` (403) | Not an error — the store isn't live yet (§9). This is the expected pass signal pre-go-live. |
 | Blocks don't appear under the theme editor's **Apps** tab | The extension wasn't deployed (`npm run deploy`, confirm the release), or the app isn't installed on this store yet (§7 before §8). |
+| **Can't add the block on the product page** — the extension is deployed, other pages offer the blocks, but **Add section → Apps** on the product template shows no Cellexia blocks | The theme doesn't support app blocks on product templates. Not fixable from our side and nothing is misconfigured — use §8 **Option A**: the app embed (Theme settings → App embeds → toggle **Cellexia Reviews**) mounts the widget on every theme. |
 | Reviews never get the Verified Purchase badge | Protected customer data access for orders hasn't been approved (§3 note). Development stores don't need it; live stores do. |
 
 ### The most common one
@@ -450,6 +506,7 @@ apply the fix; re-run the relevant §10 checklist line.
 | CSV import reports many date errors | Wrong date format assumption. Set the **Date format** select on the import page to match your file (ISO / DD/MM/YYYY / MM/DD/YYYY) and re-run the dry run. |
 | Widget looks unstyled or oddly cramped in one theme section | Another app or the theme is injecting CSS into the section. The widget's CSS is fully scoped under `.cx` and never leaks out; move the block to its own section (§8) rather than nesting it inside a third-party section. |
 | Star badge block renders nothing | Expected until the product has at least one published review (and the store is live). |
+| Badges don't appear on product cards | In order of likelihood: the app embed isn't enabled, or its **Show star badges on product cards site-wide** setting is off (§8 Option A); the store isn't live yet — badges follow the same gating as the widget (§9); those products have no published reviews (badges only appear for reviewed products); or the theme's card markup is unusual — set **Card title element (CSS selector, optional)** on the embed to the theme's card-title selector (see `docs/CONFIGURATION.md`, "App embed & star badges"). |
 
 Still stuck? Check the backend logs on your hosting dashboard first — storefront/proxy and
 service failures log `[cellexia]`-prefixed lines, and admin-page failures log descriptive lines

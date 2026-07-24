@@ -1,5 +1,5 @@
 /**
- * Storefront proxy: `POST /apps/cellexia/api/reviews/:id/vote`
+ * Storefront proxy: `POST /apps/cellexia-reviews/api/reviews/:id/vote`
  * → `/proxy/api/reviews/:id/vote`.
  *
  * Body: `{ "token": "<visitor uuid>" }`. Increments the helpful counter,

@@ -7,15 +7,16 @@ are explained in `docs/CONFIGURATION.md`.
 
 **Will this break my theme or my store?**
 No — and installing it changes nothing visible either. The widget and the star badge are
-**app blocks**: you add, move and remove them in the theme editor, and not a single line of
-your theme's code is modified. All widget styles are scoped under the widget's own container,
-so they cannot leak into or restyle the rest of your theme, and your theme's styles don't
-bleed into the widget. On top of that, a new install starts **Not live**: even after you add
-the blocks, store visitors see absolutely nothing — no widget, no data, no hidden Google
-markup — until you press **Go live** on the app's Dashboard. You can install, place the
-blocks, import your old reviews and preview the result on your real theme with zero risk of
-shoppers seeing a half-configured page. Removing the blocks — or uninstalling the app —
-leaves the theme exactly as it was.
+**app blocks** — and there is also an **app embed** you simply switch on in the theme editor
+(Theme settings → App embeds) for themes that don't take blocks on product pages. Either way,
+not a single line of your theme's code is modified. All widget styles are scoped under the
+widget's own container, so they cannot leak into or restyle the rest of your theme, and your
+theme's styles don't bleed into the widget. On top of that, a new install starts **Not live**:
+even after you add the blocks or enable the embed, store visitors see absolutely nothing — no
+widget, no data, no hidden Google markup — until you press **Go live** on the app's Dashboard.
+You can install, place the blocks, import your old reviews and preview the result on your real
+theme with zero risk of shoppers seeing a half-configured page. Removing the blocks, switching
+the embed off — or uninstalling the app — leaves the theme exactly as it was.
 
 **Why don't visitors see the reviews yet?**
 Almost always: the store isn't **live** yet. New installs start Not live, which hides the
@@ -28,13 +29,22 @@ the banner there tells you the current state. Two things are easy to mix up mean
   "Preview mode" ribbon at the bottom of the page. If you see that ribbon, you're looking at
   your private preview — visitors still see nothing until you go live.
 
-Once live, the remaining reasons are the usual ones: the block isn't added in the theme
-editor, or the product has no published reviews yet. See `docs/CONFIGURATION.md` §2.
+Once live, the remaining reasons are the usual ones: neither the block is added nor the app
+embed enabled in the theme editor, or the product has no published reviews yet. See
+`docs/CONFIGURATION.md` §2.
 
 **Does it slow my pages down?**
 It's built not to: the rating header and top reviews are rendered on the server so they paint
 with the page, one small CSS file and one deferred JavaScript file load, live data is fetched
 once and cached for 60 seconds, and images lazy-load. There is no layout jumping while it loads.
+
+**Do the badges slow my store down?**
+No. On any page, the badges make at most **one** small request — it covers every product card
+on that page at once (up to 48 products) and the answer is cached for five minutes, so
+repeated browsing doesn't re-ask. On pages without any product links, no request is made at
+all. And while the store is not live, the badges do nothing whatsoever — no requests, no
+processing. The stars themselves are tiny inline graphics that reuse the widget's already-
+loaded files; nothing extra is downloaded.
 
 **Can I change the widget's colors or heading?**
 The heading and the star accent color are block settings in the theme editor (select the
@@ -42,8 +52,16 @@ Cellexia Reviews block). Deeper wording changes are covered in `docs/TRANSLATION
 
 **Why doesn't the star badge show under my product title?**
 The badge follows the same **Go live** switch as the main widget (see above), and it renders
-nothing until that product has at least one **published** review. Also check the badge block
-was added to the product template (`docs/INSTALL.md` §8).
+nothing until that product has at least one **published** review. Also check that the badge
+block was added to the product template — or, if you use the app embed instead, that its
+"Show stars under the product title" setting is on (`docs/INSTALL.md` §8).
+
+**Why don't my product cards show star badges on collections or the home page?**
+Card badges come from the **app embed**, not from the blocks: enable it in the theme editor
+and keep "Show star badges on product cards site-wide" on. Then the same two rules as always
+apply — the store must be **live**, and only products with at least one **published** review
+get a badge (cards of unreviewed products deliberately stay untouched). All the details:
+`docs/CONFIGURATION.md`, "App embed & star badges".
 
 ## Reviews & moderation
 
@@ -65,7 +83,7 @@ a new one.
 
 **Can I answer a review?**
 Yes — that's the Reply field on the review's page. It appears publicly as "Response from
-Cellexia". See `docs/CONFIGURATION.md` §6.
+Cellexia". See `docs/CONFIGURATION.md` §7.
 
 **How does the app fight fake/spam reviews?**
 Several layers: a hidden trap field that bots fill in, a minimum time-to-fill check on the
@@ -81,7 +99,7 @@ filter, batch tracking) — the storefront never marks them, and shoppers cannot
 apart. That's why the app watches this for you: the Dashboard shows a warning banner whenever
 published synthetic reviews exist, and it turns **critical** the moment the store is live.
 Delete every batch on the QA data page before going live to real customers — each batch has a
-one-click delete, and ratings recalculate automatically. See `docs/CONFIGURATION.md` §9.
+one-click delete, and ratings recalculate automatically. See `docs/CONFIGURATION.md` §10.
 
 ## Photos & videos
 

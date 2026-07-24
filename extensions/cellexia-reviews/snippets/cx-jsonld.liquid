@@ -2,6 +2,12 @@
   cx-jsonld — Product structured data (schema.org JSON-LD) for Google star rich snippets.
 
   Usage: {% render 'cx-jsonld', product: product %}
+         {% render 'cx-jsonld', product: product, marker: 'embed' %}
+
+  v1.5 (SPEC-1.5): optional `marker` parameter — when provided, the emitted script
+  tag gains data-cx-jsonld="<marker>" so callers can identify their copy (the app
+  embed passes 'embed'; the JS removes it when a block copy exists, preventing
+  duplicate Product JSON-LD). Omitted ⇒ no attribute ⇒ block output unchanged.
 
   Emits a single <script type="application/ld+json"> only when the admin
   "Emit JSON-LD structured data" setting allows it (boolean SHOP metafield
@@ -39,7 +45,7 @@
 -%}
 {%- capture cx_j_url -%}{{ shop.url }}{{ product.url }}{%- endcapture -%}
 {%- capture cx_j_id -%}{{ cx_j_url }}#cellexia-product{%- endcapture -%}
-<script type="application/ld+json">
+<script type="application/ld+json"{% if marker != blank %} data-cx-jsonld="{{ marker | escape }}"{% endif %}>
 {
   "@context": "https://schema.org",
   "@type": "Product",

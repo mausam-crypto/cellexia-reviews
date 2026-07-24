@@ -33,6 +33,39 @@
         }
       }
     },
+    "embed_block": {
+      "name": "Cellexia Reviews",
+      "settings": {
+        "enable_product_widget": {
+          "label": "Bewertungs-Widget auf Produktseiten anzeigen",
+          "info": "Bindet das vollständige Bewertungs-Widget automatisch ein — kein App-Block nötig. Funktioniert mit jedem Theme."
+        },
+        "placement_selector": {
+          "label": "Widget-Platzierung (CSS-Selektor, optional)",
+          "info": "Leer lassen für automatische Platzierung unter den Produktinformationen. Geben Sie einen CSS-Selektor ein, um das Widget stattdessen nach einem bestimmten Element einzubinden."
+        },
+        "show_pdp_title_badge": {
+          "label": "Sterne unter dem Produkttitel anzeigen"
+        },
+        "enable_badges": {
+          "label": "Sterne-Badges auf Produktkarten im gesamten Shop anzeigen",
+          "info": "Fügt Sternebewertungen neben Produktnamen auf der Startseite, in Kategorien und in Suchergebnissen hinzu — für Produkte mit veröffentlichten Rezensionen."
+        },
+        "badge_style": {
+          "label": "Badge-Stil",
+          "options__1": {
+            "label": "Sterne und Anzahl der Rezensionen"
+          },
+          "options__2": {
+            "label": "Nur Sterne"
+          }
+        },
+        "badge_selector": {
+          "label": "Element des Kartentitels (CSS-Selektor, optional)",
+          "info": "Erweitert: nur nötig, wenn die Badges die Produktkartentitel Ihres Themes nicht automatisch finden."
+        }
+      }
+    },
     "defaults": {
       "heading": "Kundenbewertungen"
     }

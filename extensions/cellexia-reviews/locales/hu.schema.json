@@ -33,6 +33,39 @@
         }
       }
     },
+    "embed_block": {
+      "name": "Cellexia Reviews",
+      "settings": {
+        "enable_product_widget": {
+          "label": "Értékelési modul megjelenítése a termékoldalakon",
+          "info": "Automatikusan beilleszti a teljes értékelési modult — nincs szükség alkalmazásblokkra. Minden témával működik."
+        },
+        "placement_selector": {
+          "label": "A modul elhelyezése (CSS-szelektor, nem kötelező)",
+          "info": "Hagyja üresen az automatikus elhelyezéshez a termékinformációk alatt. Adjon meg egy CSS-szelektort, ha a modult inkább egy adott elem után szeretné beilleszteni."
+        },
+        "show_pdp_title_badge": {
+          "label": "Csillagok megjelenítése a termék címe alatt"
+        },
+        "enable_badges": {
+          "label": "Csillagjelvények megjelenítése a termékkártyákon az egész webhelyen",
+          "info": "Csillagos értékeléseket ad a terméknevek mellé a kezdőlapon, a kollekciókban és a keresési találatokban a közzétett értékeléssel rendelkező termékeknél."
+        },
+        "badge_style": {
+          "label": "Jelvény stílusa",
+          "options__1": {
+            "label": "Csillagok és az értékelések száma"
+          },
+          "options__2": {
+            "label": "Csak csillagok"
+          }
+        },
+        "badge_selector": {
+          "label": "A kártya címeleme (CSS-szelektor, nem kötelező)",
+          "info": "Haladó: csak akkor szükséges, ha a jelvények nem találják meg automatikusan a téma termékkártyáinak címeit."
+        }
+      }
+    },
     "defaults": {
       "heading": "Vásárlói értékelések"
     }

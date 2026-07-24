@@ -1,5 +1,5 @@
 /**
- * Storefront proxy: `/apps/cellexia/api/reviews` → `/proxy/api/reviews`.
+ * Storefront proxy: `/apps/cellexia-reviews/api/reviews` → `/proxy/api/reviews`.
  *
  * GET  — paginated, filterable review list (SPEC §6), cached 60 s.
  *        Lazily resolves pending Shopify Files CDN URLs before listing.
@@ -67,9 +67,10 @@ const MIN_FORM_MS = 3000;
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const TOPIC_KEY_RE = /^[a-z0-9_-]{1,64}$/i;
+const PRODUCT_HANDLE_RE = /^[a-z0-9-]{1,255}$/;
 
 // ---------------------------------------------------------------------------
-// GET /apps/cellexia/api/reviews
+// GET /apps/cellexia-reviews/api/reviews
 // ---------------------------------------------------------------------------
 
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -202,7 +203,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
 }
 
 // ---------------------------------------------------------------------------
-// POST /apps/cellexia/api/reviews (multipart/form-data)
+// POST /apps/cellexia-reviews/api/reviews (multipart/form-data)
 // ---------------------------------------------------------------------------
 
 export async function action({ request }: ActionFunctionArgs) {
@@ -331,6 +332,14 @@ export async function action({ request }: ActionFunctionArgs) {
 
   const variantTitle = formField(formData, "variant_title").slice(0, VARIANT_MAX);
 
+  // v1.5 (SPEC-1.5 §4): optional product handle from the widget root's
+  // data-product-handle attribute, persisted for the sitewide badges
+  // endpoint. Auxiliary metadata only — a value that does not match the
+  // Shopify handle shape is dropped rather than failing the submission, so
+  // existing stores keep their v1.4.1 submit behavior.
+  const productHandleRaw = formField(formData, "product_handle").toLowerCase();
+  const productHandle = PRODUCT_HANDLE_RE.test(productHandleRaw) ? productHandleRaw : "";
+
   // --- Media validation (count caps, size caps, magic bytes) ----------------
 
   const rawFiles: File[] = [];
@@ -413,6 +422,7 @@ export async function action({ request }: ActionFunctionArgs) {
   try {
     const review = await createReview(shop, {
       productId,
+      productHandle: productHandle || undefined,
       rating,
       title: title || undefined,
       body,

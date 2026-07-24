@@ -4,6 +4,62 @@ All notable changes to Cellexia Reviews are documented here. The version number 
 `package.json` and stamped into the release ZIP built by `npm run package`
 (`dist/cellexia-reviews-v<version>.zip`).
 
+## 1.5.0 — 2026-07-23
+
+### Added
+
+- **App embed — the widget on every theme, one click** (`blocks/embed.liquid`): some themes
+  don't accept app blocks on product templates, which made the widget impossible to place
+  there. The new app embed (theme editor → Theme settings → **App embeds** → toggle
+  **Cellexia Reviews** → Save) mounts the full review widget on every product page
+  automatically, right after the product-information / add-to-cart area — with an optional
+  **Widget placement (CSS selector, optional)** override for exact positioning — and can show
+  a compact star row with the review count under the product page's own title
+  (**Show stars under the product title**; skipped automatically when the Cellexia Star Badge
+  block is already on the page, hidden while the product has no published reviews). The blocks
+  remain fully supported and preferred where the theme accepts them: on any page where the
+  Cellexia Reviews block is present, the block wins and the embed steps aside — nothing ever
+  renders twice, including the JSON-LD structured data, which is deduplicated. Install docs
+  now offer the two paths side by side (`docs/INSTALL.md` §8, Option A app embed / Option B
+  blocks).
+- **Site-wide star badges on product cards**: with the app embed enabled
+  (**Show star badges on product cards site-wide**), star ratings appear next to product names
+  anywhere on the store — home page, collections, search results, featured-product sections —
+  for every product with at least one published review; products without reviews are left
+  untouched. **Badge style** picks "Stars and review count" (★★★★★ (123)) or "Stars only";
+  badge size inherits from the surrounding card text, and all three design versions apply.
+  Card titles are detected automatically across common theme markup, with an advanced
+  **Card title element (CSS selector, optional)** override for unusual themes. Cost per page:
+  at most one batched request covering up to 48 products (cached 5 minutes), zero requests on
+  pages without product links — and nothing at all while the store is not live. Merchant
+  detail: `docs/CONFIGURATION.md`, "App embed & star badges".
+- **Badges endpoint**: `GET /apps/cellexia/api/badges?handles=…`
+  (`app/routes/proxy.api.badges.tsx` + `app/services/badges.server.ts`) — proxy-verified,
+  rate-limited (new `badges` bucket, 300/h), and live/preview-gated exactly like every other
+  storefront route; returns `{ "badges": { "<handle>": { "average", "count" } } }` for
+  published-review products only, using the same rounding-safe math as the widget's own
+  stats.
+- **Product handle on submissions**: the widget now sends the product handle
+  (`product_handle`) alongside the product id when a review is submitted, and the backend
+  persists it — this is what lets badges resolve products without extra Admin API lookups
+  over time.
+- Embed settings translated in all 17 **schema** locales (theme-editor UI); the storefront
+  locale files are unchanged — badges reuse existing strings for their accessibility labels.
+- Demo page: a "product card grid" showcase under the widget — six theme-style product cards,
+  four of which pick up injected star badges from the new mock payload
+  (`CellexiaDemoData.badges`), while a zero-review card (and one more without reviews) stays
+  clean. Works offline like everything else in the demo, and follows the design-version
+  switcher.
+
+### Compatibility
+
+- **Block-only stores see byte-identical behavior vs 1.4.1** — every change is additive, and
+  the app embed ships **disabled**: until a merchant switches it on in the theme editor,
+  nothing on the storefront changes at all. When enabled on a not-live store, visitors still
+  get zero visible change and zero API data (the badges endpoint answers 403 like the rest);
+  preview mode and the theme editor show full function, per the 1.2 gating rules.
+- No new dependencies, no storefront locale-file changes, no database migration.
+
 ## 1.4.1 — 2026-07-23
 
 First-install hardening release (no functional changes):

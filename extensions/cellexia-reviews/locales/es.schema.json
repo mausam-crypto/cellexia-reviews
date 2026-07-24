@@ -33,6 +33,39 @@
         }
       }
     },
+    "embed_block": {
+      "name": "Cellexia Reviews",
+      "settings": {
+        "enable_product_widget": {
+          "label": "Mostrar el widget de opiniones en las páginas de producto",
+          "info": "Monta automáticamente el widget completo de opiniones — no se necesita ningún bloque de aplicación. Funciona con todos los temas."
+        },
+        "placement_selector": {
+          "label": "Ubicación del widget (selector CSS, opcional)",
+          "info": "Déjalo vacío para la colocación automática debajo de la información del producto. Introduce un selector CSS para montar el widget después de un elemento específico."
+        },
+        "show_pdp_title_badge": {
+          "label": "Mostrar estrellas debajo del título del producto"
+        },
+        "enable_badges": {
+          "label": "Mostrar insignias de estrellas en las tarjetas de producto de todo el sitio",
+          "info": "Añade valoraciones con estrellas junto a los nombres de los productos en la página de inicio, las colecciones y los resultados de búsqueda para productos con opiniones publicadas."
+        },
+        "badge_style": {
+          "label": "Estilo de la insignia",
+          "options__1": {
+            "label": "Estrellas y número de opiniones"
+          },
+          "options__2": {
+            "label": "Solo estrellas"
+          }
+        },
+        "badge_selector": {
+          "label": "Elemento del título de la tarjeta (selector CSS, opcional)",
+          "info": "Avanzado: solo es necesario si las insignias no encuentran automáticamente los títulos de las tarjetas de producto de tu tema."
+        }
+      }
+    },
     "defaults": {
       "heading": "Opiniones de clientes"
     }

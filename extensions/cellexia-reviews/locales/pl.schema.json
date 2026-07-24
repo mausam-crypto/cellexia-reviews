@@ -33,6 +33,39 @@
         }
       }
     },
+    "embed_block": {
+      "name": "Cellexia Reviews",
+      "settings": {
+        "enable_product_widget": {
+          "label": "Pokaż widżet opinii na stronach produktów",
+          "info": "Automatycznie osadza pełny widżet opinii — bez potrzeby bloku aplikacji. Działa z każdym szablonem."
+        },
+        "placement_selector": {
+          "label": "Umiejscowienie widżetu (selektor CSS, opcjonalnie)",
+          "info": "Pozostaw puste, aby umieścić widżet automatycznie pod informacjami o produkcie. Wpisz selektor CSS, aby zamiast tego osadzić widżet po wybranym elemencie."
+        },
+        "show_pdp_title_badge": {
+          "label": "Pokaż gwiazdki pod tytułem produktu"
+        },
+        "enable_badges": {
+          "label": "Pokaż odznaki z gwiazdkami na kartach produktów w całej witrynie",
+          "info": "Dodaje oceny w postaci gwiazdek obok nazw produktów na stronie głównej, w kolekcjach i w wynikach wyszukiwania dla produktów z opublikowanymi opiniami."
+        },
+        "badge_style": {
+          "label": "Styl odznaki",
+          "options__1": {
+            "label": "Gwiazdki i liczba opinii"
+          },
+          "options__2": {
+            "label": "Tylko gwiazdki"
+          }
+        },
+        "badge_selector": {
+          "label": "Element tytułu karty (selektor CSS, opcjonalnie)",
+          "info": "Zaawansowane: potrzebne tylko wtedy, gdy odznaki nie znajdują automatycznie tytułów kart produktów w Twoim szablonie."
+        }
+      }
+    },
     "defaults": {
       "heading": "Opinie klientów"
     }

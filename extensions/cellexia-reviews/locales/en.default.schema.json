@@ -33,6 +33,39 @@
         }
       }
     },
+    "embed_block": {
+      "name": "Cellexia Reviews",
+      "settings": {
+        "enable_product_widget": {
+          "label": "Show the review widget on product pages",
+          "info": "Mounts the full review widget automatically — no app block needed. Works on every theme."
+        },
+        "placement_selector": {
+          "label": "Widget placement (CSS selector, optional)",
+          "info": "Leave empty for automatic placement below the product information. Enter a CSS selector to mount the widget after a specific element instead."
+        },
+        "show_pdp_title_badge": {
+          "label": "Show stars under the product title"
+        },
+        "enable_badges": {
+          "label": "Show star badges on product cards site-wide",
+          "info": "Adds star ratings next to product names on the home page, collections, and search results for products with published reviews."
+        },
+        "badge_style": {
+          "label": "Badge style",
+          "options__1": {
+            "label": "Stars and review count"
+          },
+          "options__2": {
+            "label": "Stars only"
+          }
+        },
+        "badge_selector": {
+          "label": "Card title element (CSS selector, optional)",
+          "info": "Advanced: only needed if badges don't find your theme's product card titles automatically."
+        }
+      }
+    },
     "defaults": {
       "heading": "Customer reviews"
     }

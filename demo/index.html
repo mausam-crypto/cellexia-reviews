@@ -103,12 +103,80 @@
       line-height: 1.5;
     }
     .demo-missing.is-visible { display: block; }
-    .demo-missing code {
+    .demo-missing code,
+    .demo-grid__note code {
       font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
       font-size: 12.5px;
       background: #F0F2F2;
       padding: 1px 4px;
       border-radius: 4px;
+    }
+    /* v1.5 product card grid — demo chrome that mimics a theme's collection/
+       featured-products cards. The star badges injected next to the card
+       titles (.cx-badge-inline) are styled by the real extension CSS. */
+    .demo-grid {
+      border-top: 1px solid #E7E7E7;
+      margin-top: 44px;
+      padding-top: 26px;
+    }
+    .demo-grid h2 {
+      margin: 0 0 4px;
+      font-size: 20px;
+      line-height: 1.3;
+      font-weight: 700;
+    }
+    .demo-grid__note {
+      margin: 0 0 20px;
+      font-size: 13px;
+      line-height: 1.5;
+      color: #565959;
+      max-width: 78ch;
+    }
+    .demo-cards {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: 22px 16px;
+    }
+    .demo-card__media {
+      display: block;
+      aspect-ratio: 1 / 1;
+      border-radius: 10px;
+      border: 1px solid #E7E7E7;
+      background:
+        radial-gradient(circle at 50% 34%, rgba(255, 255, 255, 0.55) 0 17%, transparent 18%),
+        linear-gradient(135deg, var(--demo-c1, #F0F2F2), var(--demo-c2, #D5D9D9));
+      margin-bottom: 10px;
+    }
+    .demo-card__tag {
+      display: inline-block;
+      margin: 0 0 6px;
+      padding: 2px 8px;
+      border-radius: 999px;
+      background: #F0F2F2;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: #565959;
+    }
+    .demo-card__title {
+      margin: 0;
+      font-size: 14px;
+      line-height: 1.35;
+      font-weight: 400;
+    }
+    .demo-card__title a {
+      color: #0F1111;
+      text-decoration: none;
+    }
+    .demo-card__title a:hover { text-decoration: underline; }
+    .demo-card__price {
+      margin: 2px 0 0;
+      font-size: 13px;
+      color: #565959;
     }
   </style>
 </head>
@@ -470,6 +538,40 @@
 }</script>
 
     <!--
+      v1.5 (SPEC-1.5 §1): the embed's config element — the same
+      #cx-embed-config JSON script that blocks/embed.liquid renders when the
+      "Cellexia Reviews" app embed is enabled in the theme editor. On this
+      page it exists to switch on the site-wide badge injector for the
+      product card grid below the widget; in demo mode the injector reads
+      window.CellexiaDemoData.badges instead of calling
+      GET /apps/cellexia/api/badges. enable_product_widget and
+      show_pdp_title_badge are false because this page already mounts the
+      widget the block way (on real storefronts, too, blocks win over the
+      embed and nothing double-renders).
+    -->
+    <script type="application/json" id="cx-embed-config">{
+      "pageType": "product",
+      "settings": {
+        "enable_product_widget": false,
+        "placement_selector": "",
+        "enable_badges": true,
+        "badge_style": "stars_count",
+        "badge_selector": "",
+        "show_pdp_title_badge": false
+      },
+      "skin": "amazon",
+      "live": true,
+      "product": {
+        "id": "8654321098765",
+        "handle": "regenerant-cellular-renewal-cream",
+        "title": "Cellexia Régénérant Cellular Renewal Cream",
+        "url": "/products/regenerant-cellular-renewal-cream",
+        "rating": 4.6,
+        "ratingCount": 50506
+      }
+    }</script>
+
+    <!--
       Widget root — same element blocks/reviews.liquid renders on a product
       page (§8), with data-demo="true" so the JS reads window.CellexiaDemoData
       instead of fetching the app proxy. The inner containers mirror the
@@ -479,6 +581,7 @@
       id="cellexia-reviews"
       class="cx"
       data-product-id="8654321098765"
+      data-product-handle="regenerant-cellular-renewal-cream"
       data-locale="en"
       data-shop-default-locale="en"
       data-proxy="/apps/cellexia/api"
@@ -511,6 +614,77 @@
         <p>JavaScript is required to display customer reviews in this demo preview.</p>
       </noscript>
     </div>
+
+    <!--
+      v1.5 (SPEC-1.5 §3.4): "product card grid" showcase for the site-wide
+      star badges. The markup mimics a theme's collection/featured-products
+      cards — each card is a /products/<handle> link plus a heading
+      (.card__heading, Dawn-style) that contains the link — exactly what the
+      embed's badge injector scans for on a real storefront. Four of the six
+      handles have data in CellexiaDemoData.badges and get a badge injected
+      after their title; "Pureté Gentle Cleansing Foam" (0 published
+      reviews) and "Velours Solaire SPF 50" are absent from the mock payload
+      — like the real badges endpoint, which omits unreviewed handles — so
+      their cards stay clean.
+    -->
+    <section class="demo-grid" aria-label="Product card grid — site-wide star badges demo">
+      <p class="demo-kicker">Cellexia · Demo collection</p>
+      <h2>More from Cellexia</h2>
+      <p class="demo-grid__note">
+        This grid mimics a theme's product cards (home page, collections, search results).
+        With the v1.5 app embed enabled, the widget script injects a star badge next to the
+        product name of every product that has published reviews — here fed by the mocked
+        badges payload in <code>mock-data.js</code> (<code>CellexiaDemoData.badges</code>)
+        instead of the <code>/apps/cellexia/api/badges</code> endpoint. Two of the cards have
+        no published reviews and stay untouched. The <strong>Design</strong> switcher in the
+        banner restyles the badges along with the widget. Card links are inert in this demo.
+      </p>
+      <ul class="demo-cards">
+        <li class="demo-card" style="--demo-c1:#F7D9CF; --demo-c2:#E8A798;">
+          <a class="demo-card__media" href="/products/regenerant-cellular-renewal-cream" tabindex="-1" aria-hidden="true"></a>
+          <h3 class="demo-card__title card__heading">
+            <a href="/products/regenerant-cellular-renewal-cream">Régénérant Cellular Renewal Cream</a>
+          </h3>
+          <p class="demo-card__price">€120</p>
+        </li>
+        <li class="demo-card" style="--demo-c1:#FBE8C9; --demo-c2:#F2C879;">
+          <a class="demo-card__media" href="/products/eclat-vitamin-c-serum" tabindex="-1" aria-hidden="true"></a>
+          <h3 class="demo-card__title card__heading">
+            <a href="/products/eclat-vitamin-c-serum">Éclat Vitamin C Serum</a>
+          </h3>
+          <p class="demo-card__price">€86</p>
+        </li>
+        <li class="demo-card" style="--demo-c1:#D9E7F5; --demo-c2:#A9C6E8;">
+          <a class="demo-card__media" href="/products/hydra-riche-night-balm" tabindex="-1" aria-hidden="true"></a>
+          <h3 class="demo-card__title card__heading">
+            <a href="/products/hydra-riche-night-balm">Hydra-Riche Night Balm</a>
+          </h3>
+          <p class="demo-card__price">€94</p>
+        </li>
+        <li class="demo-card" style="--demo-c1:#E5DFF2; --demo-c2:#BCA9DD;">
+          <a class="demo-card__media" href="/products/lumiere-eye-contour-gel" tabindex="-1" aria-hidden="true"></a>
+          <h3 class="demo-card__title card__heading">
+            <a href="/products/lumiere-eye-contour-gel">Lumière Eye Contour Gel</a>
+          </h3>
+          <p class="demo-card__price">€72</p>
+        </li>
+        <li class="demo-card" style="--demo-c1:#DFF0E4; --demo-c2:#A8D3B5;">
+          <a class="demo-card__media" href="/products/purete-gentle-cleansing-foam" tabindex="-1" aria-hidden="true"></a>
+          <span class="demo-card__tag">New — no reviews yet</span>
+          <h3 class="demo-card__title card__heading">
+            <a href="/products/purete-gentle-cleansing-foam">Pureté Gentle Cleansing Foam</a>
+          </h3>
+          <p class="demo-card__price">€38</p>
+        </li>
+        <li class="demo-card" style="--demo-c1:#FDEBD9; --demo-c2:#F4B98A;">
+          <a class="demo-card__media" href="/products/velours-solaire-spf50" tabindex="-1" aria-hidden="true"></a>
+          <h3 class="demo-card__title card__heading">
+            <a href="/products/velours-solaire-spf50">Velours Solaire SPF 50</a>
+          </h3>
+          <p class="demo-card__price">€54</p>
+        </li>
+      </ul>
+    </section>
   </main>
 
   <!-- Mock dataset must be defined before the widget script runs. -->
@@ -533,20 +707,23 @@
       });
     })();
 
-    /* Demo-only: design-version switcher (SPEC-1.1, SPEC-1.3). Toggles
-       data-cx-skin on the widget root — the same attribute
+    /* Demo-only: design-version switcher (SPEC-1.1, SPEC-1.3, SPEC-1.5).
+       Toggles data-cx-skin on the widget root — the same attribute
        blocks/reviews.liquid renders from the `cellexia.design_theme` shop
-       metafield — and on any top-layer surface (dialog / sheet / lightbox /
-       filter panel) that is open at that moment, so all three skins are
-       previewable live. Default: amazon. */
+       metafield — on any top-layer surface (dialog / sheet / lightbox /
+       filter panel) that is open at that moment, and on the star badges
+       (.cx-badge-inline) injected next to the card-grid titles, so all
+       three skins are previewable live. Default: amazon. */
     (function () {
       "use strict";
       var buttons = document.querySelectorAll(".demo-skin__btn");
+      var currentSkin = "amazon";
       function applySkin(value) {
         var skin = value === "cellexia" || value === "luxe" ? value : "amazon";
+        currentSkin = skin;
         var root = document.getElementById("cellexia-reviews");
         if (root) root.setAttribute("data-cx-skin", skin);
-        var surfaces = document.querySelectorAll(".cx-overlay, .cx-dialog");
+        var surfaces = document.querySelectorAll(".cx-overlay, .cx-dialog, .cx-badge-inline");
         Array.prototype.forEach.call(surfaces, function (node) {
           node.setAttribute("data-cx-skin", skin);
         });
@@ -560,6 +737,28 @@
         b.addEventListener("click", function () {
           applySkin(b.getAttribute("data-skin"));
         });
+      });
+      /* The card badges are injected lazily (idle callback after hydrate) —
+         re-apply the selected skin once they exist, so switching designs
+         before the injection finishes still themes them. Idempotent. */
+      window.setTimeout(function () { applySkin(currentSkin); }, 1200);
+      window.setTimeout(function () { applySkin(currentSkin); }, 3000);
+    })();
+
+    /* Demo-only: the card grid's /products/… links point at products that
+       exist only on this page — keep them inert. (The hrefs are still real
+       product-URL paths because that is how the badge injector derives each
+       card's product handle, exactly as on a live theme.) */
+    (function () {
+      "use strict";
+      var grid = document.querySelector(".demo-grid");
+      if (!grid) return;
+      grid.addEventListener("click", function (ev) {
+        var node = ev.target;
+        while (node && node !== grid) {
+          if (node.tagName === "A") { ev.preventDefault(); return; }
+          node = node.parentNode;
+        }
       });
     })();
   </script>

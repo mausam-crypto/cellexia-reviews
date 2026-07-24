@@ -1,144 +1,11 @@
 /* Cellexia Reviews storefront widget — vanilla ES2019, no dependencies.
-* Hydrates the SSR content rendered by blocks/reviews.liquid.
-* Contract: SPEC §6 (API), §8 (DOM), §9 (behavior), §15 (demo mode),
-* SPEC-1.2 (live/preview gating: data-cx-live, cx_preview token, preview ribbon).
+* Contract: SPEC §6/§8/§9/§15, SPEC-1.2 (gating), SPEC-1.5 (embed, badges, JSON-LD dedupe).
 * No innerHTML with user content — DOM built via createElement/textContent only.
 */
 (() => {
 "use strict";
-function boot() {
-var root = document.getElementById("cellexia-reviews");
-if (!root) return;
-if (root.getAttribute("data-cx-hydrated") === "true") return;
-sa(root, "data-cx-hydrated", "true");
-
-/* ---------------- config ---------------- */
-function attr(name, dflt) {
- var v = root.getAttribute("data-" + name);
- return v === null || v === "" ? dflt : v;
-}
-function flag(name, dflt) {
- var v = root.getAttribute("data-" + name);
- if (v === null || v === "") return dflt;
- return v === "true" || v === "1";
-}
-var cfg = {
- productId: attr("product-id", ""),
- locale: attr("locale", "en"),
- proxy: attr("proxy", "/apps/cellexia-reviews/api").replace(/\/$/, ""),
- perPage: parseInt(attr("per-page", "10"), 10) || 10,
- defaultLocale: attr("shop-default-locale", "en"),
- showSummary: flag("show-summary", true),
- showMediaStrip: flag("show-media-strip", true),
- showForm: flag("show-form", true),
- showTranslate: flag("show-translate", true),
- demo: attr("demo", "false") === "true",
- brand: attr("brand", "Cellexia")
-};
-
-/* ---------------- v1.2 live / preview gating (SPEC-1.2) ---------------- */
-// data-cx-live absent ⇒ live: the demo page and pre-1.2 markup are unaffected.
-// When the block SSRs data-cx-live="false" (store not live, real storefront),
-// the root is a hidden empty shell. Only a tokenized admin preview may un-hide
-// it: token from the ?cx_preview URL param (persisted to sessionStorage) or a
-// previously stored sessionStorage value. Without a token: no fetches, no
-// rendering, zero visible pixels. ssGet/ssSet/ssDel are hoisted declarations
-// from the storage section below (same pattern as sa() used before its
-// definition at the top of boot).
-var isLive = attr("cx-live", "true") !== "false";
-var designMode = !!(window.Shopify && window.Shopify.designMode);
-var previewToken = null;
-if (!isLive) {
- var urlToken = null;
- try { urlToken = new URLSearchParams(window.location.search).get("cx_preview"); } catch (e) { /* no URLSearchParams */ }
- if (urlToken) {
-  ssSet("cx_preview_token", urlToken);
-  previewToken = urlToken;
- } else {
-  previewToken = ssGet("cx_preview_token");
- }
- if (!previewToken) return; // root stays hidden
- root.hidden = false;
-}
-var MEDIA_LIMITS = {
- images: 5, videos: 1, imgMb: 8, vidMb: 80,
- imgTypes: ["image/jpeg", "image/png", "image/webp", "image/heic"],
- imgExt: /\.(jpe?g|png|webp|heic)$/i,
- vidTypes: ["video/mp4", "video/quicktime", "video/webm"],
- vidExt: /\.(mp4|mov|webm)$/i
-};
-var AGE_RANGES = ["under_25", "25_34", "35_44", "45_54", "55_64", "65_plus"];
-var SKIN_CONCERNS = ["fine_lines", "dark_spots", "dryness", "dullness", "firmness", "texture", "sensitivity", "redness", "pores", "dark_circles"];
-var TIME_USING = ["lt_1w", "w1_4", "m1_3", "m3_6", "gt_6m"];
-var RESULTS_SEEN = ["smoother", "fewer_lines", "firmer", "radiance", "even_tone", "hydration", "calmer", "too_early"];
-var REPORT_REASONS = ["off_topic", "inappropriate", "spam", "privacy", "other"];
-
-/* ---------------- i18n ---------------- */
-var STRINGS = {};
-(function loadDict() {
- var tag = document.getElementById("cx-i18n");
- if (!tag) return;
- var parsed;
- try { parsed = JSON.parse(tag.textContent); } catch (e) { return; }
- (function flatten(obj, prefix) {
-  for (var k in obj) {
-   if (!own(obj, k)) continue;
-   var v = obj[k];
-   var p = prefix ? prefix + "." + k : k;
-   if (v !== null && typeof v === "object") flatten(v, p);
-   else STRINGS[p] = String(v);
-  }
- })(parsed, "");
-})();
-function str(key) {
- if (STRINGS[key] !== undefined) return STRINGS[key];
- if (STRINGS["cellexia." + key] !== undefined) return STRINGS["cellexia." + key];
- return null;
-}
-var NF, NF1, DF, PR;
-try { NF = new Intl.NumberFormat(cfg.locale); } catch (e) { NF = new Intl.NumberFormat("en"); }
-try { NF1 = new Intl.NumberFormat(cfg.locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 }); } catch (e) { NF1 = NF; }
-try { DF = new Intl.DateTimeFormat(cfg.locale, { dateStyle: "long" }); } catch (e) { DF = new Intl.DateTimeFormat("en", { dateStyle: "long" }); }
-try { PR = new Intl.PluralRules(cfg.locale); } catch (e) { PR = new Intl.PluralRules("en"); }
-function fmtNum(n) { return NF.format(n); }
-function fmtDate(iso) {
- var d = new Date(iso);
- return isNaN(d.getTime()) ? "" : DF.format(d);
-}
-function t(key, vars) {
- vars = vars || {};
- var s = null;
- if (typeof vars.count === "number") {
-  var cat = PR.select(vars.count);
-  s = str(key + "." + cat);
-  if (s === null && cat !== "other") s = str(key + ".other");
-  if (s === null) s = str(key + ".one");
- }
- if (s === null) s = str(key);
- if (s === null) return key;
- return s.replace(/\[\[(\w+)\]\]/g, (m, name) => {
-  if (!(name in vars)) return m;
-  var v = vars[name];
-  return typeof v === "number" ? fmtNum(v) : String(v);
- });
-}
-var tw = (k, v) => t("widget." + k, v);
-var tf = (k, v) => t("form." + k, v);
-var trs = (k, v) => t("review." + k, v);
-function langName(code) {
- try {
-  var n = new Intl.DisplayNames([cfg.locale], { type: "language" }).of(code);
-  return n || code;
- } catch (e) { return code; }
-}
-function regionName(code) {
- try {
-  var n = new Intl.DisplayNames([cfg.locale], { type: "region" }).of(code);
-  return n || code;
- } catch (e) { return code; }
-}
-
-/* ---------------- DOM helpers ---------------- */
+/* ===== shared helpers (v1.5: also used by the badge module) ===== */
+var SVG_NS = "http://www.w3.org/2000/svg";
 function el(tag, cls, text) {
  var e = document.createElement(tag);
  if (cls) e.className = cls;
@@ -163,23 +30,13 @@ function clear(node) { while (node.firstChild) node.removeChild(node.firstChild)
 function hideVisually(e) {
  st(e, { position: "absolute", width: "1px", height: "1px", overflow: "hidden", clipPath: "inset(50%)", whiteSpace: "nowrap" });
 }
-var SVG_NS = "http://www.w3.org/2000/svg";
-function svgIcon(pathD, viewBox, cls, filled) {
- var s = ns("svg");
- sa(s, "viewBox", viewBox || "0 0 20 20");
- sa(s, "aria-hidden", "true");
- sa(s, "focusable", "false");
- sa(s, "width", "16"); sa(s, "height", "16");
- if (cls) sa(s, "class", cls);
- var p = ns("path");
- sa(p, "d", pathD);
- sa(p, "fill", filled === false ? "none" : "currentColor");
- if (filled === false) { sa(p, "stroke", "currentColor"); sa(p, "stroke-width", "1.5"); }
- ap(s, p);
- return s;
+function debounce(fn, ms) {
+ var timer = null;
+ return (...args) => {
+  if (timer) clearTimeout(timer);
+  timer = setTimeout(() => { timer = null; fn.apply(null, args); }, ms);
+ };
 }
-var ICON_SEARCH = "M8.5 3a5.5 5.5 0 0 1 4.38 8.82l3.65 3.65-1.06 1.06-3.65-3.65A5.5 5.5 0 1 1 8.5 3zm0 1.5a4 4 0 1 0 0 8 4 4 0 0 0 0-8z";
-var ICON_ARROW_UP = "M5 15 15 5m0 0H7m8 0v8";
 var STAR_PATH = "M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z";
 var starUid = 0;
 function starSvg(frac, size) {
@@ -216,14 +73,217 @@ function starSvg(frac, size) {
  ap(s, p);
  return s;
 }
-function starRow(rating, size) {
+function starRowCore(rating, size, label) {
  var wrap = el("span", "cx-stars");
  sa(wrap, "role", "img");
- al(wrap, t("a11y.stars_label", { rating: NF1.format(rating) }));
+ al(wrap, label);
  for (var i = 0; i < 5; i++) {
   ap(wrap, starSvg(Math.max(0, Math.min(1, rating - i)), size || 16));
  }
  return wrap;
+}
+/* storage */
+function lsGet(key) {
+ try { return window.localStorage.getItem(key); } catch (e) { return null; }
+}
+function lsSet(key, val) {
+ try { window.localStorage.setItem(key, val); } catch (e) { /* private mode */ }
+}
+function ssGet(key) {
+ try { return window.sessionStorage.getItem(key); } catch (e) { return null; }
+}
+function ssSet(key, val) {
+ try { window.sessionStorage.setItem(key, val); } catch (e) {}
+}
+function ssDel(key) {
+ try { window.sessionStorage.removeItem(key); } catch (e) {}
+}
+function discoverPreviewToken() {
+ var urlToken = null;
+ try { urlToken = new URLSearchParams(window.location.search).get("cx_preview"); } catch (e) { /* no URLSearchParams */ }
+ if (urlToken) {
+  ssSet("cx_preview_token", urlToken);
+  return urlToken;
+ }
+ return ssGet("cx_preview_token");
+}
+/* i18n: flat dict from #cx-i18n + Intl formatters for one locale. */
+function makeI18n(locale) {
+ var STRINGS = {};
+ (function loadDict() {
+  var tag = document.getElementById("cx-i18n");
+  if (!tag) return;
+  var parsed;
+  try { parsed = JSON.parse(tag.textContent); } catch (e) { return; }
+  (function flatten(obj, prefix) {
+   for (var k in obj) {
+    if (!own(obj, k)) continue;
+    var v = obj[k];
+    var p = prefix ? prefix + "." + k : k;
+    if (v !== null && typeof v === "object") flatten(v, p);
+    else STRINGS[p] = String(v);
+   }
+  })(parsed, "");
+ })();
+ function str(key) {
+  if (STRINGS[key] !== undefined) return STRINGS[key];
+  if (STRINGS["cellexia." + key] !== undefined) return STRINGS["cellexia." + key];
+  return null;
+ }
+ var NF, NF1, DF, PR;
+ try { NF = new Intl.NumberFormat(locale); } catch (e) { NF = new Intl.NumberFormat("en"); }
+ try { NF1 = new Intl.NumberFormat(locale, { minimumFractionDigits: 1, maximumFractionDigits: 1 }); } catch (e) { NF1 = NF; }
+ try { DF = new Intl.DateTimeFormat(locale, { dateStyle: "long" }); } catch (e) { DF = new Intl.DateTimeFormat("en", { dateStyle: "long" }); }
+ try { PR = new Intl.PluralRules(locale); } catch (e) { PR = new Intl.PluralRules("en"); }
+ function fmtNum(n) { return NF.format(n); }
+ function fmtDate(iso) {
+  var d = new Date(iso);
+  return isNaN(d.getTime()) ? "" : DF.format(d);
+ }
+ function t(key, vars) {
+  vars = vars || {};
+  var s = null;
+  if (typeof vars.count === "number") {
+   var cat = PR.select(vars.count);
+   s = str(key + "." + cat);
+   if (s === null && cat !== "other") s = str(key + ".other");
+   if (s === null) s = str(key + ".one");
+  }
+  if (s === null) s = str(key);
+  if (s === null) return key;
+  return s.replace(/\[\[(\w+)\]\]/g, (m, name) => {
+   if (!(name in vars)) return m;
+   var v = vars[name];
+   return typeof v === "number" ? fmtNum(v) : String(v);
+  });
+ }
+ return { t: t, str: str, fmtNum: fmtNum, fmtDate: fmtDate, NF1: NF1 };
+}
+/* v1.2 preview ribbon (mounted at most once). */
+var previewBar = null;
+function renderPreviewBar(t) {
+ if (previewBar) return;
+ previewBar = el("div", "cx-preview-bar");
+ sa(previewBar, "role", "status");
+ ap(previewBar, el("strong", "cx-preview-bar__badge", t("preview.badge")));
+ ap(previewBar, el("span", "cx-preview-bar__note", t("preview.note")));
+ ap(previewBar, btn("cx-preview-bar__exit", t("preview.exit"), () => {
+  ssDel("cx_preview_token");
+  // Strip ?cx_preview before reloading or the reload re-enters preview.
+  try {
+   var u = new URL(window.location.href);
+   if (u.searchParams.has("cx_preview")) {
+    u.searchParams.delete("cx_preview");
+    window.history.replaceState(null, "", u.toString());
+   }
+  } catch (e) { /* old browsers: at worst one extra preview view */ }
+  window.location.reload();
+ }));
+ ap(document.body, previewBar);
+}
+function removePreviewBar() {
+ if (previewBar && previewBar.parentNode) previewBar.parentNode.removeChild(previewBar);
+ previewBar = null;
+}
+
+function boot(root) {
+if (!root) return;
+if (root.getAttribute("data-cx-hydrated") === "true") return;
+sa(root, "data-cx-hydrated", "true");
+
+/* ---- config ---- */
+function attr(name, dflt) {
+ var v = root.getAttribute("data-" + name);
+ return v === null || v === "" ? dflt : v;
+}
+function flag(name, dflt) {
+ var v = root.getAttribute("data-" + name);
+ if (v === null || v === "") return dflt;
+ return v === "true" || v === "1";
+}
+var cfg = {
+ productId: attr("product-id", ""),
+ productHandle: attr("product-handle", ""), // v1.5: sent with review POSTs
+ locale: attr("locale", "en"),
+ proxy: attr("proxy", "/apps/cellexia-reviews/api").replace(/\/$/, ""),
+ perPage: parseInt(attr("per-page", "10"), 10) || 10,
+ defaultLocale: attr("shop-default-locale", "en"),
+ showSummary: flag("show-summary", true),
+ showMediaStrip: flag("show-media-strip", true),
+ showForm: flag("show-form", true),
+ showTranslate: flag("show-translate", true),
+ demo: attr("demo", "false") === "true",
+ brand: attr("brand", "Cellexia")
+};
+
+/* ---- v1.2 live / preview gating (SPEC-1.2) ---- */
+// data-cx-live absent ⇒ live; not live: only a token un-hides; v1.5: embed re-hides sans token, editor short-circuits.
+var isLive = attr("cx-live", "true") !== "false";
+var designMode = !!(window.Shopify && window.Shopify.designMode);
+var isEmbed = root.getAttribute("data-cx-embed") === "true";
+var previewToken = null;
+if (!isLive) {
+ previewToken = discoverPreviewToken();
+ if (previewToken) {
+  root.hidden = false;
+ } else if (isEmbed && designMode) {
+  root.hidden = false; // editor stays visible; API 403s stay quiet
+ } else {
+  if (isEmbed) root.hidden = true; // re-hide the relocated embed shell
+  return; // block root stays hidden
+ }
+}
+var MEDIA_LIMITS = {
+ images: 5, videos: 1, imgMb: 8, vidMb: 80,
+ imgTypes: ["image/jpeg", "image/png", "image/webp", "image/heic"],
+ imgExt: /\.(jpe?g|png|webp|heic)$/i,
+ vidTypes: ["video/mp4", "video/quicktime", "video/webm"],
+ vidExt: /\.(mp4|mov|webm)$/i
+};
+var AGE_RANGES = ["under_25", "25_34", "35_44", "45_54", "55_64", "65_plus"];
+var SKIN_CONCERNS = ["fine_lines", "dark_spots", "dryness", "dullness", "firmness", "texture", "sensitivity", "redness", "pores", "dark_circles"];
+var TIME_USING = ["lt_1w", "w1_4", "m1_3", "m3_6", "gt_6m"];
+var RESULTS_SEEN = ["smoother", "fewer_lines", "firmer", "radiance", "even_tone", "hydration", "calmer", "too_early"];
+var REPORT_REASONS = ["off_topic", "inappropriate", "spam", "privacy", "other"];
+
+/* ---- i18n (shared factory) ---- */
+var I18N = makeI18n(cfg.locale);
+var t = I18N.t, str = I18N.str, fmtNum = I18N.fmtNum, fmtDate = I18N.fmtDate, NF1 = I18N.NF1;
+var tw = (k, v) => t("widget." + k, v);
+var tf = (k, v) => t("form." + k, v);
+var trs = (k, v) => t("review." + k, v);
+function langName(code) {
+ try {
+  var n = new Intl.DisplayNames([cfg.locale], { type: "language" }).of(code);
+  return n || code;
+ } catch (e) { return code; }
+}
+function regionName(code) {
+ try {
+  var n = new Intl.DisplayNames([cfg.locale], { type: "region" }).of(code);
+  return n || code;
+ } catch (e) { return code; }
+}
+
+/* ---- DOM helpers (shared ones at IIFE scope) ---- */
+function svgIcon(pathD, viewBox, cls, filled) {
+ var s = ns("svg");
+ sa(s, "viewBox", viewBox || "0 0 20 20");
+ sa(s, "aria-hidden", "true");
+ sa(s, "focusable", "false");
+ sa(s, "width", "16"); sa(s, "height", "16");
+ if (cls) sa(s, "class", cls);
+ var p = ns("path");
+ sa(p, "d", pathD);
+ sa(p, "fill", filled === false ? "none" : "currentColor");
+ if (filled === false) { sa(p, "stroke", "currentColor"); sa(p, "stroke-width", "1.5"); }
+ ap(s, p);
+ return s;
+}
+var ICON_SEARCH = "M8.5 3a5.5 5.5 0 0 1 4.38 8.82l3.65 3.65-1.06 1.06-3.65-3.65A5.5 5.5 0 1 1 8.5 3zm0 1.5a4 4 0 1 0 0 8 4 4 0 0 0 0-8z";
+var ICON_ARROW_UP = "M5 15 15 5m0 0H7m8 0v8";
+function starRow(rating, size) {
+ return starRowCore(rating, size, t("a11y.stars_label", { rating: NF1.format(rating) }));
 }
 function highlightInto(parent, text, terms, markTag) {
  if (!text) return;
@@ -248,30 +308,8 @@ function highlightInto(parent, text, terms, markTag) {
   i = best + len;
  }
 }
-function debounce(fn, ms) {
- var timer = null;
- return (...args) => {
-  if (timer) clearTimeout(timer);
-  timer = setTimeout(() => { timer = null; fn.apply(null, args); }, ms);
- };
-}
 
-/* ---------------- storage ---------------- */
-function lsGet(key) {
- try { return window.localStorage.getItem(key); } catch (e) { return null; }
-}
-function lsSet(key, val) {
- try { window.localStorage.setItem(key, val); } catch (e) { /* private mode */ }
-}
-function ssGet(key) {
- try { return window.sessionStorage.getItem(key); } catch (e) { return null; }
-}
-function ssSet(key, val) {
- try { window.sessionStorage.setItem(key, val); } catch (e) { /* private mode */ }
-}
-function ssDel(key) {
- try { window.sessionStorage.removeItem(key); } catch (e) { /* private mode */ }
-}
+/* ---- storage (shared helpers at IIFE scope) ---- */
 function visitorToken() {
  var tok = lsGet("cx_visitor_token");
  if (tok) return tok;
@@ -290,7 +328,7 @@ var helpfulSet = (() => {
  var raw = lsGet("cx_helpful");
  var set = {};
  if (raw) {
-  try { JSON.parse(raw).forEach((id) => { set[id] = true; }); } catch (e) { /* ignore */ }
+  try { JSON.parse(raw).forEach((id) => { set[id] = true; }); } catch (e) {}
  }
  return set;
 })();
@@ -301,7 +339,7 @@ function markHelpful(id) {
 var trCache = {};      // reviewId -> {title, body, reply} for cfg.locale
 var reportedSet = {};  // reviewId -> true (session only)
 
-/* ---------------- API layer (with demo adapter) ---------------- */
+/* ---- API layer (with demo adapter) ---- */
 function qs(params) {
  var parts = [];
  for (var k in params) {
@@ -312,18 +350,12 @@ function qs(params) {
  }
  return parts.length ? "?" + parts.join("&") : "";
 }
-// v1.2 (SPEC-1.2): the proxy answers 403 {ok:false, errors:{_:"not_live"}} when
-// the store is not live and no valid preview token was sent (stale `cellexia.live`
-// metafield, revoked token). httpError tags such errors; every transport calls
-// handleNotLive() so the widget hides quietly instead of showing error UI.
+// v1.2: 403 not_live without a valid token → transports hide the widget quietly.
 function httpError(status, body) {
  var err = new Error("http_" + status);
  if (status === 403 && body && body.errors && body.errors._ === "not_live") err.cxNotLive = true;
  return err;
 }
-// Preview mode only (previewToken is null when live): ride the token on every
-// JSON POST body. GET calls append it via qs(); the submit FormData appends it
-// in apiSubmit.
 function withPreview(body) {
  if (previewToken) body.preview_token = previewToken;
  return body;
@@ -481,7 +513,7 @@ function apiSubmit(formData) {
  });
 }
 
-/* ---------------- state & containers ---------------- */
+/* ---- state & containers ---- */
 var state = {
  page: 1, perPage: cfg.perPage, sort: "top",
  stars: 0, verified: false, withMedia: false,
@@ -496,7 +528,7 @@ var activeTerms = [];        // highlight terms of the active topic
 var translatedIds = {};      // reviewId -> true when showing translation
 var allTranslated = false;
 var firstLoadDone = false;
-var SECTION_FALLBACKS = { // legacy [liquid] container names, kept as extra lookups
+var SECTION_FALLBACKS = { // legacy container-name lookups
  "media-strip": ".cx-strip",
  "active-filters": ".cx-pills",
  "pagination": ".cx-load-more"
@@ -520,16 +552,18 @@ var secList = section("list");
 var secFilters = section("active-filters");
 var secPagination = section("pagination");
 var secWrite = section("write");
-// Keep DOM order sane when a container had to be created (e.g. a page without an
-// active-filters div): the removable filter pills always sit right above the list.
-if (secFilters.parentNode && secList.parentNode) {
+// v1.5: embed shells hydrate flat — wrap in the block's cx-layout (reviews.liquid).
+if (isEmbed && !root.querySelector(".cx-layout")) {
+ var lay = ap(root, el("div", "cx-layout"));
+ var rail = ap(lay, el("div", "cx-layout__rail"));
+ var mainCol = ap(lay, el("div", "cx-layout__main"));
+ [secHeader, secSummary, secWrite].forEach((s) => { ap(rail, s); });
+ [secMedia, secControls, secFilters, secList, secPagination].forEach((s) => { ap(mainCol, s); });
+}
+if (secFilters.parentNode && secList.parentNode) { // pills sit above the list
  secList.parentNode.insertBefore(secFilters, secList);
 }
-// v1.2 (SPEC-1.2): the theme editor always SSRs the full widget, even when the
-// store is not live — but the proxy still answers 403 not_live there (no preview
-// token in the editor). Snapshot the server-rendered list before hydration wipes
-// it, so the not-live branch of loadPage can restore the SSR reviews instead of
-// blanking the editor with the "No reviews yet" empty state.
+// v1.2: the editor SSRs the widget even when not live — snapshot to restore.
 var ssrListSnapshot = designMode ? Array.prototype.slice.call(secList.children) : null;
 var liveRegion = el("div", "cx-live");
 sa(liveRegion, "aria-live", "polite");
@@ -538,10 +572,10 @@ ap(root, liveRegion);
 function announce(msg) { liveRegion.textContent = msg; }
 var cardRefs = {}; // reviewId -> card element (for topic "Read more" + rerenders)
 
-/* ---------------- dialog infrastructure ---------------- */
+/* ---- dialog infrastructure ---- */
 var currentDialogClose = null; // v1.2: lets handleNotLive() shut an open dialog
 var reducedMotion = false;
-try { reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (e) { /* ignore */ }
+try { reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (e) {}
 function focusables(node) {
  return Array.prototype.filter.call(
   node.querySelectorAll("a[href],button,input,select,textarea,[tabindex]"),
@@ -557,12 +591,7 @@ function openDialog(className, build) {
  var dialog = el("div", "cx-dialog " + (className || "") + (mobile ? " cx-sheet" : ""));
  sa(dialog, "role", "dialog");
  sa(dialog, "aria-modal", "true");
- // Design versions (SPEC-1.1, SPEC-1.3): top-layer surfaces (dialog/sheet/
- // lightbox/filter panel) live outside the .cx root, so — mirroring the
- // token-selector approach — they copy the root's CURRENT skin attr when
- // opened. This copy is value-agnostic (any skin, incl. "luxe", rides along);
- // the CSS scopes each skin's overrides to [data-cx-skin="…"] on these
- // surfaces too.
+ // Skins: top-layer surfaces copy the root's CURRENT skin attr when opened.
  var skin = root.getAttribute("data-cx-skin");
  if (skin) { sa(overlay, "data-cx-skin", skin); sa(dialog, "data-cx-skin", skin); }
  st(dialog, { background: "#FFFFFF", maxHeight: "88vh", overflowY: "auto",
@@ -606,39 +635,8 @@ function dlgHead(dialog, close, title) {
  ap(head, dialogCloseButton(close));
 }
 
-/* ---------------- v1.2 preview ribbon + quiet not-live handling ---------------- */
-// Fixed ribbon at the bottom of the viewport while a tokenized preview is active
-// (.cx-preview-bar, role="status"). Exit clears the sessionStorage token and
-// reloads — the storefront then falls back to the hidden not-live shell.
-var previewBar = null;
-function renderPreviewBar() {
- if (previewBar) return;
- previewBar = el("div", "cx-preview-bar");
- sa(previewBar, "role", "status");
- ap(previewBar, el("strong", "cx-preview-bar__badge", t("preview.badge")));
- ap(previewBar, el("span", "cx-preview-bar__note", t("preview.note")));
- ap(previewBar, btn("cx-preview-bar__exit", t("preview.exit"), () => {
-  ssDel("cx_preview_token");
-  // Strip ?cx_preview from the URL before reloading — otherwise the reload
-  // re-reads the token from the query string and re-enters preview.
-  try {
-   var u = new URL(window.location.href);
-   if (u.searchParams.has("cx_preview")) {
-    u.searchParams.delete("cx_preview");
-    window.history.replaceState(null, "", u.toString());
-   }
-  } catch (e) { /* very old browsers: sessionStorage is cleared, worst case one extra preview view */ }
-  window.location.reload();
- }));
- ap(document.body, previewBar);
-}
-function removePreviewBar() {
- if (previewBar && previewBar.parentNode) previewBar.parentNode.removeChild(previewBar);
- previewBar = null;
-}
-// The server answered 403 not_live (stale `cellexia.live` metafield or a revoked
-// preview token): hide everything quietly — no error UI (SPEC-1.2). In the theme
-// editor the block stays visible so merchants can keep placing/configuring it.
+/* ---- v1.2 quiet not-live handling ---- */
+// 403 not_live: hide quietly (the theme editor keeps the block visible).
 var notLiveHandled = false;
 function handleNotLive() {
  if (notLiveHandled) return;
@@ -648,13 +646,11 @@ function handleNotLive() {
  if (!designMode) root.hidden = true;
 }
 
-/* ---------------- rating header ---------------- */
+/* ---- rating header ---- */
 var howOpen = false;
 function renderHeader() {
  clear(secHeader);
  var p = data.product;
- // Respect the merchant's block heading override (data-heading, translatable via
- // Translate & Adapt); fall back to the locale default only when absent (demo mode).
  ap(secHeader, el("h2", "cx-h2", attr("heading", null) || tw("title")));
  if (!p) return;
  var avg = Number(p.average) || 0;
@@ -701,7 +697,7 @@ function renderHeader() {
  ap(secHeader, howWrap);
 }
 
-/* ---------------- "Customers say" summary + topic chips ---------------- */
+/* ---- "Customers say" summary + topic chips ---- */
 var topicPanel = null;
 function renderSummary() {
  clear(secSummary);
@@ -720,8 +716,7 @@ function renderSummary() {
  sa(rowEl, "role", "group");
  al(rowEl, tw("chips_title"));
  topics.forEach((topic) => {
-  // Pipe separators between chips are drawn by CSS (.cx-chip + .cx-chip::before).
-  var positive = topic.sentiment === "positive";
+  var positive = topic.sentiment === "positive"; // pipe separators drawn by CSS
   var chip = btn("cx-chip" + (positive ? "" : " cx-chip--neg") +
    (state.topic === topic.key ? " is-active" : ""), null, () => {
    toggleTopic(topic, chip);
@@ -829,7 +824,7 @@ function buildTopicPanel(topic) {
  return panel;
 }
 
-/* ---------------- media strip + lightbox ---------------- */
+/* ---- media strip + lightbox ---- */
 function mediaThumb(item, cls, label, onClick) {
  var b = btn(cls, null, onClick);
  al(b, label);
@@ -915,7 +910,7 @@ function openLightbox(items, startIndex) {
  });
 }
 
-/* ---------------- controls: search, sort, filter ---------------- */
+/* ---- controls: search, sort, filter ---- */
 var searchInput = null;
 function renderControls() {
  clear(secControls);
@@ -1068,7 +1063,7 @@ function openFilterPanel() {
  });
 }
 
-/* ---------------- active filter pills ---------------- */
+/* ---- active filter pills ---- */
 function renderActiveFilters() {
  clear(secFilters);
  var pills = [];
@@ -1119,7 +1114,7 @@ function anyFilterActive() {
   state.skinConcern || state.timeUsing || state.resultsSeen || state.topic || state.q);
 }
 
-/* ---------------- review cards ---------------- */
+/* ---- review cards ---- */
 function attributeLine(r) {
  var parts = [];
  if (r.ageRange) parts.push(t("attrs.age_label") + ": " + t("age." + r.ageRange));
@@ -1254,7 +1249,7 @@ function rerenderCard(r) {
  old.parentNode.replaceChild(fresh, old);
 }
 
-/* ---------------- translation ---------------- */
+/* ---- translation ---- */
 function fetchTranslations(ids) {
  var missing = ids.filter((id) => { return !trCache[id]; });
  if (!missing.length) return Promise.resolve();
@@ -1323,7 +1318,7 @@ function toggleTranslateAll(link) {
  });
 }
 
-/* ---------------- report dialog ---------------- */
+/* ---- report dialog ---- */
 function openReportDialog(r) {
  openDialog("cx-report-dialog", (dialog, close) => {
   dlgHead(dialog, close, t("report_dialog.title"));
@@ -1370,7 +1365,7 @@ function openReportDialog(r) {
  });
 }
 
-/* ---------------- list + pagination ---------------- */
+/* ---- list + pagination ---- */
 function renderList() {
  clear(secList);
  cardRefs = {};
@@ -1414,7 +1409,7 @@ function renderPagination() {
  ap(secPagination, more);
 }
 
-/* ---------------- write a review ---------------- */
+/* ---- write a review ---- */
 function renderWriteButton() {
  clear(secWrite);
  secWrite.hidden = !cfg.showForm; // .cx-write has a divider border even when empty
@@ -1657,6 +1652,7 @@ function openReviewForm() {
    if (!ok) return;
    var fd = new FormData();
    fd.append("product_id", cfg.productId);
+   if (cfg.productHandle) fd.append("product_handle", cfg.productHandle); // v1.5
    fd.append("rating", String(rating));
    if (titleInput.value.trim()) fd.append("title", titleInput.value.trim());
    fd.append("body", bodyInput.value.trim());
@@ -1712,7 +1708,7 @@ function showSuccess(dialog, close, published) {
  if (f.length) f[0].focus();
 }
 
-/* ---------------- load orchestration ---------------- */
+/* ---- load orchestration ---- */
 var loadSeq = 0;
 var summaryLocalized = false;
 function renderAll() {
@@ -1744,17 +1740,12 @@ function renderAll() {
   announce(t("a11y.list_updated"));
  }
 }
-// Admin settings the theme block cannot read from the DB (SPEC §11: showTranslate,
-// brandDisplayName; SPEC-1.1: designTheme) may ride along on the list response —
-// either as a `settings` object or as top-level snake_case fields. Apply them
-// before rendering.
+// Admin settings ride along on the list response (settings obj / snake_case).
 function applySkin(value) {
- // Guard unknown values back to the default skin, like the Liquid case/when.
- // Allowlist (SPEC-1.1 + SPEC-1.3): "amazon" (default) | "cellexia" | "luxe".
+ // Guard unknown values back to "amazon", like the Liquid case/when.
  var skin = value === "cellexia" || value === "luxe" ? value : "amazon";
  sa(root, "data-cx-skin", skin);
- // Keep any open top-layer surface (dialog/sheet/lightbox/filter panel) in sync
- // with the root — openDialog copies the attr only at open time.
+ // Sync any open top-layer surface (openDialog copies only at open time).
  var surfaces = document.querySelectorAll(".cx-overlay, .cx-dialog");
  for (var i = 0; i < surfaces.length; i++) sa(surfaces[i], "data-cx-skin", skin);
 }
@@ -1796,13 +1787,10 @@ function loadPage(append) {
   if (token !== loadSeq) return;
   data.loading = false;
   if (err && err.cxNotLive) {
-   // Quiet: handleNotLive() already hid the root (or, in the theme editor,
-   // kept it visible) — render the plain empty state instead of error UI.
+   // Quiet: handleNotLive() already ran — plain empty state, no error UI.
    if (append && state.page > 1) state.page -= 1;
    if (designMode && ssrListSnapshot && ssrListSnapshot.length) {
-    // Theme editor of a not-live store (SPEC-1.2): restore the SSR reviews so
-    // the merchant keeps seeing the full widget for placement/configuration
-    // instead of a misleading "No reviews yet" empty state.
+    // Theme editor of a not-live store: restore the SSR reviews.
     clear(secList);
     cardRefs = {};
     for (var i = 0; i < ssrListSnapshot.length; i++) ap(secList, ssrListSnapshot[i]);
@@ -1836,9 +1824,9 @@ function localizeSummaryIfNeeded() {
  }).catch(() => { /* keep the default-locale summary */ });
 }
 
-/* ---------------- init ---------------- */
+/* ---- init ---- */
 function init() {
- if (!isLive && previewToken) renderPreviewBar();
+ if (!isLive && previewToken) renderPreviewBar(t);
  if (cfg.demo && !window.CellexiaDemoData) {
   var tries = 0;
   var timer = setInterval(() => {
@@ -1852,16 +1840,315 @@ function init() {
  loadPage(false);
 }
 window.CellexiaReviews = {
- version: "1.3.0",
+ version: "1.5.0",
  refresh: reload,
  t: t,
  getState: () => Object.assign({}, state)
 };
 init();
 }
+
+/* ===== v1.5 (SPEC-1.5) app embed + site-wide star badges =====
+   Additive: without #cx-embed-config this degrades to the v1.4.1 boot path.
+   Every DOM query is guarded — never throw on any theme page. */
+function inDesignMode() { return !!(window.Shopify && window.Shopify.designMode); }
+function qsSafe(sel) {
+ if (!sel) return null;
+ try { return document.querySelector(sel); } catch (e) { return null; }
+}
+function detach(node) {
+ try { if (node && node.parentNode) node.parentNode.removeChild(node); } catch (e) {}
+}
+function insertAfter(node, ref) {
+ try {
+  if (!ref || !ref.parentNode || node.contains(ref)) return false;
+  ref.parentNode.insertBefore(node, ref.nextSibling);
+  return true;
+ } catch (e) { return false; }
+}
+// §1.2 config: { pageType, settings, skin, live, product? }
+function readEmbedConfig() {
+ var tag = document.getElementById("cx-embed-config");
+ try {
+  var parsed = tag ? JSON.parse(tag.textContent) : null;
+  return parsed && typeof parsed === "object" ? parsed : null;
+ } catch (e) { return null; }
+}
+function anyRoot() {
+ return document.getElementById("cellexia-reviews") || document.getElementById("cellexia-reviews-embed");
+}
+// §3.6: block JSON-LD + embed copy coexist → drop the embed one early.
+function dedupeEmbedJsonLd() {
+ try {
+  var embedLd = document.querySelector('script[type="application/ld+json"][data-cx-jsonld="embed"]');
+  if (!embedLd) return;
+  var others = document.querySelectorAll('script[type="application/ld+json"]:not([data-cx-jsonld])');
+  for (var i = 0; i < others.length; i++) {
+   if ((others[i].textContent || "").indexOf("#cellexia-product") >= 0) { detach(embedLd); return; }
+  }
+ } catch (e) {}
+}
+// §3.2 placement cascade; reveals — boot()'s gating re-hides when not live.
+function mountEmbed(root, settings) {
+ var ref = qsSafe(settings.placement_selector);
+ if (ref && root.contains(ref)) ref = null;
+ if (!ref) {
+  var form = qsSafe('main form[action*="/cart/add"]') || qsSafe('form[action*="/cart/add"]');
+  if (form) {
+   try { ref = form.closest(".shopify-section, section") || form.parentElement; } catch (e) { ref = null; }
+  }
+ }
+ if (!ref) ref = qsSafe(".product__info-wrapper") || qsSafe("product-info") || qsSafe("main .product");
+ if (!insertAfter(root, ref)) {
+  var main = qsSafe("main");
+  try { if (main && !root.contains(main)) main.appendChild(root); } catch (e) {}
+ }
+ root.hidden = false;
+ return root;
+}
+function buildInlineBadge(rating, count, style, skin, I, linkTargetId) {
+ var badge = el(linkTargetId ? "a" : "span", "cx cx-badge-inline");
+ sa(badge, "data-cx-skin", skin === "cellexia" || skin === "luxe" ? skin : "amazon");
+ ap(badge, starRowCore(rating, 16, I.t("a11y.stars_label", { rating: I.NF1.format(rating) })));
+ if (style !== "stars_only") {
+  var c = el("span", "cx-badge-inline__count", "(" + I.fmtNum(count) + ")");
+  al(c, I.t("widget.review_count", { count: count }));
+  ap(badge, c);
+ }
+ if (linkTargetId) {
+  sa(badge, "href", "#" + linkTargetId);
+  on(badge, "click", (ev) => {
+   var tgt = document.getElementById(linkTargetId);
+   if (!tgt || tgt.hidden) return;
+   ev.preventDefault();
+   var rm = false;
+   try { rm = window.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (e) {}
+   try { tgt.scrollIntoView(rm ? {} : { behavior: "smooth" }); } catch (e) {}
+  });
+ }
+ return badge;
+}
+// §3.3 PDP title badge: instant paint from config rating/count (no fetch); none at 0 reviews or with the star-rating block.
+function pdpTitleBadge(cfgE, I, widgetRootId) {
+ if (!cfgE || cfgE.pageType !== "product" || !cfgE.product) return;
+ var s = cfgE.settings || {};
+ if (s.show_pdp_title_badge === false) return;
+ if (document.querySelector(".cx.cx-badge")) return;
+ var rating = Number(cfgE.product.rating) || 0;
+ var count = Number(cfgE.product.ratingCount) || 0;
+ if (count < 1 || rating <= 0) return;
+ var target = qsSafe(".product__title") || qsSafe("h1.product-single__title") || qsSafe("main h1");
+ if (!target || target.hasAttribute("data-cx-badged") || target.closest(".cx")) return;
+ var badge = buildInlineBadge(rating, count, s.badge_style, cfgE.skin, I, widgetRootId);
+ if (insertAfter(badge, target)) sa(target, "data-cx-badged", "pdp");
+}
+// §3.4 site-wide badge injector.
+function initBadges(cfgE, I) {
+ if (!cfgE) return;
+ var s = cfgE.settings || {};
+ if (s.enable_badges === false) return;
+ // (a) gating FIRST; editor: fetch normally when live, else nothing (§8).
+ var live = cfgE.live !== false;
+ var token = null;
+ if (!live) {
+  if (inDesignMode()) return;
+  token = discoverPreviewToken();
+  if (!token) return;
+ }
+ var wr = document.getElementById("cellexia-reviews");
+ var demo = cfgE.demo === true || !!(wr && wr.getAttribute("data-demo") === "true");
+ var selOverride = typeof s.badge_selector === "string" ? s.badge_selector.trim() : "";
+ var cache = {};      // handle -> stats | null (fetched, no published reviews)
+ var requested = {};  // handle -> true once sent to the API
+ var extraFetches = 0, rescans = 0;
+ var stopped = false;
+ var observer = null;
+ var TITLE_SEL = "h1,h2,h3,h4,h5,.card__heading,.card__title,.card-title,.product-title," +
+  ".product-card__title,.product-item__title,.grid-product__title,.grid-view-item__title";
+ // (b) /products/x, /xx(-XX)/products/x and /collections/…/products/x resolve.
+ function handleFrom(a) {
+  var href = a.getAttribute("href");
+  if (!href) return null;
+  var path;
+  try { path = new URL(href, window.location.href).pathname; } catch (e) { return null; }
+  var idx = path.lastIndexOf("/products/");
+  if (idx < 0) return null;
+  var handle = path.slice(idx + 10).split("/")[0].toLowerCase();
+  return /^[a-z0-9-]{1,255}$/.test(handle) ? handle : null;
+ }
+ function titleFor(a, card, handle) {
+  if (selOverride) { // merchant override is authoritative
+   try { return card.querySelector(selOverride); } catch (e) { return null; }
+  }
+  var within = null;
+  try { within = a.closest(TITLE_SEL); } catch (e) {}
+  if (within && card.contains(within)) return within;
+  var candidates;
+  try { candidates = card.querySelectorAll(TITLE_SEL); } catch (e) { return null; }
+  var fallback = null;
+  for (var i = 0; i < candidates.length; i++) {
+   var h = candidates[i];
+   if (h.closest(".cx")) continue;
+   var link = h.querySelector('a[href*="/products/"]');
+   if (link) {
+    if (handleFrom(link) === handle) return h;
+   } else if (!fallback && (h.textContent || "").trim()) {
+    fallback = h; // unlinked heading in a card with an overlay link
+   }
+  }
+  return fallback;
+ }
+ var pending = []; // collected {handle, titleEl, done}
+ function collect() {
+  var anchors;
+  try { anchors = document.querySelectorAll('a[href*="/products/"]'); } catch (e) { return; }
+  for (var i = 0; i < anchors.length; i++) {
+   try {
+    var a = anchors[i];
+    if (a.closest(".cx, .cx-preview-bar, .cx-dialog, .cx-lightbox")) continue;
+    if (a.offsetParent === null && !a.getClientRects().length) continue;
+    var handle = handleFrom(a);
+    if (!handle || cache[handle] === null) continue;
+    var card = a.closest("li, article, .card-wrapper, .card, .grid__item, .product-card, .product-item, product-card") || a.parentElement;
+    if (!card) continue;
+    var titleEl = titleFor(a, card, handle);
+    if (!titleEl || titleEl.hasAttribute("data-cx-badged")) continue;
+    sa(titleEl, "data-cx-badged", handle); // dedupe per handle+element
+    pending.push({ handle: handle, titleEl: titleEl, done: false });
+   } catch (e) {}
+  }
+ }
+ function fetchStats(handles) {
+  handles.forEach((h) => { requested[h] = true; });
+  if (demo) { // window.CellexiaDemoData.badges = { handle: {average,count} }
+   var src = (window.CellexiaDemoData && window.CellexiaDemoData.badges) || {};
+   handles.forEach((h) => { cache[h] = own(src, h) && src[h] ? src[h] : null; });
+   return Promise.resolve(true);
+  }
+  var r0 = anyRoot();
+  var url = ((r0 && r0.getAttribute("data-proxy")) || "/apps/cellexia-reviews/api").replace(/\/$/, "") +
+   "/badges?handles=" + encodeURIComponent(handles.join(","));
+  if (token) url += "&preview_token=" + encodeURIComponent(token);
+  return window.fetch(url, { credentials: "same-origin" }).then((r) => {
+   if (!r.ok) {
+    if (r.status === 403) { stopped = true; disconnect(); removePreviewBar(); } // not_live: go quiet
+    return false;
+   }
+   return r.json().then((body) => {
+    var map = (body && body.badges) || {};
+    handles.forEach((h) => { cache[h] = own(map, h) ? map[h] : null; });
+    return true;
+   }).catch(() => false);
+  }).catch(() => false);
+ }
+ function inject() {
+  for (var i = 0; i < pending.length; i++) {
+   var en = pending[i];
+   if (en.done) continue;
+   try {
+    var stats = cache[en.handle];
+    if (stats === undefined) continue; // not fetched yet — stays pending
+    en.done = true;
+    if (!stats || !(Number(stats.count) > 0) || !en.titleEl.parentNode) continue;
+    insertAfter(buildInlineBadge(Number(stats.average) || 0, Number(stats.count) || 0, s.badge_style, cfgE.skin, I, null), en.titleEl);
+   } catch (e) { en.done = true; }
+  }
+ }
+ function disconnect() { if (observer) { observer.disconnect(); observer = null; } }
+ function pauseMo() { if (observer) observer.disconnect(); }
+ function resumeMo() {
+  if (!observer || stopped) return;
+  try { observer.observe(document.body, { childList: true, subtree: true }); } catch (e) { observer = null; }
+ }
+ // (c) one batched fetch ≤48 doc-order handles; (e) re-scans reuse the cache.
+ function pass(isRescan) {
+  if (stopped) return;
+  pauseMo();
+  collect();
+  resumeMo();
+  if (!pending.length) return;
+  var fresh = [], seen = {};
+  pending.forEach((en) => {
+   if (!en.done && !requested[en.handle] && !seen[en.handle]) { seen[en.handle] = true; fresh.push(en.handle); }
+  });
+  var finish = () => {
+   if (stopped) return;
+   pauseMo();
+   inject();
+   resumeMo();
+  };
+  if (!fresh.length) { finish(); return; }
+  if (isRescan) {
+   if (extraFetches >= 2) { finish(); return; }
+   extraFetches += 1;
+  }
+  fetchStats(fresh.slice(0, 48)).then(finish);
+ }
+ function kickoff() {
+  if (stopped) return;
+  // (f) preview ribbon on badge-only pages (the widget mounts its own)
+  if (token && !anyRoot()) {
+   try { renderPreviewBar(I.t); } catch (e) {}
+  }
+  pass(false);
+  if (window.MutationObserver) {
+   observer = new MutationObserver(debounce(() => {
+    if (stopped || !observer) return;
+    rescans += 1;
+    if (rescans >= 5) disconnect(); // cap: 5 re-scans per page
+    if (rescans <= 5) pass(true);
+   }, 500));
+   resumeMo();
+  }
+ }
+ var runIdle = () => {
+  if (window.requestIdleCallback) window.requestIdleCallback(kickoff, { timeout: 2000 });
+  else window.setTimeout(kickoff, 50);
+ };
+ if (document.readyState === "loading") on(document, "DOMContentLoaded", runIdle);
+ else runIdle();
+}
+/* ---- start orchestration (§3.1) ---- */
+function start() {
+ // block + embed both emit the (cached) script tag — run once
+ var de = document.documentElement;
+ if (de.getAttribute("data-cx-booted") === "true") return;
+ sa(de, "data-cx-booted", "true");
+ var cfgE = readEmbedConfig();
+ var blockRoot = document.getElementById("cellexia-reviews");
+ var embedRoot = document.getElementById("cellexia-reviews-embed");
+ if (blockRoot && embedRoot) { // blocks win — never double-render
+  detach(embedRoot);
+  embedRoot = null;
+ }
+ dedupeEmbedJsonLd();
+ var es = (cfgE && cfgE.settings) || {};
+ var widgetRoot = blockRoot;
+ if (!widgetRoot && embedRoot) {
+  if (es.enable_product_widget === false) {
+   detach(embedRoot);
+  } else {
+   try { widgetRoot = mountEmbed(embedRoot, es); } catch (e) { widgetRoot = embedRoot; }
+  }
+ }
+ if (widgetRoot) {
+  try { boot(widgetRoot); } catch (e) { /* the widget must never break the theme */ }
+ }
+ if (!cfgE) return; // block-only page: v1.4.1 behavior ends here
+ try {
+  var r0 = anyRoot();
+  var I = makeI18n((r0 && r0.getAttribute("data-locale")) || document.documentElement.lang || "en");
+  var live = cfgE.live !== false;
+  var previewing = !live && !!discoverPreviewToken();
+  if (live || previewing || inDesignMode()) { // §3.3: gating passed
+   pdpTitleBadge(cfgE, I, widgetRoot ? widgetRoot.id : null);
+  }
+  initBadges(cfgE, I);
+ } catch (e) { /* never break the theme */ }
+}
 if (document.readyState === "loading") {
- document.addEventListener("DOMContentLoaded", boot);
+ document.addEventListener("DOMContentLoaded", start);
 } else {
- boot();
+ start();
 }
 })();

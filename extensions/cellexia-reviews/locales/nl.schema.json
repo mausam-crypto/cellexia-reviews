@@ -33,6 +33,39 @@
         }
       }
     },
+    "embed_block": {
+      "name": "Cellexia Reviews",
+      "settings": {
+        "enable_product_widget": {
+          "label": "Beoordelingswidget op productpagina's tonen",
+          "info": "Plaatst de volledige beoordelingswidget automatisch — geen app-blok nodig. Werkt met elk thema."
+        },
+        "placement_selector": {
+          "label": "Plaatsing van de widget (CSS-selector, optioneel)",
+          "info": "Laat leeg voor automatische plaatsing onder de productinformatie. Voer een CSS-selector in om de widget in plaats daarvan na een specifiek element te plaatsen."
+        },
+        "show_pdp_title_badge": {
+          "label": "Sterren onder de producttitel tonen"
+        },
+        "enable_badges": {
+          "label": "Sterrenbadges op productkaarten in de hele webshop tonen",
+          "info": "Voegt sterbeoordelingen toe naast productnamen op de homepage, in collecties en in zoekresultaten voor producten met gepubliceerde beoordelingen."
+        },
+        "badge_style": {
+          "label": "Badgestijl",
+          "options__1": {
+            "label": "Sterren en aantal beoordelingen"
+          },
+          "options__2": {
+            "label": "Alleen sterren"
+          }
+        },
+        "badge_selector": {
+          "label": "Element van de kaarttitel (CSS-selector, optioneel)",
+          "info": "Geavanceerd: alleen nodig als de badges de productkaarttitels van je thema niet automatisch vinden."
+        }
+      }
+    },
     "defaults": {
       "heading": "Klantbeoordelingen"
     }

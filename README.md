@@ -29,6 +29,15 @@ extension — no theme code edits, uninstall-safe.
   configure the blocks. Enforced server-side: while not live, the storefront API rejects
   requests without a valid preview token.
 - **Star badge block** for placement under the product title (SSR-only, links to the widget).
+- **App embed with site-wide star badges**: for themes that don't accept app blocks on product
+  templates, one toggle in the theme editor (Theme settings → App embeds) mounts the full
+  widget on every product page automatically — with an optional CSS-selector placement
+  override — and can show stars under the product page's own title. It also injects **star
+  badges next to product names on product cards across the whole store** (home, collections,
+  search, featured sections) for products with published reviews: one batched, cached request
+  per page, automatic card detection with an advanced selector override, all three design
+  versions applied. Same Not-live/preview gating as everything else; the blocks stay preferred
+  where the theme supports them and never double-render alongside the embed.
 - **17 storefront languages** shipped: en, fr, de, da, sv, fi, nl, it, es, ar, pl, pt-PT, ja, nb,
   ro, hu, el — including full RTL support for Arabic.
 - **AI summary & topics**: Claude (Messages API, default model `claude-sonnet-5`) condenses up to
@@ -70,6 +79,8 @@ extension — no theme code edits, uninstall-safe.
         │  Theme app extension blocks:   │
         │   • reviews.liquid  (widget)   │
         │   • star-rating.liquid (badge) │
+        │   • embed.liquid (app embed:   │
+        │     auto-widget + card badges) │
         │  SSR from product metafields   │
         │  + cellexia-reviews.js/css     │
         └───────┬────────────────────────┘
@@ -118,7 +129,7 @@ app/
   components/admin/  Polaris components used by the admin routes
   types/cellexia.ts  Shared constants (option keys, statuses, locales) and DTO types
 extensions/
-  cellexia-reviews/  Theme app extension: blocks (reviews, star-rating), snippets
+  cellexia-reviews/  Theme app extension: blocks (reviews, star-rating, app embed), snippets
                      (stars, i18n bridge, JSON-LD), assets (1 CSS + 1 JS file),
                      locales (17 languages, storefront + schema files)
 prisma/              schema.prisma (Session, Review, ReviewMedia, Vote, Summary,
@@ -173,7 +184,7 @@ Full production installation, hosting and store setup: **[docs/INSTALL.md](docs/
 | [docs/INSTALL.md](docs/INSTALL.md) | Developer | Full install: app creation, hosting (Render / Fly.io / Railway), env vars, app proxy, theme editor, verification checklist |
 | [docs/UPDATE.md](docs/UPDATE.md) | Developer | How to apply a new release ZIP safely |
 | [docs/HANDOVER.md](docs/HANDOVER.md) | Developer | One-page brief: what you are receiving and what to provision |
-| [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Merchant | Every admin setting, going live & previewing, moderation, replies, CSV import, bulk add, QA data (synthetic reviews), API keys |
+| [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Merchant | Every admin setting, going live & previewing, app embed & star badges, moderation, replies, CSV import, bulk add, QA data (synthetic reviews), API keys |
 | [docs/TRANSLATIONS.md](docs/TRANSLATIONS.md) | Both | The 17 locales, editing strings, Translate & Adapt, review translation, RTL |
 | [docs/SEO.md](docs/SEO.md) | Both | Star rich snippets: how they work, validation, duplicate JSON-LD note |
 | [docs/FAQ.md](docs/FAQ.md) | Merchant | Theme safety, uninstall, GDPR, media limits, rate limits |
@@ -182,4 +193,4 @@ Full production installation, hosting and store setup: **[docs/INSTALL.md](docs/
 
 ## Version
 
-Current version: **1.4.1** — see [CHANGELOG.md](CHANGELOG.md).
+Current version: **1.5.0** — see [CHANGELOG.md](CHANGELOG.md).

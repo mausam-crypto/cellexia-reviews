@@ -1,6 +1,6 @@
 /* Cellexia Reviews — storefront widget (Amazon-fidelity). Scope: .cx only, plus
    .cx-dialog/.cx-sheet/.cx-lightbox/.cx-filter-panel which may sit in the top layer.
-   Mobile-first · RTL via logical properties · budget <= 30 KB. */
+   Mobile-first · RTL via logical properties · budget <= 47 KB (SPEC-1.5 §5). */
 
 /* 1. Design tokens (SPEC §14 verbatim; grouped with top-layer dialog roots) */
 .cx, .cx-dialog, .cx-sheet, .cx-lightbox, .cx-filter-panel {
@@ -604,6 +604,29 @@ div.cx-filter-panel:not([hidden]) { animation:cx-slide-up .25s ease;}
 .cx-preview-bar__exit:focus-visible { outline:2px solid #fff;outline-offset:2px;}
 @media (prefers-reduced-motion:reduce) { .cx-preview-bar__exit { transition:none !important;} }
 @media print { .cx-preview-bar { display:none !important;} }
+
+/* 15. v1.5 inline star badges (SPEC-1.5 §5) — PDP title badge + site-wide
+   product-card badges injected by the app-embed JS. Root markup:
+   <a|span class="cx cx-badge-inline" data-cx-skin="…">. Em-scaled so it tracks
+   the surrounding card/title text. Font-family is intentionally NOT set — the
+   badge inherits the theme card's font (the one exception to the .cx root font
+   rule); the triple-class rule below outweighs the skin blocks' font stacks.
+   Skin star colors need no extra selectors: the skin token blocks match
+   `.cx[data-cx-skin=…]` on the badge root itself, and the existing
+   `[data-cx-skin=…] svg.cx-star path/stop` recolor rules cover its stars. */
+.cx.cx-badge-inline {
+  --cx-star-size:1em; /* stars ride the existing .cx-stars svg sizing var */
+  display:inline-flex;align-items:center;gap:.35em;vertical-align:middle;
+  margin-block:.15em 0;padding:0;border:0;background:none;
+  font-size:1em;line-height:1.2;color:var(--cx-text);
+  text-decoration:none;text-rendering:auto;
+}
+.cx.cx-badge-inline.cx-badge-inline { font-family:inherit;}
+a.cx.cx-badge-inline { cursor:pointer;}
+a.cx.cx-badge-inline:is(:hover, :focus, :active) { text-decoration:none;color:var(--cx-text);}
+.cx-badge-inline .cx-stars { flex:none;}
+.cx-badge-inline__count { font-size:.85em;color:var(--cx-muted);white-space:nowrap;}
+@media print { .cx-badge-inline { print-color-adjust:exact;-webkit-print-color-adjust:exact;} }
 
 /* ===== Skin: cellexia ===== */
 /* v1.1 (SPEC-1.1) CSS-only skin, scoped to data-cx-skin="cellexia" (.cx roots +

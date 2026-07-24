@@ -135,6 +135,7 @@
   {% if cx_lang == 'ar' %}dir="rtl"{% endif %}
   {% if cx_style != '' %}style="{{ cx_style }}"{% endif %}
   data-product-id="{{ product.id }}"
+  data-product-handle="{{ product.handle }}"
   data-locale="{{ request.locale.iso_code }}"
   data-shop-default-locale="{{ cx_default_locale }}"
   data-proxy="/apps/cellexia-reviews/api"

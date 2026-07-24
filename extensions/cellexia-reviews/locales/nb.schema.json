@@ -33,6 +33,39 @@
         }
       }
     },
+    "embed_block": {
+      "name": "Cellexia Reviews",
+      "settings": {
+        "enable_product_widget": {
+          "label": "Vis anmeldelsesmodulen på produktsider",
+          "info": "Setter automatisk inn hele anmeldelsesmodulen — ingen appblokk nødvendig. Fungerer med alle temaer."
+        },
+        "placement_selector": {
+          "label": "Plassering av modulen (CSS-selektor, valgfritt)",
+          "info": "La stå tomt for automatisk plassering under produktinformasjonen. Angi en CSS-selektor for å sette inn modulen etter et bestemt element i stedet."
+        },
+        "show_pdp_title_badge": {
+          "label": "Vis stjerner under produkttittelen"
+        },
+        "enable_badges": {
+          "label": "Vis stjernemerker på produktkort på hele nettstedet",
+          "info": "Legger til stjernevurderinger ved siden av produktnavn på forsiden, i kolleksjoner og i søkeresultater for produkter med publiserte anmeldelser."
+        },
+        "badge_style": {
+          "label": "Merkestil",
+          "options__1": {
+            "label": "Stjerner og antall anmeldelser"
+          },
+          "options__2": {
+            "label": "Kun stjerner"
+          }
+        },
+        "badge_selector": {
+          "label": "Element for korttittel (CSS-selektor, valgfritt)",
+          "info": "Avansert: bare nødvendig hvis merkene ikke finner temaets produktkorttitler automatisk."
+        }
+      }
+    },
     "defaults": {
       "heading": "Kundeanmeldelser"
     }

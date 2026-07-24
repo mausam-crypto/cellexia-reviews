@@ -1,5 +1,5 @@
 /**
- * Storefront proxy: `POST /apps/cellexia/api/translate`
+ * Storefront proxy: `POST /apps/cellexia-reviews/api/translate`
  * → `/proxy/api/translate`.
  *
  * Body: `{ "ids": ["…"], "target": "fr" }` — max 20 ids, `target` must be

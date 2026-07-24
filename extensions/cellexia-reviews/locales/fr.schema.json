@@ -33,6 +33,39 @@
         }
       }
     },
+    "embed_block": {
+      "name": "Cellexia Reviews",
+      "settings": {
+        "enable_product_widget": {
+          "label": "Afficher le widget d'avis sur les pages produit",
+          "info": "Monte automatiquement le widget d'avis complet — aucun bloc d'application requis. Fonctionne avec tous les thèmes."
+        },
+        "placement_selector": {
+          "label": "Emplacement du widget (sélecteur CSS, facultatif)",
+          "info": "Laissez vide pour un placement automatique sous les informations produit. Saisissez un sélecteur CSS pour monter le widget après un élément spécifique."
+        },
+        "show_pdp_title_badge": {
+          "label": "Afficher les étoiles sous le titre du produit"
+        },
+        "enable_badges": {
+          "label": "Afficher les badges d'étoiles sur les fiches produit de tout le site",
+          "info": "Ajoute les notes en étoiles à côté des noms de produits sur la page d'accueil, les collections et les résultats de recherche pour les produits ayant des avis publiés."
+        },
+        "badge_style": {
+          "label": "Style du badge",
+          "options__1": {
+            "label": "Étoiles et nombre d'avis"
+          },
+          "options__2": {
+            "label": "Étoiles uniquement"
+          }
+        },
+        "badge_selector": {
+          "label": "Élément du titre de la fiche (sélecteur CSS, facultatif)",
+          "info": "Avancé : nécessaire uniquement si les badges ne trouvent pas automatiquement les titres des fiches produit de votre thème."
+        }
+      }
+    },
     "defaults": {
       "heading": "Avis clients"
     }

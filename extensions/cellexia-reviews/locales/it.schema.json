@@ -33,6 +33,39 @@
         }
       }
     },
+    "embed_block": {
+      "name": "Cellexia Reviews",
+      "settings": {
+        "enable_product_widget": {
+          "label": "Mostra il widget delle recensioni nelle pagine prodotto",
+          "info": "Monta automaticamente il widget completo delle recensioni — nessun blocco app necessario. Funziona con tutti i temi."
+        },
+        "placement_selector": {
+          "label": "Posizionamento del widget (selettore CSS, facoltativo)",
+          "info": "Lascia vuoto per il posizionamento automatico sotto le informazioni del prodotto. Inserisci un selettore CSS per montare il widget dopo un elemento specifico."
+        },
+        "show_pdp_title_badge": {
+          "label": "Mostra le stelle sotto il titolo del prodotto"
+        },
+        "enable_badges": {
+          "label": "Mostra i badge a stelle sulle schede prodotto in tutto il sito",
+          "info": "Aggiunge le valutazioni a stelle accanto ai nomi dei prodotti nella home page, nelle collezioni e nei risultati di ricerca per i prodotti con recensioni pubblicate."
+        },
+        "badge_style": {
+          "label": "Stile del badge",
+          "options__1": {
+            "label": "Stelle e numero di recensioni"
+          },
+          "options__2": {
+            "label": "Solo stelle"
+          }
+        },
+        "badge_selector": {
+          "label": "Elemento del titolo della scheda (selettore CSS, facoltativo)",
+          "info": "Avanzato: necessario solo se i badge non trovano automaticamente i titoli delle schede prodotto del tuo tema."
+        }
+      }
+    },
     "defaults": {
       "heading": "Recensioni dei clienti"
     }

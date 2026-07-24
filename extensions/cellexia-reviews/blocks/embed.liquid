@@ -1,0 +1,238 @@
+{% comment %}
+  Cellexia Reviews — app embed block (SPEC-1.5 §1).
+
+  Enabled from the theme editor under Theme settings → App embeds — works on every
+  theme, including themes that reject app blocks on product templates. When enabled:
+  - product pages: emits a hidden widget shell (#cellexia-reviews-embed) that
+    assets/cellexia-reviews.js relocates (placement_selector or heuristics),
+    reveals per the SPEC-1.2 live/preview gating, and hydrates like the block.
+    Blocks win: if the reviews app block is also on the page, the JS removes the
+    embed root so nothing double-renders.
+  - all pages: emits a #cx-embed-config JSON script the JS reads for the sitewide
+    star-badge injector and the PDP title badge.
+
+  Same live/preview gating as blocks/reviews.liquid (SPEC-1.2): the app-synced
+  boolean SHOP metafield `cellexia.live` — only an explicit false means "not live";
+  absent/invalid stays live (upgrade-neutral). The theme editor (request.design_mode)
+  short-circuits the gating for the embed root exactly like the blocks, via
+  data-cx-live. The root ships `hidden` ALWAYS — the JS un-hides it after placement
+  when gating allows (live, preview token, or design mode).
+
+  The assets are the same files the blocks load — the browser fetches them once.
+  SSR content: none beyond the shell (JS renders everything; the config JSON carries
+  rating/count for instant paint of the title badge). JSON-LD renders live-gated with
+  a data-cx-jsonld="embed" marker so the JS can drop it when a block copy exists.
+{% endcomment %}
+{%- liquid
+  assign cx_page_type = request.page_type
+  assign cx_is_product = false
+  if cx_page_type == 'product' and product
+    assign cx_is_product = true
+  endif
+
+  comment
+    v1.2 (SPEC-1.2): only an explicit false on the `cellexia.live` SHOP metafield
+    means "not live" — absent/invalid values stay live so upgraded stores never
+    go dark. The theme editor always allows the full widget (data-cx-live="true").
+  endcomment
+  assign cx_is_live = true
+  if shop.metafields.cellexia.live.value == false
+    assign cx_is_live = false
+  endif
+  assign cx_show_full = cx_is_live
+  if request.design_mode
+    assign cx_show_full = true
+  endif
+
+  assign cx_lang = request.locale.iso_code | split: '-' | first
+
+  assign cx_default_locale = 'en'
+  for cx_loc in shop.published_locales
+    if cx_loc.primary
+      assign cx_default_locale = cx_loc.iso_code
+    endif
+  endfor
+
+  assign cx_heading = 'cellexia.widget.title' | t
+
+  comment
+    App-synced shop metafields, nil-guarded exactly like blocks/reviews.liquid:
+    brand display name (absent → JS falls back to "Cellexia") and translate
+    buttons (only an explicit false disables).
+  endcomment
+  assign cx_brand = shop.metafields.cellexia.brand_display_name.value
+  assign cx_show_translate = true
+  if shop.metafields.cellexia.show_translate.value == false
+    assign cx_show_translate = false
+  endif
+
+  comment
+    v1.1/v1.3 design version: the case/when guards unknown or missing
+    `cellexia.design_theme` values back to the default "amazon" skin —
+    identical to blocks/reviews.liquid.
+  endcomment
+  assign cx_skin = 'amazon'
+  case shop.metafields.cellexia.design_theme.value
+    when 'cellexia'
+      assign cx_skin = 'cellexia'
+    when 'luxe'
+      assign cx_skin = 'luxe'
+  endcase
+
+  comment
+    Aggregate rating for the config JSON (instant title-badge paint) —
+    metafield access nil-guarded exactly like blocks/reviews.liquid.
+  endcomment
+  assign cx_rating = 0
+  assign cx_count = 0
+  if cx_is_product
+    assign cx_ns = product.metafields.cellexia
+    if cx_ns.rating and cx_ns.rating_count
+      assign cx_rating = cx_ns.rating.value | times: 1.0
+      assign cx_count = cx_ns.rating_count.value | times: 1
+    endif
+  endif
+-%}
+{{ 'cellexia-reviews.css' | asset_url | stylesheet_tag }}
+<script src="{{ 'cellexia-reviews.js' | asset_url }}" defer></script>
+<script type="application/json" id="cx-embed-config">
+{
+  "pageType": {{ cx_page_type | json }},
+  "settings": {
+    "enable_product_widget": {{ block.settings.enable_product_widget | json }},
+    "placement_selector": {{ block.settings.placement_selector | default: '' | json }},
+    "enable_badges": {{ block.settings.enable_badges | json }},
+    "badge_style": {{ block.settings.badge_style | default: 'stars_count' | json }},
+    "badge_selector": {{ block.settings.badge_selector | default: '' | json }},
+    "show_pdp_title_badge": {{ block.settings.show_pdp_title_badge | json }}
+  },
+  "skin": {{ cx_skin | json }},
+  "live": {{ cx_is_live | json }},
+  {%- if cx_is_product %}
+  "product": {
+    "id": {{ product.id | json }},
+    "handle": {{ product.handle | json }},
+    "title": {{ product.title | json }},
+    "url": {{ product.url | json }},
+    "rating": {{ cx_rating | json }},
+    "ratingCount": {{ cx_count | json }}
+  }
+  {%- else %}
+  "product": null
+  {%- endif %}
+}
+</script>
+{%- if cx_is_product -%}
+{%- if block.settings.enable_product_widget -%}
+{%- comment -%}
+  Hidden widget shell — same data-attribute contract as the reviews block root,
+  but id="cellexia-reviews-embed" + data-cx-embed="true" and ALWAYS hidden.
+  The JS relocates it (placement_selector or heuristics), reveals it per gating
+  and builds every container itself (no SSR content in embed mode). The i18n
+  dictionary rides inside the root, like the block's not-live shell.
+{%- endcomment -%}
+<div
+  id="cellexia-reviews-embed"
+  class="cx"
+  {% if cx_lang == 'ar' %}dir="rtl"{% endif %}
+  data-cx-embed="true"
+  data-product-id="{{ product.id }}"
+  data-product-handle="{{ product.handle }}"
+  data-locale="{{ request.locale.iso_code }}"
+  data-shop-default-locale="{{ cx_default_locale }}"
+  data-proxy="/apps/cellexia-reviews/api"
+  data-per-page="10"
+  data-heading="{{ cx_heading | escape }}"
+  {% if cx_brand != blank %}data-brand="{{ cx_brand | escape }}"{% endif %}
+  data-show-summary="true"
+  data-show-media-strip="true"
+  data-show-form="true"
+  data-show-translate="{{ cx_show_translate }}"
+  data-demo="false"
+  data-cx-skin="{{ cx_skin }}"
+  data-cx-live="{{ cx_show_full }}"
+  hidden
+>
+  {% render 'cx-i18n' %}
+</div>
+{%- elsif block.settings.enable_badges or block.settings.show_pdp_title_badge -%}
+{%- comment -%}
+  Product widget disabled but badge features on: the JS still needs the
+  a11y/i18n strings (no widget root to carry them).
+{%- endcomment -%}
+{% render 'cx-i18n' %}
+{%- endif -%}
+{%- if cx_is_live -%}
+{%- comment -%}
+  Live-gated structured data. The marker makes the emitted script identifiable
+  ([data-cx-jsonld="embed"]) so the JS removes it when a block copy exists —
+  never two Product JSON-LD payloads from this app (SPEC-1.5 §3.6).
+{%- endcomment -%}
+{% render 'cx-jsonld', product: product, marker: 'embed' %}
+{%- endif -%}
+{%- else -%}
+{%- if block.settings.enable_badges -%}
+{%- comment -%}
+  Non-product page with badges enabled: only the config script above plus the
+  i18n dictionary (badges compose their a11y labels from it) — no widget root.
+{%- endcomment -%}
+{% render 'cx-i18n' %}
+{%- endif -%}
+{%- endif -%}
+
+{% schema %}
+{
+  "name": "t:cellexia.embed_block.name",
+  "target": "body",
+  "settings": [
+    {
+      "type": "checkbox",
+      "id": "enable_product_widget",
+      "label": "t:cellexia.embed_block.settings.enable_product_widget.label",
+      "info": "t:cellexia.embed_block.settings.enable_product_widget.info",
+      "default": true
+    },
+    {
+      "type": "text",
+      "id": "placement_selector",
+      "label": "t:cellexia.embed_block.settings.placement_selector.label",
+      "info": "t:cellexia.embed_block.settings.placement_selector.info"
+    },
+    {
+      "type": "checkbox",
+      "id": "enable_badges",
+      "label": "t:cellexia.embed_block.settings.enable_badges.label",
+      "info": "t:cellexia.embed_block.settings.enable_badges.info",
+      "default": true
+    },
+    {
+      "type": "select",
+      "id": "badge_style",
+      "label": "t:cellexia.embed_block.settings.badge_style.label",
+      "options": [
+        {
+          "value": "stars_count",
+          "label": "t:cellexia.embed_block.settings.badge_style.options__1.label"
+        },
+        {
+          "value": "stars_only",
+          "label": "t:cellexia.embed_block.settings.badge_style.options__2.label"
+        }
+      ],
+      "default": "stars_count"
+    },
+    {
+      "type": "text",
+      "id": "badge_selector",
+      "label": "t:cellexia.embed_block.settings.badge_selector.label",
+      "info": "t:cellexia.embed_block.settings.badge_selector.info"
+    },
+    {
+      "type": "checkbox",
+      "id": "show_pdp_title_badge",
+      "label": "t:cellexia.embed_block.settings.show_pdp_title_badge.label",
+      "default": true
+    }
+  ]
+}
+{% endschema %}

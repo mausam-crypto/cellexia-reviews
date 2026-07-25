@@ -1,5 +1,5 @@
 /**
- * Storefront proxy: `/apps/cellexia-reviews/api/reviews` → `/proxy/api/reviews`.
+ * Storefront proxy: `/apps/cellexia/api/reviews` → `/proxy/api/reviews`.
  *
  * GET  — paginated, filterable review list (SPEC §6), cached 60 s.
  *        Lazily resolves pending Shopify Files CDN URLs before listing.
@@ -70,7 +70,7 @@ const TOPIC_KEY_RE = /^[a-z0-9_-]{1,64}$/i;
 const PRODUCT_HANDLE_RE = /^[a-z0-9-]{1,255}$/;
 
 // ---------------------------------------------------------------------------
-// GET /apps/cellexia-reviews/api/reviews
+// GET /apps/cellexia/api/reviews
 // ---------------------------------------------------------------------------
 
 export async function loader({ request }: LoaderFunctionArgs) {
@@ -203,7 +203,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
 }
 
 // ---------------------------------------------------------------------------
-// POST /apps/cellexia-reviews/api/reviews (multipart/form-data)
+// POST /apps/cellexia/api/reviews (multipart/form-data)
 // ---------------------------------------------------------------------------
 
 export async function action({ request }: ActionFunctionArgs) {

@@ -213,7 +213,7 @@ export interface MediaGalleryItemDTO {
   rating: number;
 }
 
-/** GET /apps/cellexia-reviews/api/reviews response body. */
+/** GET /apps/cellexia/api/reviews response body. */
 export interface ListResponse {
   product: ProductStatsDTO;
   summary: SummaryDTO | null;
@@ -236,7 +236,7 @@ export interface ListResponse {
   };
 }
 
-/** POST /apps/cellexia-reviews/api/reviews response body. */
+/** POST /apps/cellexia/api/reviews response body. */
 export interface SubmitResponse {
   ok: boolean;
   /** Present when ok is true. */
@@ -256,7 +256,7 @@ export interface BadgeStatsDTO {
   count: number;
 }
 
-/** GET /apps/cellexia-reviews/api/badges response body (SPEC-1.5 §2). */
+/** GET /apps/cellexia/api/badges response body (SPEC-1.5 §2). */
 export interface BadgesResponse {
   /**
    * Keyed by product handle. Only handles with at least one PUBLISHED review

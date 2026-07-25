@@ -93,11 +93,18 @@
     endif
   endif
 -%}
+{%- comment -%}
+  v1.5.1 audit: the app-proxy base path is single-sourced in snippets/
+  cx-proxy.liquid and carried in the config JSON too — badge-only pages
+  (home, collections) have no widget root to read data-proxy from.
+{%- endcomment -%}
+{%- capture cx_proxy -%}{% render 'cx-proxy' %}{%- endcapture -%}
 {{ 'cellexia-reviews.css' | asset_url | stylesheet_tag }}
 <script src="{{ 'cellexia-reviews.js' | asset_url }}" defer></script>
 <script type="application/json" id="cx-embed-config">
 {
   "pageType": {{ cx_page_type | json }},
+  "proxy": {{ cx_proxy | json }},
   "settings": {
     "enable_product_widget": {{ block.settings.enable_product_widget | json }},
     "placement_selector": {{ block.settings.placement_selector | default: '' | json }},
@@ -140,7 +147,7 @@
   data-product-handle="{{ product.handle }}"
   data-locale="{{ request.locale.iso_code }}"
   data-shop-default-locale="{{ cx_default_locale }}"
-  data-proxy="/apps/cellexia-reviews/api"
+  data-proxy="{{ cx_proxy }}"
   data-per-page="10"
   data-heading="{{ cx_heading | escape }}"
   {% if cx_brand != blank %}data-brand="{{ cx_brand | escape }}"{% endif %}

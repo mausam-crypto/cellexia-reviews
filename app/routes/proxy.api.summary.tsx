@@ -1,5 +1,5 @@
 /**
- * Storefront proxy: `GET /apps/cellexia-reviews/api/summary?product_id=…&locale=fr`
+ * Storefront proxy: `GET /apps/cellexia/api/summary?product_id=…&locale=fr`
  * → `/proxy/api/summary`.
  *
  * Returns `{ "summary": SummaryDTO | null }`. The service generates and

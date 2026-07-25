@@ -84,7 +84,7 @@ extension — no theme code edits, uninstall-safe.
         │  SSR from product metafields   │
         │  + cellexia-reviews.js/css     │
         └───────┬────────────────────────┘
-                │  fetch /apps/cellexia/api/*
+                │  fetch /apps/cellexia-reviews/api/*
                 ▼
      ┌──────────────────────┐   app proxy (HMAC-signed)
      │   Shopify platform   │ ─────────────────────────┐
@@ -109,9 +109,11 @@ extension — no theme code edits, uninstall-safe.
                                           (summary + translations)
 ```
 
-- **App proxy**: storefront calls `/apps/cellexia/api/*` on the shop domain; Shopify signs and
-  forwards them to `/proxy/api/*` on this app. See `app/routes/proxy.api.*` and
-  `app/services/proxy.server.ts`.
+- **App proxy**: storefront calls `/apps/cellexia-reviews/api/*` on the shop domain; Shopify
+  signs and forwards them to `/proxy/api/*` on this app. See `app/routes/proxy.api.*` and
+  `app/services/proxy.server.ts`. The storefront-side path is single-sourced in
+  `extensions/cellexia-reviews/snippets/cx-proxy.liquid` and must match `[app_proxy]` in
+  `shopify.app.toml`.
 - **Metafields** (namespace `cellexia`: `rating`, `rating_count`, `distribution`, `top_reviews`,
   `summary`) make the widget paint server-side with no JavaScript and power JSON-LD.
 - **Database**: Prisma + SQLite by default, identical to the official template; switching to
@@ -193,4 +195,4 @@ Full production installation, hosting and store setup: **[docs/INSTALL.md](docs/
 
 ## Version
 
-Current version: **1.5.0** — see [CHANGELOG.md](CHANGELOG.md).
+Current version: **1.5.1** — see [CHANGELOG.md](CHANGELOG.md).

@@ -1,5 +1,5 @@
 /* Cellexia Reviews storefront widget — vanilla ES2019, no dependencies.
-* Contract: SPEC §6/§8/§9/§15, SPEC-1.2 (gating), SPEC-1.5 (embed, badges, JSON-LD dedupe).
+* Contract: SPEC §6/§8/§9/§15, SPEC-1.2 (gating), SPEC-1.5 + SPEC-1.5.1 (embed, badges, JSON-LD dedupe).
 * No innerHTML with user content — DOM built via createElement/textContent only.
 */
 (() => {
@@ -205,6 +205,8 @@ var cfg = {
  productId: attr("product-id", ""),
  productHandle: attr("product-handle", ""), // v1.5: sent with review POSTs
  locale: attr("locale", "en"),
+ // v1.5.1 audit: liquid single-sources the real path (snippets/cx-proxy.liquid);
+ // this literal is a last-ditch fallback matching the live store's subpath.
  proxy: attr("proxy", "/apps/cellexia-reviews/api").replace(/\/$/, ""),
  perPage: parseInt(attr("per-page", "10"), 10) || 10,
  defaultLocale: attr("shop-default-locale", "en"),
@@ -586,7 +588,7 @@ function openDialog(className, build) {
  var prevFocus = document.activeElement;
  var mobile = window.innerWidth < 768;
  var overlay = el("div", "cx-overlay");
- st(overlay, { position: "fixed", inset: "0", background: "rgba(15,17,17,0.45)", zIndex: "2147483000",
+ st(overlay, { position: "fixed", inset: "0", background: "rgba(15,17,17,0.45)", zIndex: "2147480000", // --cx-z
   display: "flex", alignItems: mobile ? "flex-end" : "center", justifyContent: "center" });
  var dialog = el("div", "cx-dialog " + (className || "") + (mobile ? " cx-sheet" : ""));
  sa(dialog, "role", "dialog");
@@ -1734,7 +1736,11 @@ function renderAll() {
   firstLoadDone = true;
   root.dispatchEvent(new CustomEvent("cellexia:loaded", {
    bubbles: true,
-   detail: { productId: cfg.productId, total: data.total }
+   detail: { // v1.5.1: PDP badge fallback data
+    productId: cfg.productId, total: data.total,
+    average: data.product ? Number(data.product.average) || 0 : 0,
+    count: data.product ? Number(data.product.count) || 0 : 0
+   }
   }));
  } else {
   announce(t("a11y.list_updated"));
@@ -1840,7 +1846,7 @@ function init() {
  loadPage(false);
 }
 window.CellexiaReviews = {
- version: "1.5.0",
+ version: "1.5.1",
  refresh: reload,
  t: t,
  getState: () => Object.assign({}, state)
@@ -1888,22 +1894,94 @@ function dedupeEmbedJsonLd() {
   }
  } catch (e) {}
 }
-// §3.2 placement cascade; reveals — boot()'s gating re-hides when not live.
+/* §3.2 cascade (SPEC-1.5.1 Fix 1): placement_selector → cart-form section
+   (JS-rendered? watch 4 s + relocate) → end of main/#MainContent/body. */
+function cartForm(root) {
+ var f = qsSafe('main form[action*="/cart/add"]') || qsSafe('form[action*="/cart/add"]');
+ return f && !root.contains(f) ? f : null;
+}
+function sectionOf(form) {
+ try { return form.closest(".shopify-section, section") || form.parentElement; } catch (e) { return null; }
+}
+function contentWidth(node) {
+ try {
+  var cs = window.getComputedStyle(node);
+  return node.clientWidth - (parseFloat(cs.paddingLeft) || 0) - (parseFloat(cs.paddingRight) || 0);
+ } catch (e) { return 0; }
+}
+var themeMaxCache = null; // measured .container width, cached
+// Fix 1 gutters — runs after mount AND after relocation.
+function applyGutters(root) {
+ try {
+  var parent = root.parentElement;
+  if (!parent) return;
+  var vw = window.innerWidth || 0;
+  var full = vw > 0 && contentWidth(parent) >= vw - 32;
+  root.classList.remove("cx--self-contained", "cx--in-container");
+  root.classList.add(full ? "cx--self-contained" : "cx--in-container");
+  if (full) {
+   if (themeMaxCache === null) {
+    var c = qsSafe(".container");
+    themeMaxCache = c ? Math.round(contentWidth(c)) : 0;
+   }
+   if (themeMaxCache > 0) root.style.setProperty("--cx-embed-max", themeMaxCache + "px");
+  }
+ } catch (e) {}
+}
+// Relocate ≤4 s — never after user scroll past the widget or with a dialog open.
+function watchForCartForm(root) {
+ if (!window.MutationObserver) return;
+ var seen = false;
+ function onScroll() {
+  try {
+   // v1.5.1 audit: a hidden root (not-live, no token) measures 0×0 — its
+   // rect must not mark it "seen", so preview/live match tested-hidden runs.
+   if (root.hidden || !root.getClientRects().length) return;
+   // Safari has no scroll anchoring: once the user has scrolled meaningfully,
+   // relocating the tall widget above the fold would visibly jump the page.
+   if (window.scrollY > 200) { seen = true; return; }
+   if (root.getBoundingClientRect().top < window.innerHeight) seen = true;
+  } catch (e) {}
+ }
+ function stop() {
+  try { mo.disconnect(); window.removeEventListener("scroll", onScroll); } catch (e) {}
+ }
+ var mo = new MutationObserver(() => {
+  var form = cartForm(root);
+  if (!form) return;
+  stop();
+  if (seen || document.querySelector(".cx-overlay, .cx-dialog")) return;
+  var ref = sectionOf(form);
+  if (ref && insertAfter(root, ref)) applyGutters(root);
+ });
+ try {
+  mo.observe(document.body, { childList: true, subtree: true });
+  on(window, "scroll", onScroll, { passive: true });
+  window.setTimeout(stop, 4000);
+ } catch (e) { stop(); }
+}
 function mountEmbed(root, settings) {
  var ref = qsSafe(settings.placement_selector);
  if (ref && root.contains(ref)) ref = null;
- if (!ref) {
-  var form = qsSafe('main form[action*="/cart/add"]') || qsSafe('form[action*="/cart/add"]');
-  if (form) {
-   try { ref = form.closest(".shopify-section, section") || form.parentElement; } catch (e) { ref = null; }
-  }
- }
- if (!ref) ref = qsSafe(".product__info-wrapper") || qsSafe("product-info") || qsSafe("main .product");
+ var form = ref ? null : cartForm(root);
+ if (form) ref = sectionOf(form);
  if (!insertAfter(root, ref)) {
-  var main = qsSafe("main");
-  try { if (main && !root.contains(main)) main.appendChild(root); } catch (e) {}
+  var main = qsSafe("main") || qsSafe("#MainContent");
+  try { ((main && !root.contains(main)) ? main : document.body).appendChild(root); } catch (e) {}
+  if (!form) watchForCartForm(root);
  }
  root.hidden = false;
+ applyGutters(root);
+ // v1.5.1 audit: the gutter class and the measured .container width go stale
+ // on rotate/resize — drop the cache and re-measure (two class toggles + one
+ // measurement, debounced; caching within a given viewport stays intact).
+ var reGutter = debounce(() => {
+  themeMaxCache = null;
+  try { root.style.removeProperty("--cx-embed-max"); } catch (e) {}
+  applyGutters(root);
+ }, 250);
+ on(window, "resize", reGutter, { passive: true });
+ on(window, "orientationchange", reGutter, { passive: true });
  return root;
 }
 function buildInlineBadge(rating, count, style, skin, I, linkTargetId) {
@@ -1928,19 +2006,58 @@ function buildInlineBadge(rating, count, style, skin, I, linkTargetId) {
  }
  return badge;
 }
-// §3.3 PDP title badge: instant paint from config rating/count (no fetch); none at 0 reviews or with the star-rating block.
+/* §3.3 PDP title badge (SPEC-1.5.1 Fix 2): badge_selector → .pdp__heading →
+   block .product__title → h1.product-single__title → main h1 → visible h1. */
+function findPdpTitle(s) {
+ var target = typeof s.badge_selector === "string" ? qsSafe(s.badge_selector.trim()) : null;
+ if (!target) target = qsSafe(".pdp__heading");
+ if (!target) {
+  var pts;
+  try { pts = document.querySelectorAll(".product__title"); } catch (e) { pts = []; }
+  for (var i = 0; i < pts.length; i++) {
+   try {
+    if (!pts[i].closest(".cx") && (pts[i].matches("h1") || pts[i].querySelector("h1"))) { target = pts[i]; break; }
+   } catch (e) {}
+  }
+ }
+ if (!target) target = qsSafe("h1.product-single__title") || qsSafe("main h1");
+ if (!target) {
+  var hs;
+  try { hs = document.querySelectorAll("h1"); } catch (e) { hs = []; }
+  for (var j = 0; j < hs.length; j++) {
+   if (hs[j].offsetParent !== null || hs[j].getClientRects().length) { target = hs[j]; break; }
+  }
+ }
+ try {
+  if (!target || target.closest(".cx") || target.hasAttribute("data-cx-badged")) return null;
+ } catch (e) { return null; }
+ return target;
+}
+function renderPdpBadge(cfgE, I, widgetRootId, rating, count) {
+ if (document.querySelector(".cx.cx-badge-inline--pdp")) return; // v1.5.1 audit: match the class the badge actually gets
+ var s = cfgE.settings || {};
+ var target = findPdpTitle(s);
+ if (!target) return;
+ var badge = buildInlineBadge(rating, count, s.badge_style, cfgE.skin, I, widgetRootId);
+ badge.className += " cx-badge-inline--pdp";
+ if (insertAfter(badge, target)) sa(target, "data-cx-badged", "pdp");
+}
 function pdpTitleBadge(cfgE, I, widgetRootId) {
  if (!cfgE || cfgE.pageType !== "product" || !cfgE.product) return;
  var s = cfgE.settings || {};
  if (s.show_pdp_title_badge === false) return;
- if (document.querySelector(".cx.cx-badge")) return;
  var rating = Number(cfgE.product.rating) || 0;
  var count = Number(cfgE.product.ratingCount) || 0;
- if (count < 1 || rating <= 0) return;
- var target = qsSafe(".product__title") || qsSafe("h1.product-single__title") || qsSafe("main h1");
- if (!target || target.hasAttribute("data-cx-badged") || target.closest(".cx")) return;
- var badge = buildInlineBadge(rating, count, s.badge_style, cfgE.skin, I, widgetRootId);
- if (insertAfter(badge, target)) sa(target, "data-cx-badged", "pdp");
+ if (count >= 1 && rating > 0) { renderPdpBadge(cfgE, I, widgetRootId, rating, count); return; }
+ // Fix 2 fallback: first list load fills it (no extra fetch).
+ on(document, "cellexia:loaded", (ev) => {
+  try {
+   var d = (ev && ev.detail) || {};
+   if (Number(d.count) > 0 && Number(d.average) > 0) {
+    renderPdpBadge(cfgE, I, widgetRootId, Number(d.average), Number(d.count));
+   }
+  } catch (e) {}
+ }, { once: true });
 }
 // §3.4 site-wide badge injector.
 function initBadges(cfgE, I) {
@@ -1960,11 +2077,15 @@ function initBadges(cfgE, I) {
  var selOverride = typeof s.badge_selector === "string" ? s.badge_selector.trim() : "";
  var cache = {};      // handle -> stats | null (fetched, no published reviews)
  var requested = {};  // handle -> true once sent to the API
- var extraFetches = 0, rescans = 0;
+ var extraFetches = 0, rescans = 0, scans = 0;
  var stopped = false;
  var observer = null;
- var TITLE_SEL = "h1,h2,h3,h4,h5,.card__heading,.card__title,.card-title,.product-title," +
-  ".product-card__title,.product-item__title,.grid-product__title,.grid-view-item__title";
+ /* Fix 3 (SPEC-1.5.1): CARD = first non-null closest() over CARD_SELS (≤6 hops);
+    TITLE searched WITHIN the card — image-only anchors are valid sources. */
+ var CARD_SELS = [".product", '[class*="product-item"]', '[class*="product-card"]',
+  '[class*="card"]', '[class*="grid__item"]', "li", "article"];
+ var TITLE_SEL = '[class*="product__title"],[class*="product-title"],[class*="card__heading"],' +
+  '[class*="title"]:not([class*="subtitle"]),h2,h3,h4';
  // (b) /products/x, /xx(-XX)/products/x and /collections/…/products/x resolve.
  function handleFrom(a) {
   var href = a.getAttribute("href");
@@ -1976,27 +2097,41 @@ function initBadges(cfgE, I) {
   var handle = path.slice(idx + 10).split("/")[0].toLowerCase();
   return /^[a-z0-9-]{1,255}$/.test(handle) ? handle : null;
  }
- function titleFor(a, card, handle) {
-  if (selOverride) { // merchant override is authoritative
-   try { return card.querySelector(selOverride); } catch (e) { return null; }
-  }
-  var within = null;
-  try { within = a.closest(TITLE_SEL); } catch (e) {}
-  if (within && card.contains(within)) return within;
-  var candidates;
-  try { candidates = card.querySelectorAll(TITLE_SEL); } catch (e) { return null; }
-  var fallback = null;
-  for (var i = 0; i < candidates.length; i++) {
-   var h = candidates[i];
-   if (h.closest(".cx")) continue;
-   var link = h.querySelector('a[href*="/products/"]');
-   if (link) {
-    if (handleFrom(link) === handle) return h;
-   } else if (!fallback && (h.textContent || "").trim()) {
-    fallback = h; // unlinked heading in a card with an overlay link
+ function cardFor(a) {
+  for (var i = 0; i < CARD_SELS.length; i++) {
+   var node = a.parentElement, hops = 1;
+   while (node && node.nodeType === 1 && hops <= 6) {
+    try { if (node.matches(CARD_SELS[i])) return node; } catch (e) { break; }
+    node = node.parentElement;
+    hops += 1;
    }
   }
-  return fallback;
+  return null;
+ }
+ function titleFor(card) {
+  if (selOverride) {
+   try {
+    var o = card.querySelector(selOverride);
+    return o && !o.closest(".cx") ? o : null;
+   } catch (e) { return null; }
+  }
+  var candidates;
+  try { candidates = card.querySelectorAll(TITLE_SEL); } catch (e) { return null; }
+  for (var i = 0; i < candidates.length; i++) {
+   var h = candidates[i];
+   if (h.closest(".cx") || !(h.textContent || "").trim()) continue;
+   // v1.5.1 audit: real cards nest name (h3) + marketing blurb inside one
+   // [class*="title"] container — insert after the heading, not the whole
+   // block, so stars sit directly under the product name (Amazon pattern).
+   if (!/^H[2-4]$/.test(h.tagName)) {
+    try {
+     var hd = h.querySelector("h2,h3,h4");
+     if (hd && !hd.closest(".cx") && (hd.textContent || "").trim()) return hd;
+    } catch (e) {}
+   }
+   return h;
+  }
+  return null;
  }
  var pending = []; // collected {handle, titleEl, done}
  function collect() {
@@ -2005,15 +2140,15 @@ function initBadges(cfgE, I) {
   for (var i = 0; i < anchors.length; i++) {
    try {
     var a = anchors[i];
-    if (a.closest(".cx, .cx-preview-bar, .cx-dialog, .cx-lightbox")) continue;
+    if (a.closest('header, nav, footer, [class*="breadcrumb"], .cx, .cx-preview-bar, .cx-dialog, .cx-lightbox')) continue;
     if (a.offsetParent === null && !a.getClientRects().length) continue;
     var handle = handleFrom(a);
-    if (!handle || cache[handle] === null) continue;
-    var card = a.closest("li, article, .card-wrapper, .card, .grid__item, .product-card, .product-item, product-card") || a.parentElement;
-    if (!card) continue;
-    var titleEl = titleFor(a, card, handle);
-    if (!titleEl || titleEl.hasAttribute("data-cx-badged")) continue;
-    sa(titleEl, "data-cx-badged", handle); // dedupe per handle+element
+    if (!handle) continue;
+    var card = cardFor(a);
+    // nested matches = same card
+    if (!card || card.closest("[data-cx-badged]") || card.querySelector("[data-cx-badged]")) continue;
+    var titleEl = titleFor(card) || a; // fallback: the anchor
+    sa(card, "data-cx-badged", handle); // dedupe ON the card
     pending.push({ handle: handle, titleEl: titleEl, done: false });
    } catch (e) {}
   }
@@ -2026,20 +2161,28 @@ function initBadges(cfgE, I) {
    return Promise.resolve(true);
   }
   var r0 = anyRoot();
-  var url = ((r0 && r0.getAttribute("data-proxy")) || "/apps/cellexia-reviews/api").replace(/\/$/, "") +
+  // v1.5.1 audit: home/collection pages have no widget root — the proxy base
+  // must come from #cx-embed-config, else every /badges call 404s there.
+  var base = (typeof cfgE.proxy === "string" && cfgE.proxy) ||
+   (r0 && r0.getAttribute("data-proxy")) || "/apps/cellexia-reviews/api";
+  var url = base.replace(/\/$/, "") +
    "/badges?handles=" + encodeURIComponent(handles.join(","));
   if (token) url += "&preview_token=" + encodeURIComponent(token);
+  // On any failure (network, non-403 status, bad JSON) un-mark the handles so
+  // a later productive pass may retry them (still bounded by extraFetches).
+  var unmark = () => { handles.forEach((h) => { if (cache[h] === undefined) delete requested[h]; }); };
   return window.fetch(url, { credentials: "same-origin" }).then((r) => {
    if (!r.ok) {
     if (r.status === 403) { stopped = true; disconnect(); removePreviewBar(); } // not_live: go quiet
+    else unmark();
     return false;
    }
    return r.json().then((body) => {
     var map = (body && body.badges) || {};
     handles.forEach((h) => { cache[h] = own(map, h) ? map[h] : null; });
     return true;
-   }).catch(() => false);
-  }).catch(() => false);
+   }).catch(() => { unmark(); return false; });
+  }).catch(() => { unmark(); return false; });
  }
  function inject() {
   for (var i = 0; i < pending.length; i++) {
@@ -2050,7 +2193,9 @@ function initBadges(cfgE, I) {
     if (stats === undefined) continue; // not fetched yet — stays pending
     en.done = true;
     if (!stats || !(Number(stats.count) > 0) || !en.titleEl.parentNode) continue;
-    insertAfter(buildInlineBadge(Number(stats.average) || 0, Number(stats.count) || 0, s.badge_style, cfgE.skin, I, null), en.titleEl);
+    var b = buildInlineBadge(Number(stats.average) || 0, Number(stats.count) || 0, s.badge_style, cfgE.skin, I, null);
+    b.className += " cx-badge-inline--card";
+    insertAfter(b, en.titleEl);
    } catch (e) { en.done = true; }
   }
  }
@@ -2094,9 +2239,15 @@ function initBadges(cfgE, I) {
   if (window.MutationObserver) {
    observer = new MutationObserver(debounce(() => {
     if (stopped || !observer) return;
-    rescans += 1;
-    if (rescans >= 5) disconnect(); // cap: 5 re-scans per page
-    if (rescans <= 5) pass(true);
+    // v1.5.1 audit: unrelated DOM churn (carousels, mini-cart, third-party
+    // widgets) must not consume the budget before late card grids render —
+    // only PRODUCTIVE passes (new cards found) count toward the cap of 5.
+    // A no-op pass is one querySelectorAll; a high total cap still ends it.
+    scans += 1;
+    var before = pending.length;
+    pass(true);
+    if (pending.length > before) rescans += 1;
+    if (rescans >= 5 || scans >= 60) disconnect();
    }, 500));
    resumeMo();
   }

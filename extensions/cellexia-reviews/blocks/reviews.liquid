@@ -4,7 +4,7 @@
   SSR paints instantly from the `cellexia` product metafields (rating, rating_count,
   distribution, summary, top_reviews) so the header, AI summary and top reviews are
   indexable with zero JS. assets/cellexia-reviews.js then hydrates live data from the
-  app proxy JSON API (/apps/cellexia-reviews/api) and fills the containers.
+  app proxy JSON API (/apps/cellexia-reviews/api, see snippets/cx-proxy.liquid) and fills the containers.
 
   Container contract with the JS (section() lookup): every hydratable container
   carries a value-style hook — data-cx="header|summary|media-strip|controls|
@@ -138,7 +138,7 @@
   data-product-handle="{{ product.handle }}"
   data-locale="{{ request.locale.iso_code }}"
   data-shop-default-locale="{{ cx_default_locale }}"
-  data-proxy="/apps/cellexia-reviews/api"
+  data-proxy="{% render 'cx-proxy' %}"
   data-per-page="{{ block.settings.per_page | default: 10 }}"
   data-heading="{{ cx_heading | escape }}"
   {% if cx_brand != blank %}data-brand="{{ cx_brand | escape }}"{% endif %}

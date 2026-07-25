@@ -1,5 +1,5 @@
 /**
- * Storefront proxy: `GET /apps/cellexia-reviews/api/badges?handles=h1,h2,…`
+ * Storefront proxy: `GET /apps/cellexia/api/badges?handles=h1,h2,…`
  * → `/proxy/api/badges` (SPEC-1.5 §2).
  *
  * Returns `{ "badges": { "<handle>": { "average": 4.6, "count": 128 } } }`

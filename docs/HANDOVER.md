@@ -55,7 +55,7 @@ editor + verification checklist, the rest buffer. No coding is required for a st
 
 ## Support checklist (what "healthy" looks like)
 
-- `https://<shop-domain>/apps/cellexia/api/reviews?product_id=<id>` returns JSON.
+- `https://<shop-domain>/apps/cellexia-reviews/api/reviews?product_id=<id>` returns JSON.
 - Embedded admin loads; Dashboard shows stats.
 - New storefront submissions appear as Pending; approving them updates the storefront header
   and star badge.

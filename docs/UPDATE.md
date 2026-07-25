@@ -131,7 +131,7 @@ Two things to get right when applying this release:
 Run the short version of the install checklist (`docs/INSTALL.md` §10):
 
 1. Embedded admin loads.
-2. `https://<shop-domain>/apps/cellexia/api/reviews?product_id=<id>` returns JSON.
+2. `https://<shop-domain>/apps/cellexia-reviews/api/reviews?product_id=<id>` returns JSON.
 3. Product page widget renders and can load page 2 ("See more reviews").
 4. `npm run check:locales` exits 0.
 5. Skim `CHANGELOG.md` for feature-specific checks (e.g. a new setting to configure).

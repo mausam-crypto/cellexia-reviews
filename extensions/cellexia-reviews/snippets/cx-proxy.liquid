@@ -1,0 +1,12 @@
+{%- comment -%}
+  Cellexia Reviews — single source of the storefront app-proxy base path
+  (v1.5.1 audit). MUST match [app_proxy] in shopify.app.toml: prefix "apps" +
+  subpath "cellexia-reviews" (the live store's measured subpath, SPEC-1.5.1).
+  Both blocks render this value into their data-proxy attribute and
+  blocks/embed.liquid also emits it in the #cx-embed-config JSON, so the path
+  can never drift between files; the string literals inside
+  assets/cellexia-reviews.js are last-ditch fallbacks only.
+  If the subpath ever changes, edit it HERE and in shopify.app.toml, then
+  `npm run deploy`.
+{%- endcomment -%}
+{{- '/apps/cellexia-reviews/api' -}}

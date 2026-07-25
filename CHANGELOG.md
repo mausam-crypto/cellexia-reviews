@@ -4,6 +4,58 @@ All notable changes to Cellexia Reviews are documented here. The version number 
 `package.json` and stamped into the release ZIP built by `npm run package`
 (`dist/cellexia-reviews-v<version>.zip`).
 
+## 1.5.1 — 2026-07-24
+
+Polish release for the app embed, driven by preview testing on the live Cellexia theme
+(cellexialabs.com). No settings, translations, schema or backend changes — all three design
+versions and block-mounted pages behave as before.
+
+### Fixed
+
+- **Embed placement & spacing on real themes**: on themes that render the add-to-cart form
+  with JavaScript (as the live Cellexia theme does), the embedded widget used to fall back to
+  the very end of the page and could sit flush against the screen edges with no margins. The
+  widget now watches for the late-rendered add-to-cart area for up to 4 seconds and moves
+  itself right below that section — but never while you are already reading it or have a
+  dialog open. Wherever it ends up, it now manages its own spacing: on full-bleed pages it
+  centers itself, aligns with the theme's own content width and adds proper side gutters;
+  inside a theme container it adds breathing room above and below only.
+- **Stars under the product title**: the star row under the product page's own title is now
+  found on far more themes (including heading wrappers like the live theme's `.pdp__heading`),
+  and it appears even when the store has no synced rating data yet — the widget's first data
+  load fills it in, with no extra request. Also: tuned spacing under the heading, and the
+  review count now picks up the theme's own font.
+- **Star badges on product cards**: card detection was rebuilt around how real themes mark up
+  product cards — including cards where the product link wraps only the image and the title
+  sits in a separate element next to it (exactly the live theme's markup). Badges now appear
+  on home, collection and search cards on such themes, on their own line right below the card
+  title, and every card is badged at most once. Header, navigation, footer and breadcrumb
+  links are never badged.
+- **Little things**: review dialogs, the photo lightbox and the filter sheet now always sit
+  above sticky theme headers; the preview ribbon sits just below the dialogs so it can't cover
+  them; star badges no longer stretch the line height of card titles; very long unbroken words
+  in review text can no longer overflow their box; the review form sheet respects the iPhone
+  bottom safe area; and small layout guards keep the controls row tidy on 320 px screens.
+- **Audit follow-up (same release)**, from a line-by-line review against the live theme:
+  - The storefront now calls the store's **actual app-proxy path**
+    (`/apps/cellexia-reviews/api`, matching `[app_proxy]` in `shopify.app.toml`). The path is
+    written in exactly one place (`snippets/cx-proxy.liquid`) and flows into both blocks and
+    the embed config, so it can never drift between files again.
+  - Card badges on the **home page and collections** now work: those pages have no review
+    widget to read the API address from, so the embed's config script now carries it.
+  - On cards whose title block also contains a marketing blurb, the stars now sit **directly
+    under the product name**, not below the blurb.
+  - Product sections that load **as you scroll** (e.g. recommendation grids) reliably get
+    their badges: page activity from carousels or mini-carts no longer uses up the badge
+    scanner's budget.
+  - The widget's spacing and width now **re-adjust when a phone is rotated** or the window is
+    resized.
+  - The review form's **Cancel/Submit bar** respects the iPhone home-indicator area while the
+    sheet is being scrolled, not just at the very end.
+  - Two internal guards fixed: the widget no longer risks a visible page jump on iOS Safari
+    if it moves below the add-to-cart area while you have started scrolling, and the
+    stars-under-the-title row can no longer be inserted twice.
+
 ## 1.5.0 — 2026-07-23
 
 ### Added

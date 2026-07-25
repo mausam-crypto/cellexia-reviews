@@ -1,5 +1,5 @@
 /**
- * Storefront proxy: `POST /apps/cellexia-reviews/api/reviews/:id/report`
+ * Storefront proxy: `POST /apps/cellexia/api/reviews/:id/report`
  * → `/proxy/api/reviews/:id/report`.
  *
  * Body: `{ "token": "<visitor uuid>", "reason": "<REPORT_REASONS key>" }`.

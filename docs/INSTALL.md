@@ -259,14 +259,19 @@ scopes = "read_orders,read_products,write_products,read_files,write_files"
 [app_proxy]
 url = "https://YOUR-APP-URL/proxy"
 prefix = "apps"
-subpath = "cellexia"
+subpath = "cellexia-reviews"
 ```
 
 The `[app_proxy]` block is what makes the storefront widget work: a shopper's browser requests
-`https://<shop-domain>/apps/cellexia/api/reviews`, Shopify signs the request and forwards it to
-`https://YOUR-APP-URL/proxy/api/reviews`. If the proxy is misconfigured, live data, submission,
-votes and translation all fail (on a live store the widget's SSR part still renders — it comes
-from metafields).
+`https://<shop-domain>/apps/cellexia-reviews/api/reviews`, Shopify signs the request and
+forwards it to `https://YOUR-APP-URL/proxy/api/reviews`. If the proxy is misconfigured, live
+data, submission, votes and translation all fail (on a live store the widget's SSR part still
+renders — it comes from metafields).
+
+> **Keep the subpath in sync with the theme extension.** The storefront-side path is
+> single-sourced in `extensions/cellexia-reviews/snippets/cx-proxy.liquid`
+> (`/apps/cellexia-reviews/api`). If you ever change `subpath` in `shopify.app.toml`, change
+> that snippet to match and run `npm run deploy` — they must always agree.
 
 Push the configuration **and** the theme extension to Shopify:
 
@@ -411,7 +416,7 @@ Work through every line; each has an unambiguous pass signal.
 - [ ] **Embedded admin loads**: Shopify admin → Apps → Cellexia Reviews shows the Dashboard
       with the 4-step setup guide and the "Not live yet" banner.
 - [ ] **App proxy reachable**: open
-      `https://<shop-domain>/apps/cellexia/api/reviews?product_id=<numeric-product-id>`
+      `https://<shop-domain>/apps/cellexia-reviews/api/reviews?product_id=<numeric-product-id>`
       in a browser — while the store is still not live, the pass signal is a small JSON error
       (`{"ok":false,"errors":{"_":"not_live"}}`, HTTP 403): it proves Shopify forwards signed
       requests to your backend. A Shopify 404 page or a 401 means the proxy or the API secret
@@ -483,7 +488,7 @@ apply the fix; re-run the relevant §10 checklist line.
 | --- | --- |
 | Embedded admin shows a blank page or an endless redirect loop | `SHOPIFY_APP_URL` doesn't exactly match the deployed URL (protocol/trailing slash matter), or the `[auth] redirect_urls` in `shopify.app.toml` still contain placeholders. Fix both, `npm run deploy`, reinstall the app. |
 | Admin shows "App couldn't be loaded" right after install | The backend was asleep or unreachable during OAuth. Free-tier instances that sleep are unsuitable — use a non-sleeping instance (§5A note). |
-| Proxy URL `https://<shop>/apps/cellexia/...` returns Shopify's own 404 page | The `[app_proxy]` block wasn't deployed (run `npm run deploy` and confirm the release) — or another app already owns the `/apps/cellexia` path prefix. Path collision: change `subpath` in `shopify.app.toml` to e.g. `cellexia-reviews`, **and** update the hardcoded path in two extension files to match — `data-proxy="/apps/cellexia/api"` in `extensions/cellexia-reviews/blocks/reviews.liquid` and the same fallback string in `extensions/cellexia-reviews/assets/cellexia-reviews.js` — then `npm run deploy`. |
+| Proxy URL `https://<shop>/apps/cellexia-reviews/...` returns Shopify's own 404 page | The `[app_proxy]` block wasn't deployed (run `npm run deploy` and confirm the release) — or another app already owns the `/apps/cellexia-reviews` path prefix. Path collision: change `subpath` in `shopify.app.toml` **and** the single-sourced path in `extensions/cellexia-reviews/snippets/cx-proxy.liquid` to the same new value, then `npm run deploy`. |
 | Proxy URL returns `{"ok":false,"errors":{"_":"unauthorized"}}` (401) | `SHOPIFY_API_SECRET` on the host doesn't match the app's current Client secret (rotated?). Update the env var and restart. |
 | Proxy URL returns `{"ok":false,"errors":{"_":"not_live"}}` (403) | Not an error — the store isn't live yet (§9). This is the expected pass signal pre-go-live. |
 | Blocks don't appear under the theme editor's **Apps** tab | The extension wasn't deployed (`npm run deploy`, confirm the release), or the app isn't installed on this store yet (§7 before §8). |

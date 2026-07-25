@@ -1,6 +1,6 @@
 /* Cellexia Reviews — storefront widget (Amazon-fidelity). Scope: .cx only, plus
    .cx-dialog/.cx-sheet/.cx-lightbox/.cx-filter-panel which may sit in the top layer.
-   Mobile-first · RTL via logical properties · budget <= 47 KB (SPEC-1.5 §5). */
+   Mobile-first · RTL via logical properties · budget <= 48 KB (SPEC-1.5.1). */
 
 /* 1. Design tokens (SPEC §14 verbatim; grouped with top-layer dialog roots) */
 .cx, .cx-dialog, .cx-sheet, .cx-lightbox, .cx-filter-panel {
@@ -9,11 +9,13 @@
   --cx-border:#D5D9D9;--cx-border-light:#E7E7E7;--cx-verified:#C45500;
   --cx-pos:#007600;--cx-neg:#C7511F;--cx-bg-soft:#F0F2F2;--cx-focus:#007185;
   --cx-radius:8px;--cx-radius-pill:100px;
+  --cx-z:2147480000; /* v1.5.1 Fix 4: overlays above any sticky theme header */
   --cx-shadow:0 2px 5px rgba(15,17,17,.15);
   font-family:"Amazon Ember", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
   color:var(--cx-text);font-size:14px;line-height:1.43;
 }
-.cx { scroll-margin-block-start:24px;}
+/* v1.5.1 Fix 4 guards: never trapped beside theme floats, never forced wide */
+.cx { scroll-margin-block-start:24px;clear:both;min-inline-size:0;}
 
 /* 2. Reset-lite (scoped) */
 .cx, .cx *, .cx *::before, .cx *::after,
@@ -230,6 +232,8 @@
 .cx-sort select:hover, select.cx-sort__select:hover { background-color:#F7FAFA;}
 [dir="rtl"] .cx-sort select, [dir="rtl"] select.cx-sort__select { background-position:left 14px center;}
 @media (min-width:768px) { .cx-sort select, select.cx-sort__select { min-block-size:36px;padding-block:6px;} }
+/* v1.5.1 Fix 4: 320px — sort/filter controls may never push past the viewport */
+.cx-sort, .cx-sort select, select.cx-sort__select, .cx-filter-btn { max-inline-size:100%;}
 
 /* Filter button wrapper = popover anchor */
 .cx-filter { position:relative;display:inline-flex;}
@@ -237,7 +241,7 @@
 /* Filter panel: ONLY the popover anchored inside .cx-filter — an unscoped
    div.cx-filter-panel would out-specify .cx-dialog and break the modal. */
 .cx-filter div.cx-filter-panel {
-  position:fixed;inset-inline:0;inset-block-end:0;z-index:100000;background:#fff;
+  position:fixed;inset-inline:0;inset-block-end:0;z-index:var(--cx-z, 2147480000);background:#fff;
   border-start-start-radius:16px;border-start-end-radius:16px;
   box-shadow:0 -4px 24px rgba(15,17,17,.3);
   max-block-size:85vh;overflow:auto;overscroll-behavior:contain;padding:16px;
@@ -346,6 +350,8 @@ a.cx-card__title:hover { color:var(--cx-link-hover);text-decoration:underline;}
 .cx-badge-verified { color:var(--cx-verified);font-size:13px;font-weight:700;white-space:nowrap;}
 .cx-badge-pending { color:var(--cx-muted);font-size:13px;font-style:italic;}
 .cx-card__body { font-size:14px;line-height:1.45;margin-block:8px;overflow-wrap:anywhere;}
+/* v1.5.1 Fix 4: user/AI text containers never overflow on long unbroken words */
+.cx-card__title, .cx-reply__text, .cx-summary__text, .cx-chip-panel__blurb, .cx-chip-panel__quote { overflow-wrap:anywhere;}
 .cx-read-more, .cx-readmore { display:inline-block;color:var(--cx-link);font-size:14px;padding-block:6px;}
 .cx-read-more:hover, .cx-readmore:hover { color:var(--cx-link-hover);text-decoration:underline;}
 
@@ -459,16 +465,17 @@ a.cx-card__title:hover { color:var(--cx-link-hover);text-decoration:underline;}
 
 /* 12. Dialogs: bottom sheet (mobile) / centered modal >= 768px; lightbox */
 .cx-dialog {
-  position:fixed;inset:0;z-index:100000;
+  position:fixed;inset:0;z-index:var(--cx-z, 2147480000);
   margin-block-start:auto;margin-block-end:0;margin-inline:auto;
   inline-size:100%;max-inline-size:100%;max-block-size:92dvh;
   overflow:auto;overscroll-behavior:contain;
   border:0;padding:16px;background:#fff;
+  padding-block-end:calc(16px + env(safe-area-inset-bottom, 0px)); /* v1.5.1 Fix 4 */
   border-start-start-radius:16px;border-start-end-radius:16px;
   box-shadow:0 -4px 24px rgba(15,17,17,.25);
 }
 .cx-dialog::backdrop { background:rgba(15,17,17,.5);}
-.cx-backdrop { position:fixed;inset:0;z-index:99999;background:rgba(15,17,17,.5);}
+.cx-backdrop { position:fixed;inset:0;z-index:2147479998;background:rgba(15,17,17,.5);}
 
 /* Drag-handle bar on the mobile sheet */
 @media (max-width:767.98px) {
@@ -489,6 +496,13 @@ a.cx-card__title:hover { color:var(--cx-link-hover);text-decoration:underline;}
   display:flex;align-items:center;justify-content:flex-end;gap:12px;
   padding-block:12px 2px;margin-block-start:12px;
   border-block-start:1px solid var(--cx-border-light);
+}
+/* v1.5.1 Fix 4 (audit): mid-scroll, the sticky footer pins to the sheet's
+   visible bottom edge — on the bottom-anchored mobile sheet that is the
+   physical screen bottom, so the footer needs its own safe-area allowance
+   (the dialog's padding only protects it at scroll-end). All skins. */
+@media (max-width:767.98px) {
+  .cx-dialog__footer { padding-block-end:calc(4px + env(safe-area-inset-bottom, 0px));}
 }
 @media (min-width:768px) {
   .cx-dialog {
@@ -577,10 +591,11 @@ div.cx-filter-panel:not([hidden]) { animation:cx-slide-up .25s ease;}
 
 /* 14. v1.2 preview mode (SPEC-1.2): enforce `hidden` on not-live shells; the
    .cx-preview-bar ribbon (appended to <body> by the JS, brand-neutral ink, no
-   per-skin overrides) sits above the JS overlays (z-index 2147483000). */
+   per-skin overrides) sits above the theme but slightly BELOW our dialogs
+   (--cx-z 2147480000 — v1.5.1 Fix 4). */
 .cx[hidden] { display:none !important;}
 .cx-preview-bar {
-  position:fixed;inset-block-end:0;inset-inline:0;z-index:2147483600;
+  position:fixed;inset-block-end:0;inset-inline:0;z-index:2147479999;
   box-sizing:border-box;inline-size:100%;
   display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:12px;
   margin:0;padding:10px 16px;
@@ -618,15 +633,33 @@ div.cx-filter-panel:not([hidden]) { animation:cx-slide-up .25s ease;}
   --cx-star-size:1em; /* stars ride the existing .cx-stars svg sizing var */
   display:inline-flex;align-items:center;gap:.35em;vertical-align:middle;
   margin-block:.15em 0;padding:0;border:0;background:none;
-  font-size:1em;line-height:1.2;color:var(--cx-text);
+  font-size:1em;line-height:1;color:var(--cx-text); /* lh 1: never inflates card line boxes (v1.5.1 Fix 4) */
   text-decoration:none;text-rendering:auto;
 }
 .cx.cx-badge-inline.cx-badge-inline { font-family:inherit;}
 a.cx.cx-badge-inline { cursor:pointer;}
 a.cx.cx-badge-inline:is(:hover, :focus, :active) { text-decoration:none;color:var(--cx-text);}
-.cx-badge-inline .cx-stars { flex:none;}
+.cx-badge-inline .cx-stars { flex:none;line-height:1;}
 .cx-badge-inline__count { font-size:.85em;color:var(--cx-muted);white-space:nowrap;}
 @media print { .cx-badge-inline { print-color-adjust:exact;-webkit-print-color-adjust:exact;} }
+/* v1.5.1 Fix 2: PDP title badge under the theme h1 (count inherits theme font) */
+.cx.cx-badge-inline--pdp { margin-block:6px 2px;}
+/* v1.5.1 Fix 3: card badges take their own flex row right after the title */
+.cx.cx-badge-inline--card { display:flex;}
+
+/* 16. v1.5.1 embed self-managed gutters (SPEC-1.5.1 Fix 1) — embed roots only,
+   classes set by the JS after mount and again after any relocation. Full-bleed
+   mount parent ⇒ cx--self-contained: centered, its own inline gutters, capped
+   at the theme's measured .container width (--cx-embed-max, set inline by the
+   JS; falls back to 1200px). Theme-provided gutters ⇒ cx--in-container: block
+   spacing only. Logical properties throughout (RTL-safe). */
+.cx.cx--self-contained {
+  max-inline-size:min(1200px, var(--cx-embed-max, 1200px));
+  margin-inline:auto;
+  padding-inline:clamp(16px, 4vw, 48px);
+  margin-block:clamp(28px, 5vw, 56px);
+}
+.cx.cx--in-container { margin-block:clamp(28px, 5vw, 56px);}
 
 /* ===== Skin: cellexia ===== */
 /* v1.1 (SPEC-1.1) CSS-only skin, scoped to data-cx-skin="cellexia" (.cx roots +

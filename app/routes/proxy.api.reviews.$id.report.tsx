@@ -16,6 +16,7 @@ import {
   getClientIp,
   isNotFoundError,
   readJsonBody,
+  recordStorefrontHit,
   requireLiveOrPreview,
   verifyProxy,
 } from "~/services/proxy.server";
@@ -37,6 +38,7 @@ export async function action({ request, params }: ActionFunctionArgs) {
   const auth = await verifyProxy(request);
   if (!auth) return errorJson(401, { _: "unauthorized" });
   const { shop } = auth;
+  recordStorefrontHit(shop, request); // SPEC-1.6 §2 — fire-and-forget, throttled
 
   const reviewId = params.id ?? "";
   if (!REVIEW_ID_RE.test(reviewId)) {

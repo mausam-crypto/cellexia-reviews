@@ -1,4 +1,4 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import type {
   ActionFunctionArgs,
@@ -7,6 +7,7 @@ import type {
 } from "@remix-run/node";
 import { json } from "@remix-run/node";
 import { useFetcher, useLoaderData } from "@remix-run/react";
+import type { ShouldRevalidateFunction } from "@remix-run/react";
 import {
   Badge,
   Banner,
@@ -19,7 +20,9 @@ import {
   InlineGrid,
   InlineStack,
   Link as PolarisLink,
+  Modal,
   Page,
+  Spinner,
   Text,
   Tooltip,
 } from "@shopify/polaris";
@@ -30,6 +33,8 @@ import prisma from "~/db.server";
 import { getSettings, updateSettings } from "~/services/settings.server";
 import { syncShopSettingsMetafields } from "~/services/metafields.server";
 import { getPreviewUrl } from "~/services/preview.server";
+import { runStorefrontHealthCheck } from "~/services/proxyhealth.server";
+import type { HealthReport } from "~/services/proxyhealth.server";
 import { generateSummary } from "~/services/ai.server";
 import {
   syncProductData,
@@ -41,9 +46,292 @@ import { StatusBadge } from "~/components/admin/StatusBadge";
 import { useResultToast } from "~/components/admin/useResultToast";
 import { formatDate, formatDateTime, pluralize } from "~/components/admin/labels";
 
+/* ------------------------------------------------------------------------- *
+ * Storefront connection health report (SPEC-1.6 §5)
+ *
+ * `runStorefrontHealthCheck` probes the shop's own storefront over HTTPS, so it
+ * is far too slow to sit in the loader: the loader only ever reports the LAST
+ * result (kept in a per-process in-memory cache, exactly like the proxy
+ * rate-limiter) and tells the client whether to run a fresh one. A fetcher does
+ * the actual run, so the Dashboard always renders immediately.
+ *
+ * The report shape is normalized defensively (`normalizeHealthReport`): the UI
+ * survives a service that adds fields, renames `checks` or returns an unknown
+ * status value — it can never crash the merchant's Dashboard.
+ * ------------------------------------------------------------------------- */
+
+/** Anchor id — Settings → "Test storefront connection" scrolls the card into view. */
+const HEALTH_ANCHOR_ID = "cx-storefront-connection";
+
+/** A cached report older than this triggers the automatic (non-blocking) re-run. */
+const HEALTH_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+
+/** Cache ceiling (shops per server process) — keeps the map bounded. */
+const HEALTH_CACHE_LIMIT = 200;
+
+/** Budget for one "Re-sync all products" click (Shopify request timeouts). */
+const RESYNC_MAX_PRODUCTS = 100;
+const RESYNC_TIME_BUDGET_MS = 20_000;
+
+/** Per-product failures listed back to the merchant (the rest are counted). */
+const RESYNC_REPORTED_FAILURES = 5;
+
+/** Review counts behind the "Review data" health row (SPEC-1.6.1 §B). */
+interface ReviewCounts {
+  total: number;
+  published: number;
+  pending: number;
+  /** Distinct products with at least one published review. */
+  products: number;
+}
+
+type HealthStatus = "pass" | "warn" | "fail";
+
+interface HealthCheckView {
+  id: string;
+  label: string;
+  status: HealthStatus;
+  detail: string;
+  fix: string | null;
+}
+
+interface HealthReportView {
+  /** ISO timestamp of the run that produced this report. */
+  ranAt: string;
+  overall: HealthStatus;
+  checks: HealthCheckView[];
+}
+
+const HEALTH_BADGE: Record<
+  HealthStatus,
+  { tone: "success" | "warning" | "critical"; label: string }
+> = {
+  pass: { tone: "success", label: "Passed" },
+  warn: { tone: "warning", label: "Warning" },
+  fail: { tone: "critical", label: "Failed" },
+};
+
+const healthCache = new Map<string, HealthReportView>();
+
+function readHealthCache(shop: string): HealthReportView | null {
+  return healthCache.get(shop) ?? null;
+}
+
+function writeHealthCache(shop: string, report: HealthReportView): void {
+  healthCache.delete(shop);
+  healthCache.set(shop, report);
+  while (healthCache.size > HEALTH_CACHE_LIMIT) {
+    const oldest = healthCache.keys().next();
+    if (oldest.done) break;
+    healthCache.delete(oldest.value);
+  }
+}
+
+function isHealthStale(report: HealthReportView | null): boolean {
+  if (!report) return true;
+  const ranAt = Date.parse(report.ranAt);
+  return !Number.isFinite(ranAt) || Date.now() - ranAt > HEALTH_MAX_AGE_MS;
+}
+
+function toHealthStatus(value: unknown): HealthStatus | null {
+  if (typeof value !== "string") return null;
+  const lower = value.trim().toLowerCase();
+  return lower === "pass" || lower === "warn" || lower === "fail" ? lower : null;
+}
+
+function clip(value: string, maxLength: number): string {
+  return value.length > maxLength ? `${value.slice(0, maxLength - 1).trimEnd()}…` : value;
+}
+
+/** Coerces a service field to display text (strings, string arrays, numbers). */
+function toHealthText(value: unknown, maxLength = 900): string {
+  if (typeof value === "string") return clip(value.trim(), maxLength);
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (Array.isArray(value)) {
+    return clip(
+      value
+        .map((entry) => (typeof entry === "string" ? entry.trim() : ""))
+        .filter((entry) => entry.length > 0)
+        .join(" "),
+      maxLength,
+    );
+  }
+  return "";
+}
+
+function toIsoTimestamp(value: unknown): string | null {
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value.toISOString();
+  }
+  if (typeof value === "number" && Number.isFinite(value)) {
+    return new Date(value).toISOString();
+  }
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) return new Date(parsed).toISOString();
+  }
+  return null;
+}
+
+/** Finds the per-check array whether the service returns it bare or wrapped. */
+function readHealthChecks(raw: unknown): unknown[] {
+  if (Array.isArray(raw)) return raw;
+  if (raw && typeof raw === "object") {
+    const record = raw as Record<string, unknown>;
+    for (const key of ["checks", "results", "entries", "items"]) {
+      const value = record[key];
+      if (Array.isArray(value)) return value;
+    }
+  }
+  return [];
+}
+
+/**
+ * Turns a `HealthReport` into the plain, JSON-safe shape the card renders.
+ * Returns null when the service produced no readable check — the caller then
+ * reports an honest failure instead of an empty card.
+ */
+function normalizeHealthReport(raw: unknown, ranAt: string): HealthReportView | null {
+  const checks: HealthCheckView[] = [];
+  readHealthChecks(raw).forEach((entry, index) => {
+    if (!entry || typeof entry !== "object") return;
+    const record = entry as Record<string, unknown>;
+    checks.push({
+      id: toHealthText(record.id, 60) || `check-${index + 1}`,
+      label:
+        toHealthText(record.label, 120) ||
+        toHealthText(record.title, 120) ||
+        `Check ${index + 1}`,
+      status: toHealthStatus(record.status) ?? "warn",
+      detail:
+        toHealthText(record.detail) ||
+        toHealthText(record.message) ||
+        toHealthText(record.description),
+      fix: toHealthText(record.fix) || toHealthText(record.hint) || null,
+    });
+  });
+  if (checks.length === 0) return null;
+
+  const record =
+    raw && typeof raw === "object" && !Array.isArray(raw)
+      ? (raw as Record<string, unknown>)
+      : {};
+  const overall =
+    toHealthStatus(record.overall) ??
+    toHealthStatus(record.status) ??
+    (checks.some((check) => check.status === "fail")
+      ? "fail"
+      : checks.some((check) => check.status === "warn")
+        ? "warn"
+        : "pass");
+
+  return {
+    ranAt:
+      toIsoTimestamp(record.ranAt) ??
+      toIsoTimestamp(record.checkedAt) ??
+      toIsoTimestamp(record.ts) ??
+      ranAt,
+    overall,
+    checks,
+  };
+}
+
+/* ------------------------------------------------------------------------- *
+ * Server helpers (loader/action only — never reached from the browser bundle)
+ * ------------------------------------------------------------------------- */
+
+/**
+ * The three review counts plus the number of products carrying published
+ * reviews, as of right now. The loader derives the same numbers from queries
+ * it already runs; this is for the health-check action, which runs later.
+ * Returns null rather than throwing — the card then falls back to the
+ * loader's snapshot.
+ */
+async function readReviewCounts(shop: string): Promise<ReviewCounts | null> {
+  try {
+    const [total, published, pending, productGroups] = await Promise.all([
+      prisma.review.count({ where: { shop } }),
+      prisma.review.count({ where: { shop, status: "PUBLISHED" } }),
+      prisma.review.count({ where: { shop, status: "PENDING" } }),
+      prisma.review.groupBy({
+        by: ["productId"],
+        where: { shop, status: "PUBLISHED" },
+      }),
+    ]);
+    return { total, published, pending, products: productGroups.length };
+  } catch (error) {
+    console.error("[cellexia] reading the review counts failed", error);
+    return null;
+  }
+}
+
+/**
+ * What the last metafield sync recorded (SPEC-1.6.1 §A): the verbatim error
+ * (null when it succeeded) and when it was written.
+ *
+ * Both fields are read structurally from the settings row rather than through
+ * a `select`, so this route compiles and runs both before and after those
+ * columns exist — a Dashboard that cannot render is worse than one that cannot
+ * yet show a sync error.
+ */
+async function readSyncOutcome(
+  shop: string,
+): Promise<{ error: string | null; at: number | null }> {
+  try {
+    const row: unknown = await prisma.setting.findUnique({ where: { shop } });
+    if (!row || typeof row !== "object") return { error: null, at: null };
+    const record = row as Record<string, unknown>;
+    const rawError = record.lastSyncError;
+    const error =
+      typeof rawError === "string" && rawError.trim().length > 0 ? rawError.trim() : null;
+    const rawAt = record.lastSyncAt;
+    const at =
+      rawAt instanceof Date && !Number.isNaN(rawAt.getTime()) ? rawAt.getTime() : null;
+    return { error, at };
+  } catch (error) {
+    console.error("[cellexia] reading the last sync outcome failed", error);
+    return { error: null, at: null };
+  }
+}
+
+/** A thrown value as one line of merchant-readable text. */
+function describeError(error: unknown): string {
+  const message =
+    typeof error === "object" && error !== null && "message" in error
+      ? String((error as { message?: unknown }).message ?? "")
+      : String(error ?? "");
+  const cleaned = message.replace(/\s+/g, " ").trim();
+  return cleaned || "the app server did not say why";
+}
+
+function describeProductFailure(failure: { productId: string; message: string }): string {
+  return `product ${failure.productId}: ${failure.message}`;
+}
+
+/**
+ * The one next step for a sync error, chosen from the error text itself
+ * (SPEC-1.6.1 §A: re-authenticate when it mentions access or scope, retry when
+ * throttled). Verbatim errors are honest but rarely actionable on their own.
+ */
+function syncErrorHint(message: string): string {
+  if (/throttl|rate.?limit|too many requests|query cost/i.test(message)) {
+    return "Shopify is throttling the app. Wait a minute, then run the re-sync again.";
+  }
+  if (/scope|access|permission|denied|unauthor|forbidden|\b40[13]\b/i.test(message)) {
+    return "The app is missing permission to write product metafields. Reinstall or re-open the app from Shopify admin to re-authenticate, then run the re-sync again.";
+  }
+  return "Run the re-sync again. If it keeps failing, this message is the verbatim answer from Shopify — check the app server logs for the full response.";
+}
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const shop = session.shop;
+
+  // Never block the page on the health check: report the cached run and let a
+  // fetcher refresh it when it is missing, older than 24 h, or when the
+  // merchant arrived from Settings → "Test storefront connection".
+  const forceHealthRun = new URL(request.url).searchParams.get("health") === "run";
+  const cachedHealth = readHealthCache(shop);
 
   const monthStart = new Date();
   monthStart.setDate(1);
@@ -143,6 +431,16 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       hasAiKey: Boolean(settings.anthropicApiKey),
       hasModerated: publishedAgg._count._all > 0,
     },
+    // SPEC-1.6.1 §B — the review-data health row is rendered from these, not
+    // from prose the service composed, so the merchant always sees all three
+    // numbers and the "reviews exist but none are published" case is
+    // recognised as such. Free: the Dashboard already queried every one.
+    reviewCounts: {
+      total: totalReviews,
+      published: publishedAgg._count._all,
+      pending: pendingCount,
+      products: products.length,
+    },
     needsAttention: attentionRows.map((r) => ({
       id: r.id,
       rating: r.rating,
@@ -155,6 +453,11 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       createdAt: r.createdAt,
     })),
     products,
+    health: {
+      report: cachedHealth,
+      autoRun: forceHealthRun || isHealthStale(cachedHealth),
+      focus: forceHealthRun,
+    },
   });
 };
 
@@ -195,6 +498,132 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
     }
 
+    /* ---- Storefront connection test (SPEC-1.6 §5) ------------------------ */
+    if (intent === "storefront-health") {
+      try {
+        const [raw, reviewCounts]: [HealthReport, ReviewCounts | null] =
+          await Promise.all([
+            runStorefrontHealthCheck(shop, admin),
+            // Counts as of THIS run, so a report requested minutes after the
+            // page loaded never contradicts the row it is rendered into.
+            readReviewCounts(shop),
+          ]);
+        const report = normalizeHealthReport(raw, new Date().toISOString());
+        if (!report) {
+          return json(
+            {
+              ok: false,
+              intent,
+              message:
+                "The storefront connection test returned no results. Please try again.",
+            },
+            { status: 500 },
+          );
+        }
+        writeHealthCache(shop, report);
+        return json({ ok: true, intent, report, reviewCounts });
+      } catch (error) {
+        console.error("[cellexia] storefront health check failed", error);
+        return json(
+          {
+            ok: false,
+            intent,
+            message:
+              "The storefront connection test could not be completed. Please try again.",
+          },
+          { status: 500 },
+        );
+      }
+    }
+
+    /* ---- Re-sync the product metafields that power SSR stars ------------- */
+    if (intent === "resync-metafields") {
+      const groups = await prisma.review.groupBy({
+        by: ["productId"],
+        where: { shop, status: "PUBLISHED" },
+      });
+      if (groups.length === 0) {
+        return json({
+          ok: true,
+          intent,
+          message: "There are no published reviews to sync yet.",
+        });
+      }
+
+      // Bounded work per click: a store with hundreds of reviewed products
+      // would otherwise outlive the request. Whatever is left is reported
+      // honestly so the merchant can run it again.
+      const startedAt = Date.now();
+      let processed = 0;
+      let synced = 0;
+      const failures: Array<{ productId: string; message: string }> = [];
+
+      for (const group of groups) {
+        if (processed >= RESYNC_MAX_PRODUCTS) break;
+        if (processed > 0 && Date.now() - startedAt > RESYNC_TIME_BUDGET_MS) break;
+        processed += 1;
+        try {
+          await syncProductData(shop, group.productId, admin);
+          // SPEC-1.6.1 §A: a metafield write that fails no longer throws and
+          // no longer disappears into a console log — it is recorded on
+          // Setting.lastSyncError, which recomputeProduct clears on success.
+          // Reading it back is therefore this product's real outcome, and the
+          // reason this loop can report anything at all. An error stamped
+          // before this run started belongs to an earlier one and is ignored.
+          const outcome = await readSyncOutcome(shop);
+          const recorded =
+            outcome.error && (outcome.at === null || outcome.at >= startedAt)
+              ? outcome.error
+              : null;
+          if (recorded) {
+            failures.push({ productId: group.productId, message: recorded });
+            console.error(
+              `[cellexia] metafield re-sync reported an error for ${group.productId}: ${recorded}`,
+            );
+          } else {
+            synced += 1;
+          }
+        } catch (error) {
+          failures.push({ productId: group.productId, message: describeError(error) });
+          console.error(`[cellexia] metafield re-sync failed for ${group.productId}`, error);
+        }
+      }
+
+      const remaining = groups.length - processed;
+      const parts = [`Re-synced ${pluralize(synced, "product")}`];
+      if (failures.length > 0) {
+        parts.push(`${pluralize(failures.length, "product")} could not be synced`);
+      }
+      if (remaining > 0) {
+        parts.push(
+          `${pluralize(remaining, "product")} left — run “Re-sync all products” again to finish`,
+        );
+      }
+
+      // The first REAL error, verbatim, instead of "something went wrong":
+      // this is the whole point of SPEC-1.6.1 §A. The toast keeps a short
+      // form; the Dashboard card shows the full list underneath.
+      const first = failures[0] ?? null;
+      const summary = `${parts.join(" — ")}.`;
+      return json({
+        ok: failures.length === 0 && synced > 0,
+        intent,
+        message: first
+          ? `${summary} First error — ${clip(describeProductFailure(first), 200)}`
+          : summary,
+        resync: {
+          synced,
+          failed: failures.length,
+          remaining,
+          firstError: first ? describeProductFailure(first) : null,
+          hint: first ? syncErrorHint(first.message) : null,
+          failures: failures
+            .slice(0, RESYNC_REPORTED_FAILURES)
+            .map((failure) => clip(describeProductFailure(failure), 300)),
+        },
+      });
+    }
+
     if (intent === "regenerate-summary") {
       const productId = String(form.get("productId") ?? "");
       if (!productId) {
@@ -219,6 +648,20 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       { status: 500 },
     );
   }
+};
+
+/**
+ * The storefront connection test changes nothing the loader renders — its
+ * report travels back on the fetcher response — so skip the full Dashboard
+ * re-query it would otherwise trigger. Every other submission revalidates as
+ * usual (a metafield re-sync, for instance, does move the loader's numbers).
+ */
+export const shouldRevalidate: ShouldRevalidateFunction = ({
+  formData,
+  defaultShouldRevalidate,
+}) => {
+  if (formData?.get("intent") === "storefront-health") return false;
+  return defaultShouldRevalidate;
 };
 
 type LoaderData = SerializeFrom<typeof loader>;
@@ -398,6 +841,128 @@ function RegenerateSummaryCell({
   );
 }
 
+/**
+ * Which admin fix belongs to a health check. Matched on the check's id + label
+ * so the mapping survives a service that renames an id, with the SPEC-1.6 §5
+ * order as the last resort. "preview"/"token" is tested before "review" —
+ * "Preview token round-trip" contains the substring "review".
+ */
+type HealthCheckKind =
+  | "proxy"
+  | "token"
+  | "theme"
+  | "data"
+  | "metafields"
+  | "database"
+  | "live"
+  | "other";
+
+const HEALTH_KIND_ORDER: readonly HealthCheckKind[] = [
+  "proxy",
+  "token",
+  "theme",
+  "data",
+  "metafields",
+  "database",
+  "live",
+];
+
+function healthCheckKind(check: HealthCheckView, index: number): HealthCheckKind {
+  const haystack = `${check.id} ${check.label}`.toLowerCase();
+  if (haystack.includes("proxy")) return "proxy";
+  if (haystack.includes("preview") || haystack.includes("token")) return "token";
+  if (
+    haystack.includes("extension") ||
+    haystack.includes("embed") ||
+    haystack.includes("theme")
+  ) {
+    return "theme";
+  }
+  if (haystack.includes("metafield")) return "metafields";
+  if (
+    haystack.includes("database") ||
+    haystack.includes("persist") ||
+    haystack.includes("sqlite")
+  ) {
+    return "database";
+  }
+  if (haystack.includes("live")) return "live";
+  if (haystack.includes("review") || haystack.includes("data")) return "data";
+  return HEALTH_KIND_ORDER[index] ?? "other";
+}
+
+const STATUS_RANK: Record<HealthStatus, number> = { pass: 0, warn: 1, fail: 2 };
+
+/** The more serious of two statuses — a row is never quietly downgraded. */
+function worstStatus(a: HealthStatus, b: HealthStatus): HealthStatus {
+  return STATUS_RANK[a] >= STATUS_RANK[b] ? a : b;
+}
+
+/**
+ * The "Review data" row, rebuilt from the Dashboard's own counts
+ * (SPEC-1.6.1 §B).
+ *
+ * Two things the merchant kept getting wrong come from this row, so it is
+ * composed here rather than taken as prose from the service:
+ *
+ *   1. total / published / pending are ALWAYS stated, so "I definitely have
+ *      reviews" and "the storefront shows none" can be reconciled in one look.
+ *   2. `published === 0 && total > 0` is its own case. The generic "no
+ *      published reviews" advice ("import your reviews") is actively
+ *      misleading there: the reviews are already in the app, they are just
+ *      waiting for approval.
+ *
+ * The service's own status is still honoured — a row it failed stays failed,
+ * and its detail is appended so a genuine failure is never swallowed.
+ */
+function reviewDataRow(
+  check: HealthCheckView,
+  counts: ReviewCounts,
+): HealthCheckView & { unpublishedOnly: boolean } {
+  const summary =
+    `${counts.published} published, ${counts.pending} pending, ${counts.total} total` +
+    ` — ${pluralize(counts.products, "product")} with published reviews`;
+
+  if (counts.published === 0 && counts.total > 0) {
+    const headline =
+      counts.total === 1
+        ? "1 review exists but it is not published"
+        : `${counts.total} reviews exist but none are published`;
+    return {
+      ...check,
+      status: worstStatus(check.status, "warn"),
+      detail:
+        `${headline} (${summary}). ` +
+        "Your storefront shows no stars, no badges and no reviews until at least one is published.",
+      fix: `Approve ${
+        counts.total === 1 ? "it" : "them"
+      } under Reviews, or turn on Settings → General → Auto-publish new reviews.`,
+      unpublishedOnly: true,
+    };
+  }
+
+  if (counts.total === 0) {
+    return {
+      ...check,
+      status: worstStatus(check.status, "warn"),
+      detail: `This app holds no reviews yet (${summary}). The storefront will show no stars or badges until reviews exist.`,
+      fix: "Import your existing reviews (Import / Export) or generate test data (QA data). Reviews that live in another review app are not visible to this one.",
+      unpublishedOnly: false,
+    };
+  }
+
+  return {
+    ...check,
+    detail:
+      check.status === "fail" && check.detail ? `${summary}. ${check.detail}` : `${summary}.`,
+    fix:
+      counts.pending > 0
+        ? `${pluralize(counts.pending, "review")} waiting for moderation under Reviews.`
+        : check.fix,
+    unpublishedOnly: false,
+  };
+}
+
 export default function Dashboard() {
   const {
     shop,
@@ -408,16 +973,211 @@ export default function Dashboard() {
     needsAttention,
     products,
     syntheticPublishedCount,
+    health,
+    reviewCounts,
   } = useLoaderData<typeof loader>();
+
+  /* ---- Storefront connection (SPEC-1.6 §5) ------------------------------- */
+  const healthFetcher = useFetcher<typeof action>();
+  const resyncFetcher = useFetcher<typeof action>();
+
+  const runHealthCheck = useCallback(() => {
+    healthFetcher.submit({ intent: "storefront-health" }, { method: "post" });
+  }, [healthFetcher]);
+
+  useResultToast(resyncFetcher);
+
+  const healthResponse = healthFetcher.data as
+    | {
+        ok?: boolean;
+        intent?: string;
+        report?: HealthReportView;
+        reviewCounts?: ReviewCounts | null;
+        message?: string;
+      }
+    | undefined;
+  const healthAnswer =
+    healthResponse?.intent === "storefront-health" ? healthResponse : undefined;
+  const report: HealthReportView | null =
+    healthAnswer?.ok === true && healthAnswer.report
+      ? healthAnswer.report
+      : health.report;
+  const healthError =
+    healthAnswer && healthAnswer.ok === false
+      ? healthAnswer.message ??
+        "The storefront connection test could not be completed. Please try again."
+      : null;
+  const healthRunning = healthFetcher.state !== "idle";
+  const resyncing = resyncFetcher.state !== "idle";
+
+  /* ---- Re-sync outcome (SPEC-1.6.1 §A) ----------------------------------- */
+  const resyncResponse = resyncFetcher.data as
+    | {
+        intent?: string;
+        resync?: {
+          synced: number;
+          failed: number;
+          remaining: number;
+          firstError: string | null;
+          hint: string | null;
+          failures: string[];
+        };
+      }
+    | undefined;
+  const resyncOutcome =
+    resyncResponse?.intent === "resync-metafields" && !resyncing
+      ? resyncResponse.resync ?? null
+      : null;
+
+  // Any finished re-sync — successful or not — changes what the metafield
+  // check would see, so the report is refreshed either way. (The toast alone
+  // used to do this, and only on success.)
+  const resyncHandled = useRef<unknown>(null);
+  useEffect(() => {
+    if (resyncFetcher.state !== "idle" || !resyncFetcher.data) return;
+    if (resyncHandled.current === resyncFetcher.data) return;
+    resyncHandled.current = resyncFetcher.data;
+    runHealthCheck();
+  }, [resyncFetcher.state, resyncFetcher.data, runHealthCheck]);
+
+  // SPEC-1.6.1 §B — counts from the run that produced the report when there is
+  // one, otherwise the loader's (fresh as of page load).
+  const counts: ReviewCounts = healthAnswer?.reviewCounts ?? reviewCounts;
+  const healthChecks = (report?.checks ?? []).map((check, index) => {
+    const kind = healthCheckKind(check, index);
+    if (kind !== "data") return { kind, check, unpublishedOnly: false };
+    const { unpublishedOnly, ...view } = reviewDataRow(check, counts);
+    return { kind, check: view, unpublishedOnly };
+  });
+  const failedChecks = healthChecks
+    .filter((row) => row.check.status === "fail")
+    .map((row) => row.check);
+  const warnChecks = healthChecks
+    .filter((row) => row.check.status === "warn")
+    .map((row) => row.check);
+  const hasFailedChecks = failedChecks.length > 0;
+  // Recomputed rather than read from the report: the review-data row above can
+  // legitimately be more severe than the service judged it.
+  const overall: HealthStatus | null = !report
+    ? null
+    : hasFailedChecks
+      ? "fail"
+      : warnChecks.length > 0
+        ? "warn"
+        : "pass";
+
+  // Auto-run on load when never run or older than 24 h (never blocks the page).
+  const autoRunStarted = useRef(false);
+  useEffect(() => {
+    if (autoRunStarted.current || !health.autoRun) return;
+    autoRunStarted.current = true;
+    runHealthCheck();
+  }, [health.autoRun, runHealthCheck]);
+
+  // Arriving from Settings → "Test storefront connection": bring the card into view.
+  const focusHandled = useRef(false);
+  useEffect(() => {
+    if (focusHandled.current || !health.focus) return;
+    focusHandled.current = true;
+    document
+      .getElementById(HEALTH_ANCHOR_ID)
+      ?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [health.focus]);
 
   const liveFetcher = useFetcher<typeof action>();
   const [liveConfirm, setLiveConfirm] = useState<"go-live" | "go-offline" | null>(null);
   const closeLiveConfirm = useCallback(() => setLiveConfirm(null), []);
-  useResultToast(liveFetcher, closeLiveConfirm);
+  // Going live / offline flips the "Live state" check — refresh the report.
+  const handleLiveChange = useCallback(() => {
+    setLiveConfirm(null);
+    runHealthCheck();
+  }, [runHealthCheck]);
+  useResultToast(liveFetcher, handleLiveChange);
   const liveBusy = liveFetcher.state !== "idle";
 
   const themeEditorUrl = `https://${shop}/admin/themes/current/editor?template=product&context=apps`;
   const setupComplete = setup.hasAiKey && setup.hasModerated && isLive;
+
+  const healthRows = healthChecks.map(({ check, kind, unpublishedOnly }, index) => {
+    const badge = HEALTH_BADGE[check.status];
+    const needsFix = check.status !== "pass";
+    let fixAction: ReactNode = null;
+    if (kind === "metafields" && needsFix) {
+      fixAction = (
+        <Button
+          size="slim"
+          loading={resyncing}
+          onClick={() =>
+            resyncFetcher.submit({ intent: "resync-metafields" }, { method: "post" })
+          }
+        >
+          Re-sync all products
+        </Button>
+      );
+    } else if (kind === "theme" && needsFix) {
+      fixAction = (
+        <Button size="slim" url={themeEditorUrl} target="_blank">
+          Open theme editor
+        </Button>
+      );
+    } else if (kind === "data" && needsFix) {
+      // SPEC-1.6.1 §B: reviews that exist but are unpublished need approving,
+      // not importing — offer the two steps that actually publish them.
+      fixAction = unpublishedOnly ? (
+        <InlineStack gap="200" wrap>
+          <Button size="slim" variant="primary" url="/app/reviews?tab=pending">
+            Approve pending reviews
+          </Button>
+          <Button size="slim" url="/app/settings">
+            Turn on auto-publish
+          </Button>
+        </InlineStack>
+      ) : (
+        <InlineStack gap="200" wrap>
+          <Button size="slim" url="/app/import-export">
+            Import reviews
+          </Button>
+          <Button size="slim" url="/app/qa-generator">
+            Generate test data
+          </Button>
+        </InlineStack>
+      );
+    } else if (kind === "token" && needsFix) {
+      fixAction = (
+        <Button size="slim" url="/app/settings">
+          Open settings
+        </Button>
+      );
+    } else if (kind === "live" && !isLive) {
+      fixAction = (
+        <Button size="slim" variant="primary" onClick={() => setLiveConfirm("go-live")}>
+          Go live
+        </Button>
+      );
+    }
+
+    return [
+      <Text as="span" fontWeight="medium" key={`hc-label-${index}`}>
+        {check.label}
+      </Text>,
+      <Badge tone={badge.tone} key={`hc-status-${index}`}>
+        {badge.label}
+      </Badge>,
+      <BlockStack gap="150" key={`hc-detail-${index}`}>
+        {check.detail ? (
+          <Text as="span" variant="bodySm">
+            {check.detail}
+          </Text>
+        ) : null}
+        {check.fix ? (
+          <Text as="span" variant="bodySm" tone="subdued">
+            {check.fix}
+          </Text>
+        ) : null}
+        {fixAction}
+      </BlockStack>,
+    ];
+  });
 
   const productRows = products.map((p) => [
     <Text as="span" fontWeight="medium" key={`t-${p.productId}`}>
@@ -440,6 +1200,130 @@ export default function Dashboard() {
     <Page title="Dashboard" subtitle="Cellexia Reviews">
       <TitleBar title="Dashboard" />
       <BlockStack gap="500">
+        {/* Storefront connection — the first thing the merchant sees, because
+            nothing else on this page matters if the theme can't reach the app
+            (SPEC-1.6 §5). */}
+        <div id={HEALTH_ANCHOR_ID}>
+          <Card>
+            <BlockStack gap="400">
+              <InlineStack align="space-between" blockAlign="center" gap="300" wrap>
+                <BlockStack gap="100">
+                  <Text as="h2" variant="headingMd">
+                    Storefront connection
+                  </Text>
+                  <Text as="span" variant="bodySm" tone="subdued">
+                    {report
+                      ? `Last checked ${formatDateTime(report.ranAt)}`
+                      : healthRunning
+                        ? "Running the checks…"
+                        : "Not tested yet"}
+                  </Text>
+                </BlockStack>
+                <Button onClick={runHealthCheck} loading={healthRunning}>
+                  {report ? "Run test again" : "Test storefront connection"}
+                </Button>
+              </InlineStack>
+
+              {healthError ? (
+                <Banner
+                  tone="critical"
+                  title="The storefront connection test could not be completed"
+                >
+                  <Text as="p">{healthError}</Text>
+                </Banner>
+              ) : null}
+
+              {resyncOutcome && resyncOutcome.firstError ? (
+                <Banner
+                  tone="critical"
+                  title={`${pluralize(
+                    resyncOutcome.failed,
+                    "product",
+                  )} could not be re-synced`}
+                >
+                  <BlockStack gap="200">
+                    <BlockStack gap="050">
+                      {resyncOutcome.failures.map((failure, index) => (
+                        <Text as="p" variant="bodySm" key={`resync-fail-${index}`}>
+                          Could not sync {failure}
+                        </Text>
+                      ))}
+                      {resyncOutcome.failed > resyncOutcome.failures.length ? (
+                        <Text as="p" variant="bodySm" tone="subdued">
+                          {`…and ${
+                            resyncOutcome.failed - resyncOutcome.failures.length
+                          } more with the same or similar errors.`}
+                        </Text>
+                      ) : null}
+                    </BlockStack>
+                    {resyncOutcome.hint ? (
+                      <Text as="p" variant="bodySm">
+                        {resyncOutcome.hint}
+                      </Text>
+                    ) : null}
+                  </BlockStack>
+                </Banner>
+              ) : null}
+
+              {report ? (
+                overall === "fail" ? (
+                  <Banner tone="critical" title="Storefront connection needs attention">
+                    <Text as="p">
+                      {pluralize(failedChecks.length, "check")} failed — store visitors
+                      may not see any reviews until this is fixed.
+                    </Text>
+                  </Banner>
+                ) : overall === "warn" ? (
+                  <Banner
+                    tone="warning"
+                    title="Storefront connection works — a few things need your attention"
+                  >
+                    <Text as="p">
+                      Your theme can reach the app.{" "}
+                      {pluralize(warnChecks.length, "check")} below{" "}
+                      {warnChecks.length === 1 ? "needs" : "need"} a look.
+                    </Text>
+                  </Banner>
+                ) : (
+                  <Banner tone="success" title="Storefront connection verified">
+                    <Text as="p">
+                      Every check passed — your theme reaches the app, the preview works
+                      and your product ratings are in sync.
+                    </Text>
+                  </Banner>
+                )
+              ) : healthRunning ? (
+                <div role="status">
+                  <InlineStack gap="200" blockAlign="center">
+                    <Spinner
+                      size="small"
+                      accessibilityLabel="Testing the storefront connection"
+                    />
+                    <Text as="span">
+                      Testing the connection between your storefront and the app…
+                    </Text>
+                  </InlineStack>
+                </div>
+              ) : healthError ? null : (
+                <Text as="p" tone="subdued">
+                  Run the test to verify that your theme can reach the app, that the
+                  preview works and that your product ratings are in sync.
+                </Text>
+              )}
+
+              {report ? (
+                <DataTable
+                  columnContentTypes={["text", "text", "text"]}
+                  headings={["Check", "Status", "What it means"]}
+                  rows={healthRows}
+                  verticalAlign="top"
+                  truncate={false}
+                />
+              ) : null}
+            </BlockStack>
+          </Card>
+        </div>
+
         {isLive ? (
           <Banner tone="success" title="Live — visitors can see the review widget.">
             <InlineStack gap="300" blockAlign="center" wrap>
@@ -616,16 +1500,94 @@ export default function Dashboard() {
         </Card>
       </BlockStack>
 
-      <ConfirmationModal
+      {/* Go live — shows the current storefront-connection summary and demands
+          an explicit "Go live anyway" when a check failed (SPEC-1.6 §5). */}
+      <Modal
         open={liveConfirm === "go-live"}
+        onClose={closeLiveConfirm}
         title="Go live?"
-        message="Make Cellexia Reviews visible to all store visitors?"
-        confirmLabel="Go live"
-        destructive={false}
-        loading={liveBusy}
-        onConfirm={() => liveFetcher.submit({ intent: "go-live" }, { method: "post" })}
-        onCancel={closeLiveConfirm}
-      />
+        primaryAction={{
+          content: hasFailedChecks ? "Go live anyway" : "Go live",
+          destructive: hasFailedChecks,
+          loading: liveBusy,
+          onAction: () => liveFetcher.submit({ intent: "go-live" }, { method: "post" }),
+        }}
+        secondaryActions={[
+          { content: "Cancel", onAction: closeLiveConfirm, disabled: liveBusy },
+          ...(report && overall !== "pass"
+            ? [
+                {
+                  content: "Run test again",
+                  onAction: runHealthCheck,
+                  loading: healthRunning,
+                  disabled: liveBusy,
+                },
+              ]
+            : []),
+        ]}
+      >
+        <Modal.Section>
+          <BlockStack gap="300">
+            <Text as="p">Make Cellexia Reviews visible to all store visitors?</Text>
+            {report ? (
+              overall === "pass" ? (
+                <Banner tone="success" title="Storefront connection verified">
+                  <Text as="p">
+                    All {healthChecks.length} checks passed on{" "}
+                    {formatDateTime(report.ranAt)}.
+                  </Text>
+                </Banner>
+              ) : (
+                <Banner
+                  tone={overall === "fail" ? "critical" : "warning"}
+                  title={
+                    hasFailedChecks
+                      ? `${pluralize(failedChecks.length, "storefront check")} failed`
+                      : `${pluralize(warnChecks.length, "storefront check")} ${
+                          warnChecks.length === 1 ? "needs" : "need"
+                        } a look`
+                  }
+                >
+                  <BlockStack gap="200">
+                    <BlockStack gap="050">
+                      {[...failedChecks, ...warnChecks].slice(0, 4).map((check, index) => (
+                        <Text as="p" variant="bodySm" key={`gl-${index}`}>
+                          {check.status === "fail" ? "Failed" : "Warning"}: {check.label}
+                          {check.detail ? ` — ${check.detail}` : ""}
+                        </Text>
+                      ))}
+                    </BlockStack>
+                    <Text as="p" variant="bodySm">
+                      {hasFailedChecks
+                        ? "Going live now can leave shoppers with no reviews at all. Fix the failed checks first, or confirm with “Go live anyway”."
+                        : "These are warnings, not blockers — you can go live."}
+                    </Text>
+                  </BlockStack>
+                </Banner>
+              )
+            ) : healthRunning ? (
+              <InlineStack gap="200" blockAlign="center">
+                <Spinner
+                  size="small"
+                  accessibilityLabel="Testing the storefront connection"
+                />
+                <Text as="span" variant="bodySm">
+                  Checking the storefront connection…
+                </Text>
+              </InlineStack>
+            ) : (
+              <Banner
+                tone="warning"
+                title="The storefront connection has not been tested yet"
+              >
+                <Button variant="plain" onClick={runHealthCheck}>
+                  Run the test now
+                </Button>
+              </Banner>
+            )}
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
       <ConfirmationModal
         open={liveConfirm === "go-offline"}
         title="Switch off the review widget?"

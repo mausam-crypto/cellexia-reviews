@@ -137,6 +137,17 @@
       "note": "Only you can see this — the widget is not live for visitors.",
       "exit": "Exit preview"
     },
+    "notice": {
+      "expired_title": "Preview session expired",
+      "expired_body": "Reopen “Preview on your store” from the app’s Dashboard to continue previewing.",
+      "unconfigured_title": "Storefront connection not configured",
+      "unconfigured_body": "Open the app in your Shopify admin → Dashboard → “Test storefront connection”.",
+      "error_title": "Reviews are temporarily unavailable",
+      "error_body": "This message is only visible to you while previewing.",
+      "empty_merchant": "No reviews yet — import your reviews or generate test data in the app.",
+      "empty_pending": "No published reviews yet — [[count]] awaiting approval in the app.",
+      "retry": "Try again"
+    },
     "form": {
       "title": "Write a review",
       "rating_label": "Overall rating",

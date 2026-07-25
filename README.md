@@ -25,9 +25,22 @@ extension — no theme code edits, uninstall-safe.
   storefront — a new install starts **Not live**, so visitors see no widget, no review data and
   no JSON-LD until you click **Go live** on the Dashboard. Before (and after) that,
   **Preview on your store** opens a tokenized preview of the widget on the real live theme that
-  only you can see, and the theme editor always shows the full widget so you can place and
+  only you can see, and the theme editor always shows the full widget — with real review data,
+  because the preview token is mirrored to the theme in design mode only — so you can place and
   configure the blocks. Enforced server-side: while not live, the storefront API rejects
   requests without a valid preview token.
+- **Self-verifying install**: a **Storefront connection** card at the top of the Dashboard tests
+  the whole storefront pipeline on demand — app proxy reachable (and on which subpath), preview
+  token round-trip, theme-extension activity, review data, metafield sync, database persistence,
+  live state — each check with a plain-language fix, an overall "Storefront connection verified"
+  banner, and a warning in the Go live confirmation while anything fails. The same probe runs
+  from a terminal via `npm run selftest -- --shop=<store>.myshopify.com`. The proxy subpath is
+  auto-detected and mirrored to a shop metafield, so the storefront path can never drift out of
+  sync with `shopify.app.toml`, and the widget re-discovers it client-side if a request 404s.
+- **Failure UX split by audience**: a shopper on a live store never sees an error box, a notice
+  or a preview token — the widget hides itself quietly. Merchants (theme editor or preview) get
+  an explicit inline notice instead: expired preview session, unconfigured storefront connection,
+  or a Try again action; content already rendered is never replaced by an error.
 - **Star badge block** for placement under the product title (SSR-only, links to the widget).
 - **App embed with site-wide star badges**: for themes that don't accept app blocks on product
   templates, one toggle in the theme editor (Theme settings → App embeds) mounts the full
@@ -109,11 +122,13 @@ extension — no theme code edits, uninstall-safe.
                                           (summary + translations)
 ```
 
-- **App proxy**: storefront calls `/apps/cellexia-reviews/api/*` on the shop domain; Shopify
-  signs and forwards them to `/proxy/api/*` on this app. See `app/routes/proxy.api.*` and
-  `app/services/proxy.server.ts`. The storefront-side path is single-sourced in
-  `extensions/cellexia-reviews/snippets/cx-proxy.liquid` and must match `[app_proxy]` in
-  `shopify.app.toml`.
+- **App proxy**: storefront calls `/apps/<subpath>/api/*` on the shop domain; Shopify signs and
+  forwards them to `/proxy/api/*` on this app. See `app/routes/proxy.api.*` and
+  `app/services/proxy.server.ts`. The subpath is **discovered, not configured twice**:
+  `app/services/proxyhealth.server.ts` probes `/apps/<candidate>/api/ping`, persists the winner
+  and mirrors it to the shop metafield `cellexia.proxy_path`, which
+  `extensions/cellexia-reviews/snippets/cx-proxy.liquid` reads (default `cellexia-reviews`). The
+  storefront path therefore always follows `[app_proxy]` in `shopify.app.toml`.
 - **Metafields** (namespace `cellexia`: `rating`, `rating_count`, `distribution`, `top_reviews`,
   `summary`) make the widget paint server-side with no JavaScript and power JSON-LD.
 - **Database**: Prisma + SQLite by default, identical to the official template; switching to
@@ -127,7 +142,7 @@ app/
                      auth, webhooks (app/uninstalled + GDPR)
   services/          Business logic: reviews, aggregates, metafields, verified purchase,
                      AI summary, translation, Shopify Files uploads, settings, proxy HMAC,
-                     rate limiting
+                     rate limiting, storefront health check + proxy-subpath discovery
   components/admin/  Polaris components used by the admin routes
   types/cellexia.ts  Shared constants (option keys, statuses, locales) and DTO types
 extensions/
@@ -136,7 +151,8 @@ extensions/
                      locales (17 languages, storefront + schema files)
 prisma/              schema.prisma (Session, Review, ReviewMedia, Vote, Summary,
                      TranslationCache, Setting) + seed.js demo seeder
-scripts/             check-locales.mjs (CI locale validation), package.mjs (release ZIP)
+scripts/             check-locales.mjs (CI locale validation), package.mjs (release ZIP),
+                     selftest.mjs (app-proxy probe from the command line)
 demo/                Standalone visual preview of the widget with mock data (no Shopify needed)
 docs/                Documentation (see quick links below)
 Dockerfile           node:20-alpine production image
@@ -176,6 +192,7 @@ Full production installation, hosting and store setup: **[docs/INSTALL.md](docs/
 | `npm run deploy` | `shopify app deploy` — push app config + theme extension to Shopify |
 | `npm run seed:demo` | Insert ~15 demo reviews (`node prisma/seed.js --shop=<domain> --product=<id>`) |
 | `npm run check:locales` | Validate all 17 locale files against the English master |
+| `npm run selftest` | Probe the deployed app proxy from a terminal (`-- --shop=<domain>.myshopify.com`): PASS/FAIL per candidate subpath, no dependencies |
 | `npm run package` | Build the release ZIP in `dist/` |
 | `npm run typecheck` | `tsc --noEmit` |
 
@@ -189,10 +206,10 @@ Full production installation, hosting and store setup: **[docs/INSTALL.md](docs/
 | [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Merchant | Every admin setting, going live & previewing, app embed & star badges, moderation, replies, CSV import, bulk add, QA data (synthetic reviews), API keys |
 | [docs/TRANSLATIONS.md](docs/TRANSLATIONS.md) | Both | The 17 locales, editing strings, Translate & Adapt, review translation, RTL |
 | [docs/SEO.md](docs/SEO.md) | Both | Star rich snippets: how they work, validation, duplicate JSON-LD note |
-| [docs/FAQ.md](docs/FAQ.md) | Merchant | Theme safety, uninstall, GDPR, media limits, rate limits |
+| [docs/FAQ.md](docs/FAQ.md) | Merchant | Theme safety, why no stars appear on a fresh install, preview-only messages, uninstall, GDPR, media limits, rate limits |
 | [demo/README.md](demo/README.md) | Both | How to open the offline visual demo |
 | [CHANGELOG.md](CHANGELOG.md) | Both | Version history |
 
 ## Version
 
-Current version: **1.5.1** — see [CHANGELOG.md](CHANGELOG.md).
+Current version: **1.6.0** — see [CHANGELOG.md](CHANGELOG.md).

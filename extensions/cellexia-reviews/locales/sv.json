@@ -137,6 +137,17 @@
       "note": "Endast du kan se detta — widgeten är inte synlig för besökare.",
       "exit": "Avsluta förhandsgranskning"
     },
+    "notice": {
+      "expired_title": "Förhandsgranskningssessionen har upphört",
+      "expired_body": "Öppna “Preview on your store” igen från appens Dashboard för att fortsätta förhandsgranska.",
+      "unconfigured_title": "Anslutningen till butiken är inte konfigurerad",
+      "unconfigured_body": "Öppna appen i din Shopify-admin → Dashboard → “Test storefront connection”.",
+      "error_title": "Omdömen är tillfälligt otillgängliga",
+      "error_body": "Detta meddelande visas endast för dig under förhandsgranskningen.",
+      "empty_merchant": "Inga omdömen ännu — importera dina omdömen eller skapa testdata i appen.",
+      "empty_pending": "Inga publicerade omdömen ännu — [[count]] väntar på godkännande i appen.",
+      "retry": "Försök igen"
+    },
     "form": {
       "title": "Skriv en recension",
       "rating_label": "Helhetsbetyg",

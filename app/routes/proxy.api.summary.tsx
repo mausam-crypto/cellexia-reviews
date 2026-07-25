@@ -14,6 +14,7 @@ import {
   NO_STORE_HEADERS,
   errorJson,
   matchShopLocale,
+  recordStorefrontHit,
   requireLiveOrPreview,
   verifyProxy,
 } from "~/services/proxy.server";
@@ -23,6 +24,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const auth = await verifyProxy(request);
   if (!auth) return errorJson(401, { _: "unauthorized" });
   const { shop } = auth;
+  recordStorefrontHit(shop, request); // SPEC-1.6 §2 — fire-and-forget, throttled
 
   // SPEC-1.2 gating: not-live shops serve zero data unless the request
   // carries the current preview token (`preview_token` query param).

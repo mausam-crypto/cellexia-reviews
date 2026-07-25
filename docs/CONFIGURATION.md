@@ -11,6 +11,9 @@ from its navigation menu: **Dashboard**, **Reviews**, **Bulk add**, **Import / E
 
 ## 1. Dashboard
 
+- **Storefront connection** — the card at the very top: a one-click test that proves the
+  connection between your storefront and the app actually works. See "Storefront connection
+  test" below.
 - **Status banner** — the very top of the Dashboard always shows whether the review widget is
   **Live** or **Not live** for store visitors, with the buttons to preview and to switch. This
   is where going live happens — see §2, "Going live & previewing".
@@ -29,6 +32,41 @@ from its navigation menu: **Dashboard**, **Reviews**, **Bulk add**, **Import / E
   **Regenerate AI summary** button with the time the summary was last generated. Use it after
   a wave of new reviews if you don't want to wait for the automatic refresh.
 
+### Storefront connection test
+
+A review widget depends on a chain of things: your theme has to load it, it has to be able to
+reach the app, the app has to have reviews, and your theme has to have the up-to-date ratings.
+The **Storefront connection** card tests that whole chain in one click — **Run test again** —
+and tells you, in plain language, what to do about anything that isn't right. When everything is
+in order the banner reads **"Storefront connection verified"**; if something is genuinely broken
+the banner turns red. The card also shows when it last ran, and re-runs itself when you open the
+Dashboard if it has never run or the last run is more than a day old.
+
+Use it after installing, after any theme change, and before **Go live** — the go-live
+confirmation shows the same summary and asks you to confirm a second time if a check is failing.
+
+The seven checks, and what each one means for you:
+
+| Check | What it proves | Typical fix when it isn't a pass |
+| --- | --- | --- |
+| **App proxy reachable** | Your storefront can actually reach the app, over the address Shopify forwards to it — and the app's secret key matched, so the connection is genuinely yours. The detail line shows the detected address. | A failure here is a developer task: the app's proxy settings weren't deployed, or another app is using the same address. Send your developer `docs/INSTALL.md` §6 and §11. Everything else on this list depends on this check. |
+| **Preview token round-trip** | The private link behind **Preview on your store** works end to end — which is also what lets the **theme editor** show your real reviews. | **Settings → Data → Regenerate preview link**, then run the test again. |
+| **Theme extension active** | A real storefront page has loaded the widget recently (within the last 7 days). | A warning here usually means the widget isn't on your theme yet: theme editor → **Theme settings → App embeds** → switch **Cellexia Reviews** on (§5), or add the block (§4). A brand-new install warns until the first storefront page loads — that is normal. |
+| **Review data** | How many reviews the app itself holds (published, pending, and on how many products). | A warning at zero published is the single most common reason for "no stars anywhere": the storefront cannot show stars that don't exist yet. Import your existing reviews (§8), add them by hand (§9), or generate test data (§10). Reviews still held by a previous review app are **not** visible to this app until you import them. |
+| **Metafield sync** | The ratings stored in your theme match the ratings in the app. This is what draws the stars under the product title, the star badges on product cards and the Google star data. | A warning offers **Re-sync all products** — press it, then re-run the test. |
+| **Database persistence** | Your reviews are stored somewhere that survives an app update. | A warning here is for your developer only (`docs/INSTALL.md` §4): the hosting is set up in a way where reviews could be lost on the next deploy. Worth fixing before you collect real reviews. |
+| **Live state** | Whether visitors can currently see the widget. | Informational — it's the same Live / Not live state as the banner below, with a link to go live (§2). |
+
+Warnings are not failures: a store that is freshly installed, not yet live and has no reviews
+will legitimately show warnings on *Theme extension active* and *Review data*. Failures (red)
+mean the storefront genuinely cannot get data and should be fixed before going live.
+
+**What shoppers see while something is wrong**: nothing. On a live store the widget removes
+itself quietly rather than showing an error — no error box, no message, no broken layout. The
+explanatory notices ("Preview session expired", "Storefront connection not configured", "Try
+again") appear **only** for you, in the theme editor and in preview mode, and say so on
+themselves.
+
 ---
 
 ## 2. Going live & previewing
@@ -38,8 +76,8 @@ Your storefront is always in one of two states:
 - **Not live** — every new install starts here. Visitors see **nothing at all**: no widget, no
   star badge, no star badges on product cards, no review data, no Google structured data. You can take your time — add the
   blocks, adjust settings, import reviews — without shoppers noticing any change. (The **theme
-  editor always shows the full widget**, live or not, so you can place and configure the
-  blocks.)
+  editor always shows the full widget**, live or not — with your real reviews in it — so you can
+  place and configure the blocks.)
 - **Live** — the widget is visible to every visitor.
 
 **Where the buttons are**: the banner at the top of the **Dashboard**.
@@ -61,7 +99,9 @@ storefront — they are labeled only inside this admin — and the Dashboard ban
 the moment you go live with any still published.
 
 **Going live**: click **Go live** and confirm ("Make Cellexia Reviews visible to all store
-visitors?"). That's it — a "You're live!" toast confirms, and the widget appears for everyone
+visitors?"). The confirmation shows the summary of the storefront connection test (§1) so you
+don't go live on a broken setup — if a check is failing you have to confirm explicitly a second
+time ("Go live anyway"). That's it — a "You're live!" toast confirms, and the widget appears for everyone
 within about a minute (the state is synced to a shop metafield, like the design version).
 **Switch off** does the reverse, after its own confirmation ("Hide the review widget from all
 store visitors? Your data is kept.") — reviews, settings, imports and replies are all
@@ -70,7 +110,9 @@ preserved, and you can go live again whenever you want.
 **Regenerating the preview link**: shared a preview link with someone (an agency, a colleague)
 and want to cut their access? **Settings → Data → Regenerate preview link**. Old links stop
 working immediately; the Dashboard's preview button always uses the current link. A toast
-confirms: "Preview link regenerated — old links no longer work."
+confirms: "Preview link regenerated — old links no longer work." Anyone opening an old link now
+gets a clear "Preview session expired" note telling them to reopen the preview from the app —
+and shoppers, as always, see nothing at all.
 
 **Status at a glance**: **Settings → General** shows a "Storefront status" badge (**Live** /
 **Not live**) with a button to the Dashboard — the switching itself always happens on the
@@ -451,6 +493,15 @@ ratings, distribution bars and metafields — no trace remains.
 
 ## 11. Quick answers
 
+- **Anything storefront-related** → run the **Storefront connection** test on the Dashboard
+  first (§1). It names the broken link in the chain and shows the fix, instead of leaving you
+  to guess.
+- **No stars anywhere, on any product** → almost always because the app has no published
+  reviews of its own yet (the *Review data* check says so). Reviews still living in a previous
+  review app are invisible here until you import them — §8, §9 or §10.
+- **The theme editor says reviews couldn't be loaded** → fixed in version 1.6.0; if it persists,
+  run the connection test — *Preview token round-trip* will point at it — and use
+  **Settings → Data → Regenerate preview link** (§2). Shoppers never see that message.
 - **Nothing shows on the product page** → the store may not be **live** yet (check the
   Dashboard banner — §2), neither the block is added nor the app embed enabled in the theme
   editor (§4/§5; Dashboard setup guide, step 1), or the product has no published reviews.

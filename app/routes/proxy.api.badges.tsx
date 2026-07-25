@@ -21,6 +21,7 @@ import {
   NO_STORE_HEADERS,
   errorJson,
   getClientIp,
+  recordStorefrontHit,
   requireLiveOrPreview,
   verifyProxy,
 } from "~/services/proxy.server";
@@ -41,6 +42,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const auth = await verifyProxy(request);
   if (!auth) return errorJson(401, { _: "unauthorized" });
   const { shop } = auth;
+  recordStorefrontHit(shop, request); // SPEC-1.6 §2 — fire-and-forget, throttled
 
   const ip = getClientIp(request);
   if (!checkRateLimit(shop, ip, "badges")) {

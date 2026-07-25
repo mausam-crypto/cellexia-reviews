@@ -1,7 +1,7 @@
 /* Cellexia Reviews storefront widget — vanilla ES2019, no dependencies.
-* Contract: SPEC §6/§8/§9/§15, SPEC-1.2 (gating), SPEC-1.5 + SPEC-1.5.1 (embed, badges, JSON-LD dedupe).
-* No innerHTML with user content — DOM built via createElement/textContent only.
-*/
+* Contract: SPEC §6/§8/§9/§15, SPEC-1.2 (gating), SPEC-1.5/1.5.1 (embed, badges),
+* SPEC-1.6 (proxy discovery, editor token, 3-audience failure UX).
+* No innerHTML with user content — DOM built via createElement/textContent only. */
 (() => {
 "use strict";
 /* ===== shared helpers (v1.5: also used by the badge module) ===== */
@@ -98,14 +98,97 @@ function ssSet(key, val) {
 function ssDel(key) {
  try { window.sessionStorage.removeItem(key); } catch (e) {}
 }
+/* Reads `?cx_preview=` and PERSISTS it for the rest of the session, so it must
+   only ever be called for a store that is not live (or in design mode): on a
+   live store the value is unverifiable — the API answers everyone, so nothing
+   can prove it junk — and persisting it would let a link handed to a shopper
+   promote them to a merchant context on every later page (§9). Every caller
+   gates on that; see boot() and initBadges(). */
+function urlPreviewToken() {
+ try { return new URLSearchParams(window.location.search).get("cx_preview") || null; } catch (e) { return null; }
+}
 function discoverPreviewToken() {
- var urlToken = null;
- try { urlToken = new URLSearchParams(window.location.search).get("cx_preview"); } catch (e) { /* no URLSearchParams */ }
+ var urlToken = urlPreviewToken();
  if (urlToken) {
   ssSet("cx_preview_token", urlToken);
   return urlToken;
  }
  return ssGet("cx_preview_token");
+}
+/* v1.6 §3 — design-mode-only editor token (RC-A: the editor has no ?cx_preview=
+   and no sessionStorage entry, so it could never authenticate). Liquid emits it
+   only in design mode; we re-check, and never persist it. */
+function editorToken(root, cfgE) {
+ if (!inDesignMode()) return null;
+ var v = null;
+ try { v = root && root.getAttribute ? root.getAttribute("data-cx-editor-token") : null; } catch (e) {}
+ if (typeof v === "string" && v.trim()) return v.trim();
+ v = cfgE && cfgE.editorToken;
+ return typeof v === "string" && v.trim() ? v.trim() : null;
+}
+/* Order (§3): ?cx_preview= → sessionStorage → editor token. */
+function resolveToken(root, cfgE) { return discoverPreviewToken() || editorToken(root, cfgE); }
+
+/* ===== v1.6 §2 — app-proxy path: client-side rescue =====
+   cx-proxy.liquid single-sources the path from `cellexia.proxy_path`. If that is
+   still wrong (404/410, or non-JSON such as Shopify's own "page not found" HTML)
+   we run ONE sweep per page-load over the candidate subpaths, cache the winner
+   and retry once; the memoised promise is shared with the badge injector. */
+var PROXY_CANDIDATES = ["cellexia-reviews", "cellexia", "reviews", "cellexia-review"];
+var PROXY_BASE_RE = /^\/apps\/[A-Za-z0-9][A-Za-z0-9_-]{0,62}\/api$/;
+var resolvedProxyBase = null;  // sweep winner, or the sessionStorage cache
+var proxySweep = null;         // memoised: at most one sweep per page-load
+var proxyTried = [];           // bases proven broken (shown in the merchant notice)
+function noteTried(base) { if (base && proxyTried.indexOf(base) < 0) proxyTried.push(base); }
+// A base proven working this session beats a data-proxy we proved broken.
+function seedProxyBase() {
+ if (!resolvedProxyBase) {
+  var c = (ssGet("cx_proxy_base") || "").replace(/\s+/g, "").replace(/\/+$/, "");
+  if (PROXY_BASE_RE.test(c)) resolvedProxyBase = c;
+ }
+ return resolvedProxyBase;
+}
+// Hit = 200 AND a JSON body naming this app; 404 HTML, another app's response
+// and a 4 s timeout (§2) are all misses.
+function probeProxyBase(base) {
+ if (!window.fetch) return Promise.resolve(false);
+ var ctrl = null, opts = { credentials: "same-origin" };
+ try { ctrl = new AbortController(); opts.signal = ctrl.signal; } catch (e) {}
+ var timer = ctrl ? window.setTimeout(() => { try { ctrl.abort(); } catch (e) {} }, 4000) : null;
+ var stop = (v) => { if (timer) clearTimeout(timer); return v; };
+ return window.fetch(base + "/ping", opts).then((r) => {
+  stop();
+  return r.ok ? r.json().then((b) => { return !!(b && b.app === "cellexia-reviews"); }, () => false) : false;
+ }, () => stop(false));
+}
+function runProxyDiscovery(failedBase) {
+ noteTried(failedBase);
+ if (proxySweep) return proxySweep;
+ var list = [];
+ PROXY_CANDIDATES.forEach((c) => {
+  var b = "/apps/" + c + "/api";
+  if (b !== failedBase && list.indexOf(b) < 0) list.push(b);
+ });
+ var idx = 0;
+ function step() {
+  if (idx >= list.length) return Promise.resolve(null);
+  var base = list[idx++];
+  return probeProxyBase(base).then((ok) => {
+   if (ok) return base;
+   noteTried(base);
+   return step();
+  });
+ }
+ proxySweep = step().then((found) => {
+  if (found) { resolvedProxyBase = found; ssSet("cx_proxy_base", found); }
+  return found;
+ }, () => null);
+ return proxySweep;
+}
+function badPathError(status) {
+ var e = new Error("cx_bad_path_" + status);
+ e.cxBadPath = true;
+ return e;
 }
 /* i18n: flat dict from #cx-i18n + Intl formatters for one locale. */
 function makeI18n(locale) {
@@ -140,6 +223,16 @@ function makeI18n(locale) {
   var d = new Date(iso);
   return isNaN(d.getTime()) ? "" : DF.format(d);
  }
+ // [[var]] substitution, shared with the notice fallbacks (v1.6.1 §B): a string
+ // that never reached the dictionary still has to get its [[count]] filled in.
+ function fill(s, vars) {
+  vars = vars || {};
+  return String(s).replace(/\[\[(\w+)\]\]/g, (m, name) => {
+   if (!(name in vars)) return m;
+   var v = vars[name];
+   return typeof v === "number" ? fmtNum(v) : String(v);
+  });
+ }
  function t(key, vars) {
   vars = vars || {};
   var s = null;
@@ -151,13 +244,9 @@ function makeI18n(locale) {
   }
   if (s === null) s = str(key);
   if (s === null) return key;
-  return s.replace(/\[\[(\w+)\]\]/g, (m, name) => {
-   if (!(name in vars)) return m;
-   var v = vars[name];
-   return typeof v === "number" ? fmtNum(v) : String(v);
-  });
+  return fill(s, vars);
  }
- return { t: t, str: str, fmtNum: fmtNum, fmtDate: fmtDate, NF1: NF1 };
+ return { t: t, str: str, fill: fill, fmtNum: fmtNum, fmtDate: fmtDate, NF1: NF1 };
 }
 /* v1.2 preview ribbon (mounted at most once). */
 var previewBar = null;
@@ -186,6 +275,19 @@ function removePreviewBar() {
  previewBar = null;
 }
 
+/* §4/§6: notice strings come from cellexia.notice.* via #cx-i18n; this is the
+   fallback for a dictionary predating this release. MERCHANT-ONLY, so it can
+   never reach a shopper; retry/error_title reuse existing translated keys. */
+var NOTICE_FALLBACK = {
+ expired_title: "Preview session expired",
+ expired_body: "Reopen “Preview on your store” from the app’s Dashboard to continue previewing.",
+ unconfigured_title: "Storefront connection not configured",
+ unconfigured_body: "Open the app in your Shopify admin → Dashboard → “Test storefront connection”.",
+ empty_merchant: "No reviews yet — import your reviews or generate test data in the app.",
+ // v1.6.1 §B — reviews DO exist, they are just unapproved.
+ empty_pending: "No published reviews yet — [[count]] awaiting approval in the app."
+};
+
 function boot(root) {
 if (!root) return;
 if (root.getAttribute("data-cx-hydrated") === "true") return;
@@ -205,8 +307,7 @@ var cfg = {
  productId: attr("product-id", ""),
  productHandle: attr("product-handle", ""), // v1.5: sent with review POSTs
  locale: attr("locale", "en"),
- // v1.5.1 audit: liquid single-sources the real path (snippets/cx-proxy.liquid);
- // this literal is a last-ditch fallback matching the live store's subpath.
+ // cx-proxy.liquid single-sources this from cellexia.proxy_path (§2).
  proxy: attr("proxy", "/apps/cellexia-reviews/api").replace(/\/$/, ""),
  perPage: parseInt(attr("per-page", "10"), 10) || 10,
  defaultLocale: attr("shop-default-locale", "en"),
@@ -218,23 +319,45 @@ var cfg = {
  brand: attr("brand", "Cellexia")
 };
 
-/* ---- v1.2 live / preview gating (SPEC-1.2) ---- */
-// data-cx-live absent ⇒ live; not live: only a token un-hides; v1.5: embed re-hides sans token, editor short-circuits.
+/* ---- v1.2 live/preview gating + v1.6 token resolution (§3) ---- */
+// data-cx-live absent ⇒ live; not live: only a token un-hides the root.
 var isLive = attr("cx-live", "true") !== "false";
-var designMode = !!(window.Shopify && window.Shopify.designMode);
+var designMode = inDesignMode();
 var isEmbed = root.getAttribute("data-cx-embed") === "true";
-var previewToken = null;
+// RC-A: the editor needs a token even though Liquid reports data-cx-live="true"
+// there, so resolve — and persist — whenever the storefront is NOT live OR we
+// are in design mode.
+// v1.6.1 §B: a live store is no longer tokenless. It now has merchant-only data
+// to fetch (meta.pendingCount), and the server gates that on a token IT
+// validated, so a "Preview on your store" link must be able to carry one here
+// too. It is taken from the URL ONLY and never written to sessionStorage, so a
+// junk value handed to a visitor still cannot follow them across the session.
+var previewToken = (!isLive || designMode) ? resolveToken(root, readEmbedConfig()) : urlPreviewToken();
+// Decides the whole failure UX (§4); everyone else is a shopper and must never
+// see a notice, an error box or a preview token.
+//
+// A token holder counts as a merchant on a LIVE store too: "Preview on your
+// store" keeps working after go-live (docs/CONFIGURATION.md §2), and the two
+// failure cases that matter most — unreachable proxy, 5xx on first load — leave
+// no server response to verify the token against, so gating notices on
+// server-proof would silence exactly the diagnostics the merchant needs.
+// This is the same rule the preview ribbon already uses, so the two can never
+// disagree. Safety is preserved because notices carry NO shop data (they are
+// static UI strings + the proxy paths tried), and a visitor would have to
+// hand-craft a ?cx_preview= URL to see one. Merchant-only DATA stays gated on
+// server proof — readPendingCount only trusts `meta`, which the server returns
+// exclusively for a token it validated.
+var isMerchantContext = designMode || !!previewToken;
 if (!isLive) {
- previewToken = discoverPreviewToken();
- if (previewToken) {
-  root.hidden = false;
- } else if (isEmbed && designMode) {
-  root.hidden = false; // editor stays visible; API 403s stay quiet
+ if (previewToken || designMode) {
+  root.hidden = false; // preview / editor visible; failures handled per §4
  } else {
   if (isEmbed) root.hidden = true; // re-hide the relocated embed shell
-  return; // block root stays hidden
+  return; // block root stays hidden: zero fetches, zero pixels
  }
 }
+seedProxyBase();
+function currentBase() { return resolvedProxyBase || cfg.proxy; }
 var MEDIA_LIMITS = {
  images: 5, videos: 1, imgMb: 8, vidMb: 80,
  imgTypes: ["image/jpeg", "image/png", "image/webp", "image/heic"],
@@ -250,7 +373,7 @@ var REPORT_REASONS = ["off_topic", "inappropriate", "spam", "privacy", "other"];
 
 /* ---- i18n (shared factory) ---- */
 var I18N = makeI18n(cfg.locale);
-var t = I18N.t, str = I18N.str, fmtNum = I18N.fmtNum, fmtDate = I18N.fmtDate, NF1 = I18N.NF1;
+var t = I18N.t, str = I18N.str, fill = I18N.fill, fmtNum = I18N.fmtNum, fmtDate = I18N.fmtDate, NF1 = I18N.NF1;
 var tw = (k, v) => t("widget." + k, v);
 var tf = (k, v) => t("form." + k, v);
 var trs = (k, v) => t("review." + k, v);
@@ -362,30 +485,50 @@ function withPreview(body) {
  if (previewToken) body.preview_token = previewToken;
  return body;
 }
-function getJSON(url) {
- return window.fetch(url, { credentials: "same-origin" }).then((r) => {
-  if (!r.ok) {
-   return r.json().catch(() => { return null; }).then((body) => {
-    var err = httpError(r.status, body);
-    if (err.cxNotLive) handleNotLive();
-    throw err;
-   });
-  }
-  return r.json();
+/* §2/§4 — one classified transport: 404/410 or non-JSON below 500 ⇒
+   err.cxBadPath; 403 not_live ⇒ err.cxNotLive; else a plain err (network/5xx).
+   POSTs still RESOLVE on ordinary 4xx (422, 429) — the form shows those inline. */
+function sendOnce(url, init) {
+ return window.fetch(url, init).then((r) => {
+  if (r.status === 404 || r.status === 410) throw badPathError(r.status);
+  return r.text().then((text) => {
+   var body = null;
+   if (!text) throw r.ok ? badPathError(r.status) : httpError(r.status, null);
+   try {
+    body = JSON.parse(text);
+   } catch (e) {
+    // HTML from Shopify or another app ⇒ wrong path; a real 5xx stays a 5xx.
+    throw r.status >= 500 ? httpError(r.status, null) : badPathError(r.status);
+   }
+   if (r.ok) return body;
+   var err = httpError(r.status, body);
+   if (err.cxNotLive || !init.method) throw err; // GETs reject, POSTs resolve
+   return body;
+  });
  });
 }
-function postJSON(url, body) {
- return window.fetch(url, {
-  method: "POST",
-  credentials: "same-origin",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify(withPreview(body))
- }).then((r) => {
-  return r.json().catch(() => { throw httpError(r.status, null); }).then((parsed) => {
-   var err = httpError(r.status, parsed);
-   if (err.cxNotLive) { handleNotLive(); throw err; }
-   return parsed;
+// One shared discovery sweep, then exactly one retry — never a loop.
+function proxySend(buildUrl, init) {
+ var base = currentBase();
+ return sendOnce(buildUrl(base), init).catch((err) => {
+  if (!err || !err.cxBadPath) throw err;
+  return runProxyDiscovery(base).then((found) => {
+   if (!found || found === base) throw err;
+   return sendOnce(buildUrl(found), init);
   });
+ }).catch((err) => {
+  if (err && err.cxNotLive) handleNotLive();
+  throw err;
+ });
+}
+function getJSON(path, params) {
+ return proxySend((base) => { return base + path + qs(params); }, { credentials: "same-origin" });
+}
+function postJSON(path, body) {
+ var payload = JSON.stringify(withPreview(body));
+ return proxySend((base) => { return base + path; }, {
+  method: "POST", credentials: "same-origin",
+  headers: { "Content-Type": "application/json" }, body: payload
  });
 }
 function demoData() { return window.CellexiaDemoData || {}; }
@@ -443,7 +586,7 @@ function demoList(state) {
 }
 function apiList(state) {
  if (cfg.demo) return demoList(state);
- return getJSON(cfg.proxy + "/reviews" + qs({
+ return getJSON("/reviews", {
   product_id: cfg.productId,
   page: state.page,
   per_page: state.perPage,
@@ -459,7 +602,7 @@ function apiList(state) {
   q: state.q,
   locale: cfg.locale,
   preview_token: previewToken
- }));
+ });
 }
 function apiVote(reviewId) {
  if (cfg.demo) {
@@ -470,11 +613,11 @@ function apiVote(reviewId) {
   });
   return demoDelay({ ok: true, helpfulCount: n });
  }
- return postJSON(cfg.proxy + "/reviews/" + encodeURIComponent(reviewId) + "/vote", { token: visitorToken() });
+ return postJSON("/reviews/" + encodeURIComponent(reviewId) + "/vote", { token: visitorToken() });
 }
 function apiReport(reviewId, reason) {
  if (cfg.demo) return demoDelay({ ok: true });
- return postJSON(cfg.proxy + "/reviews/" + encodeURIComponent(reviewId) + "/report", {
+ return postJSON("/reviews/" + encodeURIComponent(reviewId) + "/report", {
   token: visitorToken(), reason: reason
  });
 }
@@ -493,26 +636,20 @@ function apiTranslate(ids, target) {
   });
   return demoDelay({ ok: true, translations: out });
  }
- return postJSON(cfg.proxy + "/translate", { ids: ids, target: target });
+ return postJSON("/translate", { ids: ids, target: target });
 }
 function apiSummary(locale) {
  if (cfg.demo) return demoDelay({ summary: demoData().summary || null });
- return getJSON(cfg.proxy + "/summary" + qs({ product_id: cfg.productId, locale: locale, preview_token: previewToken }));
+ return getJSON("/summary", { product_id: cfg.productId, locale: locale, preview_token: previewToken });
 }
 function apiSubmit(formData) {
  if (cfg.demo) {
   return demoDelay({ ok: true, status: "PENDING" });
  }
  if (previewToken) formData.append("preview_token", previewToken);
- return window.fetch(cfg.proxy + "/reviews", {
-  method: "POST", credentials: "same-origin", body: formData
- }).then((r) => {
-  return r.json().catch(() => { throw httpError(r.status, null); }).then((parsed) => {
-   var err = httpError(r.status, parsed);
-   if (err.cxNotLive) { handleNotLive(); throw err; }
-   return parsed;
-  });
- });
+ // Multipart, same transport (re-sending FormData is safe: a 404 never reached us).
+ return proxySend((base) => { return base + "/reviews"; },
+  { method: "POST", credentials: "same-origin", body: formData });
 }
 
 /* ---- state & containers ---- */
@@ -524,7 +661,9 @@ var state = {
 };
 var data = {
  product: null, summary: null, reviews: [], gallery: [],
- total: 0, totalPages: 0, loading: false, error: false
+ total: 0, totalPages: 0, loading: false, error: false,
+ errorKind: "", // v1.6 §4: "not_live" | "bad_path" | "network"
+ pendingCount: 0 // v1.6.1 §B: merchant-only, from res.meta.pendingCount
 };
 var activeTerms = [];        // highlight terms of the active topic
 var translatedIds = {};      // reviewId -> true when showing translation
@@ -565,8 +704,16 @@ if (isEmbed && !root.querySelector(".cx-layout")) {
 if (secFilters.parentNode && secList.parentNode) { // pills sit above the list
  secList.parentNode.insertBefore(secFilters, secList);
 }
-// v1.2: the editor SSRs the widget even when not live — snapshot to restore.
-var ssrListSnapshot = designMode ? Array.prototype.slice.call(secList.children) : null;
+// reviews.liquid SSRs real cards: snapshot them so a failed load restores
+// indexable content instead of blanking the widget.
+var ssrCards = Array.prototype.filter.call(secList.children, (n) => {
+ return n.nodeType === 1 && n.hasAttribute("data-cx-ssr");
+});
+function restoreSsrCards() {
+ if (!ssrCards.length) return false;
+ for (var si = 0; si < ssrCards.length; si++) ap(secList, ssrCards[si]);
+ return true;
+}
 var liveRegion = el("div", "cx-live");
 sa(liveRegion, "aria-live", "polite");
 hideVisually(liveRegion);
@@ -637,15 +784,51 @@ function dlgHead(dialog, close, title) {
  ap(head, dialogCloseButton(close));
 }
 
-/* ---- v1.2 quiet not-live handling ---- */
-// 403 not_live: hide quietly (the theme editor keeps the block visible).
+/* ---- v1.6 merchant notices (SPEC-1.6 §4) ---- */
+// Absolute rule: merchantNotice() returns null unless isMerchantContext, so a
+// shopper never sees a notice, an error box or a token.
+function tn(key, vars) {
+ var s = str("notice." + key);
+ if (s === null) s = NOTICE_FALLBACK[key];
+ if (s === undefined || s === null) return "";
+ return vars ? fill(s, vars) : s;
+}
+function buildNotice(title, body, detail, onRetry) {
+ var box = el("div", "cx-notice cx-notice--merchant");
+ sa(box, "role", "status");
+ if (title) ap(box, el("strong", "cx-notice__title", title));
+ if (body) ap(box, el("p", "cx-notice__body", body));
+ if (detail) ap(box, el("p", "cx-notice__detail", detail)); // the paths tried
+ if (onRetry) ap(box, btn("cx-btn cx-btn--sm cx-notice__action", tw("retry"), onRetry));
+ return box;
+}
+function merchantNotice(kind) {
+ if (!isMerchantContext) return null;
+ if (kind === "not_live") return buildNotice(tn("expired_title"), tn("expired_body"));
+ if (kind === "bad_path") {
+  return buildNotice(tn("unconfigured_title"), tn("unconfigured_body"),
+   (proxyTried.length ? proxyTried : [currentBase()]).join("  ·  "));
+ }
+ return buildNotice(str("notice.error_title") || tw("error_loading"),
+  str("notice.error_body"), null, () => { reload(); });
+}
+
+/* ---- v1.2/v1.6 not-live handling ---- */
+// 403 not_live. Shopper: hide quietly, never an error box. Merchant: the truth
+// as an inline notice, SSR'd reviews kept underneath (§4 — RC-A).
 var notLiveHandled = false;
 function handleNotLive() {
- if (notLiveHandled) return;
- notLiveHandled = true;
- if (currentDialogClose) currentDialogClose();
- removePreviewBar();
- if (!designMode) root.hidden = true;
+ if (!notLiveHandled) { // one-time teardown; the render below always re-runs so
+  notLiveHandled = true; // a later filter change cannot strand a "Loading…" list
+  if (currentDialogClose) currentDialogClose();
+  removePreviewBar();
+ }
+ if (!isMerchantContext) { root.hidden = true; return; }
+ root.hidden = false;
+ data.error = true;
+ data.errorKind = "not_live";
+ renderList(); // → the expired-preview notice, with SSR cards kept below it
+ clear(secPagination);
 }
 
 /* ---- rating header ---- */
@@ -700,10 +883,8 @@ function renderHeader() {
 }
 
 /* ---- "Customers say" summary + topic chips ---- */
-var topicPanel = null;
 function renderSummary() {
  clear(secSummary);
- topicPanel = null;
  var show = !!(cfg.showSummary && data.summary && data.summary.text);
  secSummary.hidden = !show;
  if (!show) return;
@@ -1372,10 +1553,10 @@ function renderList() {
  clear(secList);
  cardRefs = {};
  if (data.error) {
-  var errWrap = el("div", "cx-error-state");
-  ap(errWrap, el("p", null, tw("error_loading")));
-  ap(errWrap, btn("cx-btn", tw("retry"), () => { reload(); }));
-  ap(secList, errWrap);
+  // §4: merchant gets the truth; shopper gets SSR content or nothing at all.
+  var notice = merchantNotice(data.errorKind);
+  if (notice) ap(secList, notice);
+  restoreSsrCards();
   return;
  }
  if (data.loading && !data.reviews.length) {
@@ -1385,6 +1566,18 @@ function renderList() {
  if (!data.reviews.length) {
   ap(secList, el("p", "cx-muted cx-empty",
    anyFilterActive() ? tw("no_results") : tw("no_reviews")));
+  // Zero reviews is not a failure, but it is why no stars show (RC-B).
+  // v1.6.1 §B: when reviews DO exist and are merely unapproved, say so —
+  // telling the merchant to import what they already imported is the exact
+  // confusion this release removes. A non-zero pendingCount is server-proven
+  // merchant-ness (readPendingCount), which is what lets the hint appear for a
+  // preview link on a LIVE store; a shopper reaches neither branch.
+  var pending = data.pendingCount > 0;
+  if ((isMerchantContext || pending) && !anyFilterActive()) {
+   ap(secList, pending
+    ? buildNotice(null, tn("empty_pending", { count: data.pendingCount }))
+    : buildNotice(null, tn("empty_merchant")));
+  }
   return;
  }
  ap(secList, el("div", "cx-count", tw("showing_count", {
@@ -1395,6 +1588,19 @@ function renderList() {
  var list = el("div", "cx-review-list");
  data.reviews.forEach((r) => { ap(list, renderCard(r)); });
  ap(secList, list);
+}
+// §4 row 4: a failure AFTER content is on screen keeps the content and adds a
+// small inline retry — same for both audiences (a retry link is not an error box).
+function renderInlineRetry(wasAppend) {
+ detach(secList.querySelector(".cx-retry-inline"));
+ var wrap = el("div", "cx-retry-inline");
+ sa(wrap, "role", "status");
+ ap(wrap, btn("cx-link", tw("retry"), () => {
+  detach(wrap);
+  if (wasAppend) state.page += 1; // the catch decremented it
+  loadPage(wasAppend);
+ }));
+ ap(secList, wrap);
 }
 function renderPagination() {
  clear(secPagination);
@@ -1770,6 +1976,18 @@ function applyServerSettings(res) {
   (own(res, "design_theme") ? res.design_theme : undefined);
  if (typeof theme === "string" && theme) applySkin(theme);
 }
+/* v1.6.1 §B — `meta.pendingCount` is MERCHANT-ONLY, and its presence is also the
+   only client-side PROOF that the server validated our token. We refuse to read
+   it unless we actually sent one, so a payload that ever leaked to a tokenless
+   shopper (CDN cache, a future server regression) still never enters their page
+   state, let alone the DOM. Requests carrying a token are `no-store`. */
+function readPendingCount(res) {
+ if (!previewToken) return 0;
+ var m = res && res.meta;
+ if (!m || typeof m !== "object") return 0;
+ var n = Number(m.pendingCount);
+ return isFinite(n) && n > 0 ? Math.floor(n) : 0;
+}
 function loadPage(append) {
  data.loading = true;
  data.error = false;
@@ -1783,6 +2001,7 @@ function loadPage(append) {
   if (res.summary) data.summary = res.summary;
   data.total = Number(res.total) || 0;
   data.totalPages = Number(res.total_pages) || 0;
+  data.pendingCount = readPendingCount(res);
   if (res.per_page) state.perPage = Number(res.per_page) || state.perPage;
   var incoming = res.reviews || [];
   data.reviews = append ? data.reviews.concat(incoming) : incoming.slice();
@@ -1792,24 +2011,22 @@ function loadPage(append) {
  }).catch((err) => {
   if (token !== loadSeq) return;
   data.loading = false;
-  if (err && err.cxNotLive) {
-   // Quiet: handleNotLive() already ran — plain empty state, no error UI.
-   if (append && state.page > 1) state.page -= 1;
-   if (designMode && ssrListSnapshot && ssrListSnapshot.length) {
-    // Theme editor of a not-live store: restore the SSR reviews.
-    clear(secList);
-    cardRefs = {};
-    for (var i = 0; i < ssrListSnapshot.length; i++) ap(secList, ssrListSnapshot[i]);
-    return;
-   }
-   renderList();
+  if (append && state.page > 1) state.page -= 1;
+  // §4 classification: gating / wrong path / network-5xx.
+  var kind = err && err.cxNotLive ? "not_live" : (err && err.cxBadPath ? "bad_path" : "network");
+  if (kind === "not_live") { handleNotLive(); return; } // idempotent
+  if (data.reviews.length) {
+   // Content is already on screen: keep every card, add an inline retry.
    renderPagination();
+   renderInlineRetry(append === true);
    return;
   }
   data.error = true;
-  if (append && state.page > 1) state.page -= 1;
+  data.errorKind = kind;
   renderList();
   renderPagination();
+  // Shopper, first load, nothing real to show ⇒ quiet hide (never an error box).
+  if (!isMerchantContext && !secList.firstChild) root.hidden = true;
  });
 }
 function reload() {
@@ -1846,7 +2063,7 @@ function init() {
  loadPage(false);
 }
 window.CellexiaReviews = {
- version: "1.5.1",
+ version: "1.6.0",
  refresh: reload,
  t: t,
  getState: () => Object.assign({}, state)
@@ -1872,13 +2089,17 @@ function insertAfter(node, ref) {
   return true;
  } catch (e) { return false; }
 }
-// §1.2 config: { pageType, settings, skin, live, product? }
+// §1.2 config: { pageType, proxy, settings, skin, live, editorToken?, product? }
+// Memoised (boot + badges read it); editorToken exists only in the editor.
+var embedCfgCache;
 function readEmbedConfig() {
+ if (embedCfgCache !== undefined) return embedCfgCache;
  var tag = document.getElementById("cx-embed-config");
  try {
   var parsed = tag ? JSON.parse(tag.textContent) : null;
-  return parsed && typeof parsed === "object" ? parsed : null;
- } catch (e) { return null; }
+  embedCfgCache = parsed && typeof parsed === "object" ? parsed : null;
+ } catch (e) { embedCfgCache = null; }
+ return embedCfgCache;
 }
 function anyRoot() {
  return document.getElementById("cellexia-reviews") || document.getElementById("cellexia-reviews-embed");
@@ -1934,11 +2155,9 @@ function watchForCartForm(root) {
  var seen = false;
  function onScroll() {
   try {
-   // v1.5.1 audit: a hidden root (not-live, no token) measures 0×0 — its
-   // rect must not mark it "seen", so preview/live match tested-hidden runs.
+   // A hidden root measures 0×0; its rect must not mark it "seen".
    if (root.hidden || !root.getClientRects().length) return;
-   // Safari has no scroll anchoring: once the user has scrolled meaningfully,
-   // relocating the tall widget above the fold would visibly jump the page.
+   // No scroll anchoring in Safari: relocating after a real scroll would jump.
    if (window.scrollY > 200) { seen = true; return; }
    if (root.getBoundingClientRect().top < window.innerHeight) seen = true;
   } catch (e) {}
@@ -1972,9 +2191,8 @@ function mountEmbed(root, settings) {
  }
  root.hidden = false;
  applyGutters(root);
- // v1.5.1 audit: the gutter class and the measured .container width go stale
- // on rotate/resize — drop the cache and re-measure (two class toggles + one
- // measurement, debounced; caching within a given viewport stays intact).
+ // Gutter class + measured .container width go stale on rotate/resize:
+ // drop the cache and re-measure (debounced; per-viewport caching stays).
  var reGutter = debounce(() => {
   themeMaxCache = null;
   try { root.style.removeProperty("--cx-embed-max"); } catch (e) {}
@@ -2120,9 +2338,8 @@ function initBadges(cfgE, I) {
   for (var i = 0; i < candidates.length; i++) {
    var h = candidates[i];
    if (h.closest(".cx") || !(h.textContent || "").trim()) continue;
-   // v1.5.1 audit: real cards nest name (h3) + marketing blurb inside one
-   // [class*="title"] container — insert after the heading, not the whole
-   // block, so stars sit directly under the product name (Amazon pattern).
+   // Real cards nest name (h3) + blurb in one [class*="title"] container:
+   // insert after the heading so stars sit right under the product name.
    if (!/^H[2-4]$/.test(h.tagName)) {
     try {
      var hd = h.querySelector("h2,h3,h4");
@@ -2161,28 +2378,34 @@ function initBadges(cfgE, I) {
    return Promise.resolve(true);
   }
   var r0 = anyRoot();
-  // v1.5.1 audit: home/collection pages have no widget root — the proxy base
-  // must come from #cx-embed-config, else every /badges call 404s there.
-  var base = (typeof cfgE.proxy === "string" && cfgE.proxy) ||
+  // Badge-only pages have no root: base from the config, or a proven one (§2).
+  var base = seedProxyBase() || (typeof cfgE.proxy === "string" && cfgE.proxy) ||
    (r0 && r0.getAttribute("data-proxy")) || "/apps/cellexia-reviews/api";
-  var url = base.replace(/\/$/, "") +
-   "/badges?handles=" + encodeURIComponent(handles.join(","));
-  if (token) url += "&preview_token=" + encodeURIComponent(token);
-  // On any failure (network, non-403 status, bad JSON) un-mark the handles so
-  // a later productive pass may retry them (still bounded by extraFetches).
+  // On failure un-mark the handles so a later pass may retry (capped above).
   var unmark = () => { handles.forEach((h) => { if (cache[h] === undefined) delete requested[h]; }); };
-  return window.fetch(url, { credentials: "same-origin" }).then((r) => {
-   if (!r.ok) {
-    if (r.status === 403) { stopped = true; disconnect(); removePreviewBar(); } // not_live: go quiet
-    else unmark();
-    return false;
-   }
-   return r.json().then((body) => {
-    var map = (body && body.badges) || {};
-    handles.forEach((h) => { cache[h] = own(map, h) ? map[h] : null; });
-    return true;
+  // Badges never surface a failure — a broken path just means no stars.
+  var attempt = (from, mayRetry) => {
+   var b = from.replace(/\/$/, "");
+   var url = b + "/badges?handles=" + encodeURIComponent(handles.join(","));
+   if (token) url += "&preview_token=" + encodeURIComponent(token);
+   return window.fetch(url, { credentials: "same-origin" }).then((r) => {
+    if (r.status === 403) { stopped = true; disconnect(); removePreviewBar(); return false; } // not_live: go quiet
+    if ((r.status === 404 || r.status === 410) && mayRetry) {
+     // Wrong subpath: join the ONE shared discovery sweep, then retry once.
+     return runProxyDiscovery(b).then((found) => {
+      if (!found || found === b) { unmark(); return false; }
+      return attempt(found, false);
+     });
+    }
+    if (!r.ok) { unmark(); return false; }
+    return r.json().then((body) => {
+     var map = (body && body.badges) || {};
+     handles.forEach((h) => { cache[h] = own(map, h) ? map[h] : null; });
+     return true;
+    }).catch(() => { unmark(); return false; });
    }).catch(() => { unmark(); return false; });
-  }).catch(() => { unmark(); return false; });
+  };
+  return attempt(base, true);
  }
  function inject() {
   for (var i = 0; i < pending.length; i++) {
@@ -2239,10 +2462,8 @@ function initBadges(cfgE, I) {
   if (window.MutationObserver) {
    observer = new MutationObserver(debounce(() => {
     if (stopped || !observer) return;
-    // v1.5.1 audit: unrelated DOM churn (carousels, mini-cart, third-party
-    // widgets) must not consume the budget before late card grids render —
-    // only PRODUCTIVE passes (new cards found) count toward the cap of 5.
-    // A no-op pass is one querySelectorAll; a high total cap still ends it.
+    // Unrelated DOM churn must not consume the budget before late card grids
+    // render: only PRODUCTIVE passes count toward the cap of 5.
     scans += 1;
     var before = pending.length;
     pass(true);

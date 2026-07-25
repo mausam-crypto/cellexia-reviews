@@ -130,11 +130,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       // A fresh token invalidates every previously shared preview link. The
       // storefront preview flow reads Setting.previewToken (SPEC-1.2).
       const previewToken = crypto.randomUUID();
-      await prisma.setting.upsert({
+      const saved = await prisma.setting.upsert({
         where: { shop },
         update: { previewToken },
         create: { shop, previewToken },
       });
+      // SPEC-1.6 §3: the theme editor reads the token from the
+      // `cellexia.preview_token` shop metafield, so the new token must reach
+      // the metafield too. Without this the editor keeps sending the token we
+      // just invalidated and every request answers 403 not_live ("Preview
+      // session expired") until an unrelated settings save happens to fix it.
+      await syncShopSettingsMetafields(admin, saved);
       return json({
         ok: true,
         message: "Preview link regenerated — old links no longer work.",
@@ -175,11 +181,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     if (intent === "delete-all-data") {
       // v1.2 (SPEC-1.2): the Setting row carries the go-live state and
-      // isLive defaults to false. Capture the current live state before the
-      // wipe — recreating the row from schema defaults would silently flip a
-      // live store to not-live (every proxy route answers 403 not_live, the
-      // widget hides) while the `cellexia.live` shop metafield still said true.
-      const prevIsLive = (await getSettings(shop)).isLive;
+      // isLive defaults to false. Capture the current row before the wipe —
+      // recreating it from schema defaults would silently flip a live store to
+      // not-live (every proxy route answers 403 not_live, the widget hides)
+      // while the `cellexia.live` shop metafield still said true. SPEC-1.6 §2
+      // adds proxySubpath: its schema default is the shipped subpath, so a
+      // store whose detected app-proxy path differs would get a 404 path
+      // written into `cellexia.proxy_path`.
+      const prev = await getSettings(shop);
       const reviewIds = (
         await prisma.review.findMany({ where: { shop }, select: { id: true } })
       ).map((r) => r.id);
@@ -190,10 +199,20 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       await prisma.review.deleteMany({ where: { shop } });
       await prisma.summary.deleteMany({ where: { shop } });
       await prisma.setting.deleteMany({ where: { shop } });
-      // Recreate the settings row (fresh defaults, new preview token minted
-      // lazily by getSettings) but keep the live state, then re-sync the shop
-      // metafields so the DB and `cellexia.live` agree after the wipe.
-      const fresh = await updateSettings(shop, { isLive: prevIsLive });
+      // Recreate the settings row with fresh defaults but keep the live state
+      // and the detected app-proxy subpath, then re-sync the shop metafields so
+      // the DB, `cellexia.live` and `cellexia.proxy_path` agree after the wipe.
+      await prisma.setting.upsert({
+        where: { shop },
+        update: { isLive: prev.isLive, proxySubpath: prev.proxySubpath },
+        create: { shop, isLive: prev.isLive, proxySubpath: prev.proxySubpath },
+      });
+      // Read back through getSettings, which mints a preview token when the
+      // row has none: syncShopSettingsMetafields SKIPS `cellexia.preview_token`
+      // for a null token, which would leave the metafield holding the token of
+      // the deleted row while the next getSettings mints a different one —
+      // permanent 403 not_live in the theme editor (SPEC-1.6 §3).
+      const fresh = await getSettings(shop);
       await syncShopSettingsMetafields(admin, fresh);
       return json({
         ok: true,
@@ -436,6 +455,30 @@ export default function Settings() {
                     helpText="Stored for a future notification feature — the app does not send email notifications yet. New reviews appear under “Needs attention” on the Dashboard."
                   />
                 </FormLayout>
+              </BlockStack>
+            </Card>
+
+            {/* SPEC-1.6 §5 — the same seven-check report as the Dashboard card,
+                reachable from Settings. The test itself lives in ONE place (the
+                Dashboard), so there is never a second, disagreeing report. */}
+            <Card>
+              <BlockStack gap="300">
+                <Text as="h2" variant="headingMd">
+                  Storefront connection
+                </Text>
+                <Text as="p" variant="bodySm" tone="subdued">
+                  Seven checks prove that your storefront and this app can talk to each
+                  other: the app proxy, the preview link, the theme app embed, your review
+                  data, the product metafields that power the stars under your product
+                  titles, database persistence and the live state. Run it after installing,
+                  after changing your theme and whenever the widget looks wrong.
+                </Text>
+                <InlineStack gap="200" blockAlign="center" wrap>
+                  <Button url="/app?health=run">Test storefront connection</Button>
+                  <Text as="span" variant="bodySm" tone="subdued">
+                    Opens the report on the Dashboard and runs the checks again.
+                  </Text>
+                </InlineStack>
               </BlockStack>
             </Card>
 

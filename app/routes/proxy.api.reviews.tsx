@@ -3,6 +3,8 @@
  *
  * GET  — paginated, filterable review list (SPEC §6), cached 60 s.
  *        Lazily resolves pending Shopify Files CDN URLs before listing.
+ *        Adds the merchant-only `meta.pendingCount` (SPEC-1.6.1 §B) to a
+ *        request that carried a valid preview token, and only then.
  * POST — multipart review submission with honeypot, timing check, strict
  *        option-key validation, magic-byte media validation and rate
  *        limiting (SPEC §6/§10).
@@ -37,6 +39,7 @@ import {
   hashClientIp,
   matchShopLocale,
   readMagicBytes,
+  recordStorefrontHit,
   requireLiveOrPreview,
   sniffMediaKind,
   verifyProxy,
@@ -77,6 +80,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const auth = await verifyProxy(request);
   if (!auth) return errorJson(401, { _: "unauthorized" });
   const { shop } = auth;
+  recordStorefrontHit(shop, request); // SPEC-1.6 §2 — fire-and-forget, throttled
 
   // SPEC-1.2 gating: not-live shops serve zero data unless the request
   // carries the current preview token (`preview_token` query param).
@@ -178,6 +182,11 @@ export async function loader({ request }: LoaderFunctionArgs) {
     console.error("[cellexia] lazy media URL resolution failed", error);
   }
 
+  // SPEC-1.6.1 §B — merchant-only payload gate. `requireLiveOrPreview` above
+  // answers the coarser question "may this request see data at all?" and is
+  // true for every shopper on a live store, so it must NOT decide this.
+  const merchantPreview = await hasValidPreviewToken(shop, params);
+
   try {
     const list = await listReviews(shop, {
       productId,
@@ -194,8 +203,15 @@ export async function loader({ request }: LoaderFunctionArgs) {
       topic,
       q,
       locale,
+      includeMeta: merchantPreview,
     });
-    return json(list, { headers: REVIEWS_CACHE_HEADERS });
+    // A payload that carries merchant-only data is never handed to a shared
+    // cache. The URL differs by its `preview_token`, so a compliant cache
+    // would key it separately anyway — but "public" plus moderation counts is
+    // not a combination worth trusting an intermediary with.
+    return json(list, {
+      headers: merchantPreview ? NO_STORE_HEADERS : REVIEWS_CACHE_HEADERS,
+    });
   } catch (error) {
     console.error("[cellexia] listReviews failed", error);
     return errorJson(500, { _: "server_error" });
@@ -214,6 +230,7 @@ export async function action({ request }: ActionFunctionArgs) {
   const auth = await verifyProxy(request);
   if (!auth) return errorJson(401, { _: "unauthorized" });
   const { shop } = auth;
+  recordStorefrontHit(shop, request); // SPEC-1.6 §2 — fire-and-forget, throttled
 
   const ip = getClientIp(request);
   if (!checkRateLimit(shop, ip, "submit")) {
@@ -462,6 +479,34 @@ export async function action({ request }: ActionFunctionArgs) {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Does this GET prove it is a merchant session (theme editor or tokenized
+ * preview link) by carrying the shop's CURRENT preview token?
+ *
+ * Deliberately independent of the live state: on a live store every visitor
+ * passes `requireLiveOrPreview`, and merchant-only data must not follow. Only
+ * possession of the token — which the app hands out through the Dashboard's
+ * preview link and the design-mode-only theme metafield (SPEC-1.6 §3) —
+ * qualifies.
+ *
+ * Any failure answers `false`: the merchant extra is optional, the guarantee
+ * that a shopper never receives it is not.
+ */
+async function hasValidPreviewToken(
+  shop: string,
+  params: URLSearchParams,
+): Promise<boolean> {
+  const token = params.get("preview_token");
+  if (!token) return false;
+  try {
+    const settings = await getSettings(shop);
+    return settings.previewToken != null && token === settings.previewToken;
+  } catch (error) {
+    console.error("[cellexia] preview-token check failed", error);
+    return false;
+  }
+}
 
 /** Thrown while parsing when the combined multipart parts exceed MAX_BODY_BYTES. */
 class BodyBudgetExceededError extends Error {

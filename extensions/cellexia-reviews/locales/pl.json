@@ -145,6 +145,17 @@
       "note": "Tylko Ty to widzisz — widżet nie jest widoczny dla odwiedzających.",
       "exit": "Wyjdź z podglądu"
     },
+    "notice": {
+      "expired_title": "Sesja podglądu wygasła",
+      "expired_body": "Otwórz ponownie „Preview on your store” w panelu Dashboard aplikacji, aby kontynuować podgląd.",
+      "unconfigured_title": "Połączenie ze sklepem nie zostało skonfigurowane",
+      "unconfigured_body": "Otwórz aplikację w panelu administracyjnym Shopify → Dashboard → „Test storefront connection”.",
+      "error_title": "Opinie są chwilowo niedostępne",
+      "error_body": "Ta wiadomość jest widoczna tylko dla Ciebie podczas podglądu.",
+      "empty_merchant": "Brak opinii — zaimportuj swoje opinie lub wygeneruj dane testowe w aplikacji.",
+      "empty_pending": "Brak opublikowanych opinii — [[count]] oczekuje na zatwierdzenie w aplikacji.",
+      "retry": "Spróbuj ponownie"
+    },
     "form": {
       "title": "Napisz opinię",
       "rating_label": "Ocena ogólna",

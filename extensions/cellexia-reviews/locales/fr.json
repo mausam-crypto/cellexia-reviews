@@ -137,6 +137,17 @@
       "note": "Vous seul pouvez voir ceci — le widget n'est pas en ligne pour les visiteurs.",
       "exit": "Quitter l'aperçu"
     },
+    "notice": {
+      "expired_title": "Session d'aperçu expirée",
+      "expired_body": "Rouvrez « Preview on your store » depuis le tableau de bord (Dashboard) de l'application pour continuer l'aperçu.",
+      "unconfigured_title": "Connexion à la boutique non configurée",
+      "unconfigured_body": "Ouvrez l'application dans votre admin Shopify → Dashboard → « Test storefront connection ».",
+      "error_title": "Les avis sont temporairement indisponibles",
+      "error_body": "Ce message n'est visible que par vous pendant l'aperçu.",
+      "empty_merchant": "Aucun avis pour l'instant — importez vos avis ou générez des données de test dans l'application.",
+      "empty_pending": "Aucun avis publié pour l'instant — [[count]] en attente d'approbation dans l'application.",
+      "retry": "Réessayer"
+    },
     "form": {
       "title": "Rédiger un avis",
       "rating_label": "Évaluation globale",

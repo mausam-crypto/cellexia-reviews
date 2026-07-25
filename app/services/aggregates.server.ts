@@ -9,10 +9,15 @@
  *      published reviews has drifted by >= `summaryAutoThreshold` since the
  *      last generation (settings-gated, best-effort),
  *   3. picks the 3 newest highest-helpful PUBLISHED reviews,
- *   4. syncs the `cellexia` product metafields for instant SSR + JSON-LD.
+ *   4. syncs the `cellexia` product metafields for instant SSR + JSON-LD,
+ *   5. records that sync's outcome on the shop's Setting row (SPEC-1.6.1 §A).
  *
  * Metafield/AI failures are logged inside the called services and never
- * propagate — the stats are always returned to the caller.
+ * propagate — the stats are always returned to the caller. Step 5 is what
+ * stops a metafield failure from being invisible: `Setting.lastSyncError` /
+ * `lastSyncAt` are read back by the admin's storefront health check and by the
+ * token-gated `diag` block of `/api/ping`, so "the stars never updated" now has
+ * an answer in the admin instead of only in the server log.
  */
 import type { AdminApiContext as BaseAdminApiContext } from "@shopify/shopify-app-remix/server";
 
@@ -28,15 +33,40 @@ import prisma from "~/db.server";
 import type { ProductStatsDTO } from "~/types/cellexia";
 import { generateSummary, parseStoredTopics } from "./ai.server";
 import { syncProductMetafields } from "./metafields.server";
-import type { SummaryMetafieldSource } from "./metafields.server";
+import type { MetafieldSyncResult, SummaryMetafieldSource } from "./metafields.server";
 import { computeProductStats } from "./reviews.server";
 import { getSettings } from "./settings.server";
 
+/** Recomputed aggregates plus how the metafield write that followed went. */
+export interface RecomputeResult {
+  stats: ProductStatsDTO;
+  sync: MetafieldSyncResult;
+}
+
+/**
+ * Recompute a product's aggregates and push them to the metafields.
+ *
+ * The historical signature: callers that only need the numbers (every
+ * moderation path) keep using this and stay unaware of the sync. Callers that
+ * report on the sync itself — the Dashboard's "Re-sync all products", which
+ * must show the first real error rather than a generic toast (SPEC-1.6.1 §A) —
+ * use `recomputeProductWithSync` instead. Both record the outcome on Setting.
+ */
 export async function recomputeProduct(
   shop: string,
   productId: string,
   admin: AdminApiContext,
 ): Promise<ProductStatsDTO> {
+  const { stats } = await recomputeProductWithSync(shop, productId, admin);
+  return stats;
+}
+
+/** As `recomputeProduct`, but also hands back the metafield sync outcome. */
+export async function recomputeProductWithSync(
+  shop: string,
+  productId: string,
+  admin: AdminApiContext,
+): Promise<RecomputeResult> {
   const pid = String(productId);
   const stats = await computeProductStats(shop, pid);
   const settings = await getSettings(shop);
@@ -85,9 +115,37 @@ export async function recomputeProduct(
       }
     : null;
 
-  await syncProductMetafields(admin, pid, stats, topReviews, summary);
+  const sync = await syncProductMetafields(admin, pid, stats, topReviews, summary);
+  await recordSyncOutcome(shop, sync);
 
-  return stats;
+  return { stats, sync };
+}
+
+/**
+ * Persist the metafield sync outcome on the shop's Setting row: the error text
+ * on failure, `null` on success (so a fixed store stops being reported as
+ * broken), plus the timestamp of the attempt either way.
+ *
+ * A targeted `update` rather than an `upsert`: the row is guaranteed to exist
+ * (getSettings upserted it earlier in this call), and writing only these two
+ * columns cannot clobber a settings save racing with a moderation action. The
+ * whole thing is best-effort — a bookkeeping write must never be able to fail
+ * an approve/reject/import, which is exactly the class of silent breakage this
+ * release exists to remove, so a throw here is logged and swallowed. Prisma's
+ * P2025 (row deleted, e.g. an uninstall mid-flight) lands here too.
+ */
+async function recordSyncOutcome(shop: string, sync: MetafieldSyncResult): Promise<void> {
+  try {
+    await prisma.setting.update({
+      where: { shop },
+      data: {
+        lastSyncAt: new Date(),
+        lastSyncError: sync.ok ? null : sync.error,
+      },
+    });
+  } catch (error) {
+    console.error("[cellexia] recording the metafield sync outcome failed", error);
+  }
 }
 
 /**

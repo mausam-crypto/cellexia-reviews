@@ -234,6 +234,26 @@ export interface ListResponse {
     /** Active storefront design version, applied as `data-cx-skin`. */
     designTheme: DesignTheme;
   };
+  /**
+   * MERCHANT-ONLY extras (SPEC-1.6.1 §B) — optional by design.
+   *
+   * HARD SECURITY CONTRACT: the proxy route serializes this key ONLY when the
+   * request proved it is a merchant session by carrying the shop's CURRENT
+   * preview token. A shopper on a live store (no token) must never receive it,
+   * so `listReviews` populates it only when explicitly asked
+   * (`ListParams.includeMeta`) and the route decides that flag from the token,
+   * never from the live state. Anything added here inherits the same rule:
+   * this object is the only place in the storefront payload where data the
+   * public may not see is allowed to appear.
+   */
+  meta?: {
+    /**
+     * Reviews for THIS product awaiting approval in the app. Powers the
+     * merchant notice "No published reviews yet — N awaiting approval"
+     * (`cellexia.notice.empty_pending`) when the list comes back empty.
+     */
+    pendingCount: number;
+  };
 }
 
 /** POST /apps/cellexia/api/reviews response body. */
@@ -291,6 +311,13 @@ export interface ListParams {
   q?: string;
   /** Widget locale. */
   locale?: string;
+  /**
+   * Populate the merchant-only `ListResponse.meta` (SPEC-1.6.1 §B). The proxy
+   * route sets this ONLY for a request carrying a valid preview token — never
+   * for an ordinary storefront visitor. Defaults to false/absent, so every
+   * existing caller keeps producing a shopper-safe payload.
+   */
+  includeMeta?: boolean;
 }
 
 export interface CreateReviewMediaInput {

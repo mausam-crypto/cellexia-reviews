@@ -141,6 +141,17 @@
       "note": "Doar dumneavoastră puteți vedea acest lucru — widgetul nu este vizibil pentru vizitatori.",
       "exit": "Ieși din previzualizare"
     },
+    "notice": {
+      "expired_title": "Sesiunea de previzualizare a expirat",
+      "expired_body": "Redeschideți „Preview on your store” din Dashboard-ul aplicației pentru a continua previzualizarea.",
+      "unconfigured_title": "Conexiunea cu magazinul nu este configurată",
+      "unconfigured_body": "Deschideți aplicația în administrarea Shopify → Dashboard → „Test storefront connection”.",
+      "error_title": "Recenziile sunt temporar indisponibile",
+      "error_body": "Acest mesaj este vizibil doar pentru dumneavoastră în timpul previzualizării.",
+      "empty_merchant": "Încă nu există recenzii — importați recenziile sau generați date de test în aplicație.",
+      "empty_pending": "Încă nu există recenzii publicate — [[count]] în așteptarea aprobării în aplicație.",
+      "retry": "Încercați din nou"
+    },
     "form": {
       "title": "Scrie o recenzie",
       "rating_label": "Evaluare generală",

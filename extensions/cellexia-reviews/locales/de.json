@@ -137,6 +137,17 @@
       "note": "Nur Sie können dies sehen — das Widget ist für Besucher nicht sichtbar.",
       "exit": "Vorschau beenden"
     },
+    "notice": {
+      "expired_title": "Vorschausitzung abgelaufen",
+      "expired_body": "Öffnen Sie “Preview on your store” erneut im Dashboard der App, um die Vorschau fortzusetzen.",
+      "unconfigured_title": "Shop-Verbindung nicht konfiguriert",
+      "unconfigured_body": "Öffnen Sie die App in Ihrem Shopify-Admin → Dashboard → “Test storefront connection”.",
+      "error_title": "Bewertungen sind vorübergehend nicht verfügbar",
+      "error_body": "Diese Meldung ist nur für Sie in der Vorschau sichtbar.",
+      "empty_merchant": "Noch keine Bewertungen — importieren Sie Ihre Bewertungen oder erzeugen Sie Testdaten in der App.",
+      "empty_pending": "Noch keine veröffentlichten Bewertungen — [[count]] warten in der App auf Freigabe.",
+      "retry": "Erneut versuchen"
+    },
     "form": {
       "title": "Rezension schreiben",
       "rating_label": "Gesamtbewertung",

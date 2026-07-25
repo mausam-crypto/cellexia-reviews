@@ -38,10 +38,27 @@ api_version = "2025-01"
   compliance_topics = [ "customers/data_request", "customers/redact", "shop/redact" ]
   uri = "/webhooks/gdpr"
 
+# App proxy — the address the storefront widget calls on the shop's own domain
+# (https://<shop-domain>/apps/<subpath>/api/...), which Shopify signs and forwards
+# to the `url` below.
+#
+# Any subpath works: the theme extension does not hard-code it. On install — and
+# whenever you run Dashboard -> "Test storefront connection", or
+# `npm run selftest -- --shop=<store>.myshopify.com` — the app probes
+# /apps/<candidate>/api/ping on the shop domain, detects the subpath Shopify is
+# actually serving, and stores it in the shop metafield `cellexia.proxy_path`.
+# extensions/cellexia-reviews/snippets/cx-proxy.liquid reads that metafield (and
+# falls back to "cellexia-reviews"), and the storefront JS re-discovers the path
+# by itself if a request ever 404s. So this file and the storefront path cannot
+# drift apart — the failure mode that produced silent 404s before v1.6.0.
+#
+# Keep the default unless another app already owns /apps/cellexia-reviews. If it
+# does: change `subpath` here, run `npm run deploy`, then run the storefront
+# connection test once so the new path is detected and written to the metafield.
 [app_proxy]
 url = "https://YOUR-APP-URL/proxy"
 prefix = "apps"
-subpath = "cellexia"
+subpath = "cellexia-reviews"
 
 [pos]
 embedded = false

@@ -661,6 +661,30 @@ a.cx.cx-badge-inline:is(:hover, :focus, :active) { text-decoration:none;color:va
 }
 .cx.cx--in-container { margin-block:clamp(28px, 5vw, 56px);}
 
+/* 17. v1.6 merchant notices (SPEC-1.6 §4) — the ONLY new component in this
+   release. Skin-neutral by design (hairline border, muted 13px text,
+   --cx-radius corners) so all three skins stay visually identical apart from
+   this box; the JS gives it role="status" and renders it ONLY when
+   isMerchantContext (theme editor or a valid preview token). A shopper on a
+   live store never sees a notice, an error box or a token — a failed load
+   degrades to quiet SSR content or a hidden widget instead. */
+.cx-notice {
+  display:block;margin-block:12px;padding:12px 14px;text-align:start;
+  background:#fff;border:1px solid var(--cx-border);border-radius:var(--cx-radius);
+  color:var(--cx-muted);font-size:13px;line-height:1.45;overflow-wrap:anywhere;
+}
+.cx-notice__title { display:block;color:var(--cx-text);font-size:13px;font-weight:700;margin-block-end:4px;}
+.cx-notice__body { font-size:13px;color:var(--cx-muted);margin-block-end:0;}
+.cx-notice__detail {
+  margin-block:6px 0;font-size:12px;color:var(--cx-muted);
+  font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, "Courier New", monospace;
+}
+.cx-notice__action { margin-block-start:10px;}
+.cx-notice--merchant { border-inline-start:3px solid #C8873A;}
+/* Inline retry under an already-rendered list (both audiences, keeps content) */
+.cx-retry-inline { margin-block:8px 4px;font-size:13px;}
+@media print { .cx-notice, .cx-retry-inline { display:none !important;} }
+
 /* ===== Skin: cellexia ===== */
 /* v1.1 (SPEC-1.1) CSS-only skin, scoped to data-cx-skin="cellexia" (.cx roots +
    top-layer surfaces — the JS copies the attr on open, mirroring §1). No font

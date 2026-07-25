@@ -33,6 +33,39 @@ Once live, the remaining reasons are the usual ones: neither the block is added 
 embed enabled in the theme editor, or the product has no published reviews yet. See
 `docs/CONFIGURATION.md` §2.
 
+**Why don't I see any stars yet?**
+Because the app has no reviews of its own yet. Cellexia Reviews only ever shows the reviews
+**it** holds — and a brand-new install holds none. The reviews you already collected in another
+review app (Judge.me, Loox, Yotpo, or whatever you used before) are not visible to this app: they
+live in that app's database, not in this one. Until reviews exist here, the stars under your
+product title and the star badges on product cards are deliberately hidden — showing an empty
+rating would be worse than showing nothing.
+
+Three ways to get reviews into the app:
+
+- **Import / Export** — bring your existing reviews over from a CSV export of your old app
+  (Judge.me, Loox and Yotpo files are recognized automatically). See
+  `docs/CONFIGURATION.md` §8.
+- **Bulk add** — type in reviews you have on paper or in email, one product at a time
+  (`docs/CONFIGURATION.md` §9).
+- **QA data** — generate realistic test reviews to judge the layout before real ones arrive
+  (`docs/CONFIGURATION.md` §10). Delete every batch before going live to real customers.
+
+You never have to guess: the **Storefront connection** card at the top of the Dashboard has a
+**Review data** check that states exactly how many published reviews the app holds, and warns
+you when the answer is zero (`docs/CONFIGURATION.md` §1, "Storefront connection test"). Once
+reviews are published — and the store is live — the stars appear by themselves.
+
+**I see a message about previewing that I don't think shoppers should see. Is that a problem?**
+No — those messages are built for you and only reach you. In the **theme editor** and in
+**preview mode** the app tells you what's going on when it can't load data ("Preview session
+expired", "Storefront connection not configured", a **Try again** button, or "No reviews yet —
+import your reviews or generate test data in the app."). On the real storefront a shopper never
+sees any of them: if something goes wrong there, the widget simply removes itself and your page
+looks as if the app weren't installed. If a notice tells you the preview expired, reopen
+**Preview on your store** from the Dashboard; for anything else, run the Dashboard's
+**Storefront connection** test.
+
 **Does it slow my pages down?**
 It's built not to: the rating header and top reviews are rendered on the server so they paint
 with the page, one small CSS file and one deferred JavaScript file load, live data is fetched

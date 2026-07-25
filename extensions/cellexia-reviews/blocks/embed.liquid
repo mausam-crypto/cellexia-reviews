@@ -44,6 +44,19 @@
     assign cx_show_full = true
   endif
 
+  comment
+    v1.6 (SPEC-1.6 §3, RC-A): design-mode-only preview token, mirrored by the
+    app into the SHOP metafield `cellexia.preview_token`. Emitted on the embed
+    root AND inside #cx-embed-config (badge-only pages carry no root), but ONLY
+    when request.design_mode is true — a normal storefront request must never
+    contain a preview token anywhere in its HTML. Absent metafield ⇒ neither the
+    attribute nor the JSON key is emitted.
+  endcomment
+  assign cx_editor_token = ''
+  if request.design_mode
+    assign cx_editor_token = shop.metafields.cellexia.preview_token.value | default: '' | append: '' | strip
+  endif
+
   assign cx_lang = request.locale.iso_code | split: '-' | first
 
   assign cx_default_locale = 'en'
@@ -115,6 +128,9 @@
   },
   "skin": {{ cx_skin | json }},
   "live": {{ cx_is_live | json }},
+  {%- if cx_editor_token != blank %}
+  "editorToken": {{ cx_editor_token | json }},
+  {%- endif %}
   {%- if cx_is_product %}
   "product": {
     "id": {{ product.id | json }},
@@ -158,6 +174,7 @@
   data-demo="false"
   data-cx-skin="{{ cx_skin }}"
   data-cx-live="{{ cx_show_full }}"
+  {% if cx_editor_token != blank %}data-cx-editor-token="{{ cx_editor_token | escape }}"{% endif %}
   hidden
 >
   {% render 'cx-i18n' %}

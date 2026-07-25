@@ -37,6 +37,21 @@
     assign cx_show_full = true
   endif
 
+  comment
+    v1.6 (SPEC-1.6 §3, RC-A): the theme editor renders the widget but has no
+    preview token, so every proxy call used to come back 403 `not_live` and the
+    merchant saw "Reviews could not be loaded". The app now mirrors the preview
+    token into the SHOP metafield `cellexia.preview_token`; we hand it to the JS
+    ONLY when request.design_mode is true, so the widget shows real data exactly
+    where the merchant judges placement. A normal storefront request must never
+    contain the token — hence the design_mode guard here AND the blank check on
+    the attribute below (an absent metafield emits no attribute at all).
+  endcomment
+  assign cx_editor_token = ''
+  if request.design_mode
+    assign cx_editor_token = shop.metafields.cellexia.preview_token.value | default: '' | append: '' | strip
+  endif
+
   assign cx_lang = request.locale.iso_code | split: '-' | first
 
   assign cx_default_locale = 'en'
@@ -149,6 +164,7 @@
   data-demo="false"
   data-cx-skin="{{ cx_skin }}"
   data-cx-live="{{ cx_show_full }}"
+  {% if cx_editor_token != blank %}data-cx-editor-token="{{ cx_editor_token | escape }}"{% endif %}
   {% unless cx_show_full %}hidden{% endunless %}
 >
   {%- if cx_show_full -%}

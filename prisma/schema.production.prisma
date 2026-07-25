@@ -137,4 +137,8 @@ model Setting {
   designTheme          String  @default("amazon") // amazon | cellexia
   isLive               Boolean @default(false) // storefront visibility gate; new installs start NOT live
   previewToken         String? // tokenized live-theme preview; lazily generated in getSettings
+  proxySubpath         String  @default("cellexia-reviews")
+  lastStorefrontHitAt  DateTime?
+  lastSyncError        String?
+  lastSyncAt           DateTime?
 }

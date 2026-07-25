@@ -9,6 +9,7 @@
 
 import crypto from "node:crypto";
 import { json } from "@remix-run/node";
+import prisma from "~/db.server";
 import { SHOP_LOCALES, type ShopLocale } from "~/types/cellexia";
 import { getSettings } from "~/services/settings.server";
 
@@ -110,6 +111,141 @@ export async function requireLiveOrPreview(
   const token =
     tokenFromBody ?? new URL(request.url).searchParams.get("preview_token");
   return settings.previewToken != null && token === settings.previewToken;
+}
+
+/* ------------------------------------------------------------------------- *
+ * Storefront-hit recorder (SPEC-1.6 §2)
+ * ------------------------------------------------------------------------- */
+
+/**
+ * Query param that marks a request as the app's OWN server-side probe
+ * (`probeProxySubpath` / the preview round-trip of the storefront health
+ * check). Such requests travel through Shopify's app proxy exactly like real
+ * storefront traffic, so they would otherwise light up the
+ * "is the theme extension enabled?" signal without any theme being involved —
+ * `recordStorefrontHit` therefore ignores them.
+ *
+ * Suppressing the signal is the only effect a forged value can have, so the
+ * marker needs no authentication.
+ */
+export const HEALTH_PROBE_PARAM = "cx_health_probe";
+
+/** At most one `Setting.lastStorefrontHitAt` write per shop per 60 s. */
+const STOREFRONT_HIT_THROTTLE_MS = 60_000;
+
+/** Hard cap on tracked shops before stale throttle entries are pruned. */
+const STOREFRONT_HIT_MAX_SHOPS = 5000;
+
+/**
+ * Backoff after a failed write. The throttle entry is rewound to this many
+ * milliseconds before expiry instead of being deleted, so a database outage
+ * retries every ~5 s per shop rather than on EVERY storefront request.
+ */
+const STOREFRONT_HIT_RETRY_MS = 5_000;
+
+// Stored on globalThis so dev-server module reloads keep one throttle map
+// (same pattern as ratelimit.server.ts / db.server.ts).
+const globalHitStore = globalThis as typeof globalThis & {
+  __cellexiaStorefrontHitAt?: Map<string, number>;
+  __cellexiaStorefrontHitFailed?: Set<string>;
+};
+
+function storefrontHitStore(): Map<string, number> {
+  let store = globalHitStore.__cellexiaStorefrontHitAt;
+  if (!store) {
+    store = new Map();
+    globalHitStore.__cellexiaStorefrontHitAt = store;
+  }
+  return store;
+}
+
+/**
+ * Shops whose most recent hit-write failed. Used purely to log once per
+ * outage instead of once per storefront request.
+ */
+function storefrontHitFailures(): Set<string> {
+  let failures = globalHitStore.__cellexiaStorefrontHitFailed;
+  if (!failures) {
+    failures = new Set();
+    globalHitStore.__cellexiaStorefrontHitFailed = failures;
+  }
+  return failures;
+}
+
+/**
+ * Record that a verified storefront request reached the app (SPEC-1.6 §2).
+ *
+ * Called by every proxy route right after a successful `verifyProxy` — the
+ * shop is therefore HMAC-proven, never taken from a body. The write is
+ * throttled to at most once per 60 s per shop (in-memory, per process) and
+ * fire-and-forget: the caller never awaits it and a database hiccup can never
+ * affect the storefront response. A failed write rewinds the throttle to ~5 s
+ * instead of clearing it, so an unreachable database causes a slow retry loop
+ * rather than one write attempt (and one log line) per storefront request.
+ *
+ * This is the only signal behind the health check's "Theme extension active"
+ * row, which is why the app's own probes (marked with `HEALTH_PROBE_PARAM`)
+ * are excluded.
+ *
+ * MULTI-INSTANCE CAVEAT: the throttle is per Node.js process, so N instances
+ * may perform up to N writes per minute per shop. The value is a coarse
+ * "last seen" timestamp, so that is harmless.
+ */
+export function recordStorefrontHit(shop: string, request: Request): void {
+  if (!shop) return;
+
+  try {
+    if (new URL(request.url).searchParams.get(HEALTH_PROBE_PARAM) !== null) return;
+  } catch {
+    // Unparsable URL (never happens for a routed request) — record anyway.
+  }
+
+  const store = storefrontHitStore();
+  const now = Date.now();
+  const last = store.get(shop);
+  if (last !== undefined && now - last < STOREFRONT_HIT_THROTTLE_MS) return;
+  store.set(shop, now);
+
+  if (store.size > STOREFRONT_HIT_MAX_SHOPS) {
+    const failures = storefrontHitFailures();
+    for (const [key, at] of store) {
+      if (now - at >= STOREFRONT_HIT_THROTTLE_MS) {
+        store.delete(key);
+        failures.delete(key);
+      }
+    }
+  }
+
+  // Upsert (not update): a shop whose Setting row does not exist yet must not
+  // produce a P2025 error storm. The row's defaults are the safe ones
+  // (isLive = false), and `shop` came from a verified proxy signature.
+  void prisma.setting
+    .upsert({
+      where: { shop },
+      update: { lastStorefrontHitAt: new Date(now) },
+      create: { shop, lastStorefrontHitAt: new Date(now) },
+    })
+    .then(
+      () => {
+        storefrontHitFailures().delete(shop);
+      },
+      (error: unknown) => {
+        // Back off, do NOT reset: deleting the entry would make every single
+        // storefront request re-attempt the write while the database is down —
+        // turning a transient hiccup into a sustained write storm. Rewinding
+        // the timestamp retries in ~5 s instead.
+        if (store.get(shop) === now) {
+          store.set(shop, now - STOREFRONT_HIT_THROTTLE_MS + STOREFRONT_HIT_RETRY_MS);
+        }
+        // Log once per outage (i.e. only when the previous attempt succeeded),
+        // never once per storefront request.
+        const failures = storefrontHitFailures();
+        if (!failures.has(shop)) {
+          failures.add(shop);
+          console.error("[cellexia] recordStorefrontHit failed", error);
+        }
+      },
+    );
 }
 
 /**

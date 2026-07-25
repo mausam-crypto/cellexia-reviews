@@ -133,6 +133,17 @@
       "note": "このプレビューはあなたにのみ表示されています。ウィジェットは訪問者には公開されていません。",
       "exit": "プレビューを終了"
     },
+    "notice": {
+      "expired_title": "プレビューセッションの有効期限が切れました",
+      "expired_body": "プレビューを続けるには、アプリのDashboardから「Preview on your store」を再度開いてください。",
+      "unconfigured_title": "ストアフロント接続が設定されていません",
+      "unconfigured_body": "Shopify管理画面でアプリを開き、Dashboard → 「Test storefront connection」に進んでください。",
+      "error_title": "レビューを一時的に表示できません",
+      "error_body": "このメッセージはプレビュー中のあなたにのみ表示されます。",
+      "empty_merchant": "レビューはまだありません。アプリでレビューをインポートするか、テストデータを生成してください。",
+      "empty_pending": "公開済みのレビューはまだありません。アプリで [[count]] 件が承認待ちです。",
+      "retry": "再試行"
+    },
     "form": {
       "title": "レビューを書く",
       "rating_label": "総合評価",

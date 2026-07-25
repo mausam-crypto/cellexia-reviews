@@ -4,6 +4,101 @@ All notable changes to Cellexia Reviews are documented here. The version number 
 `package.json` and stamped into the release ZIP built by `npm run package`
 (`dist/cellexia-reviews-v<version>.zip`).
 
+## 1.6.0 — 2026-07-24
+
+The "why is nothing showing?" release. On a real store, three separate problems could combine
+into one confusing picture: the theme editor showed **"Reviews could not be loaded. Please try
+again."**, the product page showed no stars under the title, and product cards had no star
+badges — with no way to tell from the admin what was actually wrong. All three are fixed below,
+and the app can now prove its storefront connection works **before** you go live.
+
+### Fixed
+
+- **"Why do I see nothing when my reviews are published?"** Two blind spots closed. If reviews
+  exist for a product but none are approved yet, the widget now tells you so while you preview —
+  "No published reviews yet — 12 awaiting approval in the app" — instead of looking empty, and
+  the Dashboard reports total / published / pending counts with the fix (approve them, or turn
+  on auto-publish). And if the app ever fails to push your ratings into Shopify (an expired
+  permission, a rate limit, an API error), that failure used to disappear into a server log
+  nobody reads: the exact error is now recorded, shown in the **Storefront connection** card with
+  what to do about it, and re-runnable with **Re-sync all products**, which reports the real
+  result per product instead of a generic success toast.
+- **"Reviews could not be loaded. Please try again." in the theme editor.** The theme editor
+  deliberately renders the widget even when your store is not live, so you can place it — but
+  the widget shown there had no way to identify itself to the app. Every request for review data
+  was therefore refused, and the widget fell back to that generic error message. Nothing was
+  broken on your storefront; the editor simply could not ask for the data. The app now hands the
+  theme editor the same private key that **Preview on your store** uses, so the editor shows your
+  real reviews, styled exactly as shoppers will see them. An expired preview key — or one you
+  invalidated with **Settings → Data → Regenerate preview link** — used to produce the very same
+  error; it now says **"Preview session expired"** and tells you to reopen the preview from the
+  Dashboard.
+- **Shoppers never see an error box.** If anything at all goes wrong on a live storefront — the
+  app unreachable, a network hiccup, a mis-addressed request — the widget now removes itself
+  quietly instead of printing a failure message on your product page. Explanatory messages exist
+  only for you: they appear in the theme editor and in preview mode, they say on themselves that
+  only you can see them, and they are never part of a normal shopper's page — nor is the private
+  preview key, which is only ever added to the page inside the theme editor. The one thing a
+  shopper can still see is deliberately gentle: if the connection drops *after* reviews have
+  already loaded, the reviews they were reading stay on screen and a small "Try again" link
+  appears under the list. Nothing is ever taken away mid-read.
+- **The storefront address is detected automatically.** The widget reaches the app through a
+  Shopify "app proxy" address (`/apps/cellexia-reviews/...` on your own domain). That address
+  used to be written down in two places that had to agree by hand; when they disagreed, every
+  request quietly 404'd and the widget just never appeared. The app now discovers the address
+  itself, stores it for the theme to read, and the widget re-discovers it in the browser if a
+  request ever comes back wrong — retrying once, invisibly. Installations on a different proxy
+  path work with no extra steps.
+- **A misconfigured setup can no longer hide.** Every one of the failures above used to be
+  invisible from the admin. They are now all covered by the connection test below.
+
+### Added
+
+- **Storefront connection test** — a new **Storefront connection** card at the top of the
+  Dashboard, with a **Run test again** button. It checks the full path between your storefront
+  and the app and shows a plain-language fix next to anything that isn't right:
+  1. **App proxy reachable** — the storefront can actually reach the app (and which address it
+     is using).
+  2. **Preview token round-trip** — your private preview link really works end to end.
+  3. **Theme extension active** — whether the widget has been loaded on your storefront
+     recently; warns if it never has (usually: the **Cellexia Reviews** app embed is still off in
+     Theme settings → App embeds).
+  4. **Review data** — how many published reviews exist. Warns at zero, because a store with no
+     reviews correctly shows no stars anywhere.
+  5. **Metafield sync** — the ratings the theme reads match the ratings in the app, with a
+     **Re-sync all products** button if they've drifted. This is what draws the stars under the
+     product title, the card badges and the Google star data.
+  6. **Database persistence** — catches the hosting setup where reviews would be wiped on the
+     next deploy.
+  7. **Live state** — live or not live, with the link to go live.
+  When everything passes the banner reads **"Storefront connection verified"**. The test runs by
+  itself when you open the Dashboard if it has never run or the last run is more than a day old,
+  and the **Go live** confirmation now shows the current summary — asking you to confirm a second
+  time if a check is failing.
+- **Straight answers while previewing**: instead of a generic error, preview mode and the theme
+  editor now show what to do — "Preview session expired", "Storefront connection not configured"
+  (with the address that was tried), or a **Try again** button after a network problem. An empty
+  widget adds "No reviews yet — import your reviews or generate test data in the app." Shoppers
+  see none of these.
+- **For your developer**: `npm run selftest -- --shop=<store>.myshopify.com` runs the same proxy
+  probe from a terminal and prints PASS/FAIL per candidate address, so a deployment can be
+  verified before handover (`docs/INSTALL.md` §10). A new, always-available
+  `/apps/<subpath>/api/ping` endpoint answers with the app's name and version — it exposes no
+  review data and no personal data.
+
+### Notes
+
+- **No stars yet after installing?** That is almost certainly not a fault: this app shows only
+  the reviews it holds itself. Reviews still living in a previous review app are not visible
+  here until you bring them over — **Import / Export** for a CSV, or **QA data** for realistic
+  test reviews while you evaluate the layout. The connection test spells this out under
+  **Review data**.
+- One database migration (two new fields) is applied automatically on deploy. No new app
+  permissions, no new dependencies, and the storefront design is unchanged apart from the small
+  notice style that only you can see.
+- Documentation updated: `docs/INSTALL.md` (§10 verification, §11 troubleshooting),
+  `docs/CONFIGURATION.md` (§1, "Storefront connection test"), `docs/FAQ.md`, `docs/HANDOVER.md`.
+
 ## 1.5.1 — 2026-07-24
 
 Polish release for the app embed, driven by preview testing on the live Cellexia theme

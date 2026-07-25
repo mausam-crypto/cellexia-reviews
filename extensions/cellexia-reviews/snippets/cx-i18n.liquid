@@ -131,6 +131,28 @@
   "preview.badge": {{ 'cellexia.preview.badge' | t | json }},
   "preview.note": {{ 'cellexia.preview.note' | t | json }},
   "preview.exit": {{ 'cellexia.preview.exit' | t | json }},
+  {%- comment -%}
+    v1.6 (SPEC-1.6 §4/§6) merchant notices. These MUST be emitted here: the JS
+    only carries an English NOTICE_FALLBACK, so without these keys every notice
+    is untranslated and `notice.error_title` falls back to widget.error_loading —
+    i.e. the merchant sees the very "Reviews could not be loaded." box this
+    release exists to remove. Position mirrors the locale files (after preview).
+
+    v1.6.1 (SPEC-1.6.1 §B) adds notice.empty_pending. It is the only notice with
+    an interpolation, so it takes the `[[count]]` sentinel like every other
+    counted string above; the JS `t`/`tn` helpers substitute the real, locale-
+    formatted number. Emitting it is not optional either: without it the widget
+    would fall back to the English NOTICE_FALLBACK copy.
+  {%- endcomment %}
+  "notice.expired_title": {{ 'cellexia.notice.expired_title' | t | json }},
+  "notice.expired_body": {{ 'cellexia.notice.expired_body' | t | json }},
+  "notice.unconfigured_title": {{ 'cellexia.notice.unconfigured_title' | t | json }},
+  "notice.unconfigured_body": {{ 'cellexia.notice.unconfigured_body' | t | json }},
+  "notice.error_title": {{ 'cellexia.notice.error_title' | t | json }},
+  "notice.error_body": {{ 'cellexia.notice.error_body' | t | json }},
+  "notice.empty_merchant": {{ 'cellexia.notice.empty_merchant' | t | json }},
+  "notice.empty_pending": {{ 'cellexia.notice.empty_pending' | t: count: '[[count]]' | json }},
+  "notice.retry": {{ 'cellexia.notice.retry' | t | json }},
   "form.title": {{ 'cellexia.form.title' | t | json }},
   "form.rating_label": {{ 'cellexia.form.rating_label' | t | json }},
   "form.title_label": {{ 'cellexia.form.title_label' | t | json }},

@@ -1,6 +1,6 @@
 {
   "name": "cellexia-reviews",
-  "version": "1.5.1",
+  "version": "1.6.0",
   "private": true,
   "description": "Amazon-grade product reviews for the Cellexia storefront \u2014 Shopify embedded app with theme app extension, AI summaries and 17 storefront languages.",
   "license": "UNLICENSED",
@@ -25,6 +25,7 @@
     "docker-start": "npm run setup:production && npm run start",
     "seed:demo": "node prisma/seed.js",
     "check:locales": "node scripts/check-locales.mjs",
+    "selftest": "node scripts/selftest.mjs",
     "package": "node scripts/package.mjs",
     "typecheck": "tsc --noEmit"
   },

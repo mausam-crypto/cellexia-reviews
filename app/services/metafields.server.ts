@@ -12,6 +12,14 @@
  * userErrors from metafieldDefinitionCreate are ignored. `syncProductMetafields`
  * writes values via metafieldsSet; failures are logged, never thrown, so a
  * metafield hiccup can never break a moderation action.
+ *
+ * v1.6.1 (SPEC-1.6.1 §A): "logged, never thrown" used to mean "invisible" —
+ * the merchant had no way to learn that Shopify had been rejecting every write
+ * (missing scope, throttling, a definition/type conflict) while product pages
+ * quietly served stale or absent stars. `syncProductMetafields` therefore also
+ * REPORTS: it returns `{ ok, error }` with a compact, merchant-readable reason,
+ * which `recomputeProduct` persists to `Setting.lastSyncError` and the admin's
+ * storefront health check shows verbatim. It still never throws.
  */
 import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
 import type { ProductStatsDTO } from "~/types/cellexia";
@@ -26,6 +34,28 @@ import type { ProductStatsDTO } from "~/types/cellexia";
 type AdminClient = Pick<AdminApiContext, "graphql">;
 
 const NAMESPACE = "cellexia";
+
+/**
+ * Fallback app-proxy subpath (SPEC-1.6 §2). Mirrors the `Setting.proxySubpath`
+ * schema default and `[app_proxy] subpath` in shopify.app.example.toml; the
+ * detected value normally arrives from the caller. Kept local so this module
+ * stays a leaf (proxyhealth.server.ts imports it, never the other way round).
+ */
+const FALLBACK_PROXY_SUBPATH = "cellexia-reviews";
+
+/** Shopify app-proxy subpath shape — `/apps/<subpath>/api`. */
+const PROXY_SUBPATH_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
+
+/**
+ * Normalize a proxy subpath for the `cellexia.proxy_path` metafield. Anything
+ * that is not a usable subpath (blank, whitespace, slashes, wrong shape) falls
+ * back to the shipped default, which is also what cx-proxy.liquid assumes when
+ * the metafield is missing — so Liquid and the server can never disagree.
+ */
+export function sanitizeProxySubpath(value: string | null | undefined): string {
+  const candidate = (value ?? "").trim().toLowerCase();
+  return PROXY_SUBPATH_RE.test(candidate) ? candidate : FALLBACK_PROXY_SUBPATH;
+}
 
 /** Structural review shape accepted for the top_reviews metafield (prisma Review rows satisfy it). */
 export interface TopReviewSource {
@@ -42,6 +72,27 @@ export interface SummaryMetafieldSource {
   text: string;
   topics: Array<{ key: string; label: string; count: number; sentiment: string }>;
 }
+
+/**
+ * Outcome of one product metafield write (SPEC-1.6.1 §A).
+ *
+ * `error` is a single line, already capped at `MAX_SYNC_ERROR_CHARS`, safe to
+ * persist and to show a merchant verbatim: it is Shopify's own wording, and
+ * the values written here (ratings, counts, review excerpts) carry no
+ * credentials, so an echoed rejection cannot leak a secret.
+ */
+export interface MetafieldSyncResult {
+  /** True when Shopify accepted every metafield in the write. */
+  ok: boolean;
+  /** Compact reason for the failure, or null when `ok` is true. */
+  error: string | null;
+}
+
+/** Longest sync error persisted and surfaced to the merchant (SPEC-1.6.1 §A). */
+const MAX_SYNC_ERROR_CHARS = 500;
+
+/** Last-resort wording when a failure carries no usable message at all. */
+const UNKNOWN_SYNC_ERROR = "Shopify rejected the metafield write without giving a reason.";
 
 const DEFINITIONS: ReadonlyArray<{
   name: string;
@@ -163,7 +214,13 @@ export async function ensureMetafieldDefinitions(admin: AdminClient): Promise<vo
 /**
  * Writes the five product metafields from the current aggregates. `summary`
  * may be null (no AI summary yet / cleared) — it is written as JSON `null` so
- * stale SSR content disappears. Failures are logged, never thrown.
+ * stale SSR content disappears.
+ *
+ * Never throws: every failure mode (GraphQL `userErrors`, top-level GraphQL
+ * errors such as throttling or a missing scope, a non-JSON/non-200 answer, a
+ * network error) is logged as before AND returned as
+ * `{ ok: false, error: <one compact line> }`, so the caller can persist it and
+ * the admin can show the merchant what is actually wrong (SPEC-1.6.1 §A).
  */
 export async function syncProductMetafields(
   admin: AdminClient,
@@ -171,7 +228,7 @@ export async function syncProductMetafields(
   stats: ProductStatsDTO,
   topReviews: TopReviewSource[],
   summary: SummaryMetafieldSource | null,
-): Promise<void> {
+): Promise<MetafieldSyncResult> {
   const ownerId = toProductGid(productId);
 
   const topReviewsValue = topReviews.slice(0, 3).map((review) => ({
@@ -235,23 +292,37 @@ export async function syncProductMetafields(
 
   try {
     const response = await admin.graphql(METAFIELDS_SET, { variables: { metafields } });
-    const json = (await response.json()) as {
-      data?: {
-        metafieldsSet?: {
-          userErrors?: Array<{ field?: unknown; message?: string; code?: string }>;
-        };
-      };
-      errors?: unknown;
-    };
-    const userErrors = json.data?.metafieldsSet?.userErrors ?? [];
+
+    // A rejected write can also come back as a non-JSON body (an HTML error
+    // page from an edge proxy, an empty 5xx). Parsing must not turn that into
+    // a thrown error that hides the HTTP status.
+    let json: MetafieldsSetResponse | null = null;
+    try {
+      json = (await response.json()) as MetafieldsSetResponse;
+    } catch {
+      json = null;
+    }
+
+    const userErrors = json?.data?.metafieldsSet?.userErrors ?? [];
     if (userErrors.length > 0) {
       console.error(`[cellexia] metafieldsSet(${productId}) userErrors:`, userErrors);
     }
-    if (json.errors) {
+    if (json?.errors) {
       console.error(`[cellexia] metafieldsSet(${productId}) errors:`, json.errors);
     }
+
+    const failure = firstMetafieldFailure(json, response.status, response.ok);
+    if (failure) {
+      if (!userErrors.length && !json?.errors) {
+        console.error(`[cellexia] metafieldsSet(${productId}) failed: ${failure}`);
+      }
+      return { ok: false, error: compactSyncError(failure) };
+    }
+
+    return { ok: true, error: null };
   } catch (error) {
     console.error(`[cellexia] metafieldsSet(${productId}) failed`, error);
+    return { ok: false, error: compactSyncError(thrownErrorMessage(error)) };
   }
 }
 
@@ -265,6 +336,16 @@ export async function syncProductMetafields(
  * an absent metafield as the default-on behaviour (SPEC-1.2: an absent
  * `cellexia.live` is treated as live, which keeps v1.0/v1.1 upgrades neutral;
  * new installs get it written `false` by afterAuth).
+ *
+ * v1.6 (SPEC-1.6 §2/§3) adds two more:
+ *   proxy_path     the app-proxy subpath cx-proxy.liquid builds the storefront
+ *                  API base from — one source of truth for the path.
+ *   preview_token  the shop's current preview token, emitted by the extension
+ *                  ONLY when `request.design_mode` is true so the merchant
+ *                  sees real data inside the theme editor. A blank/missing
+ *                  token is skipped rather than written empty (Shopify rejects
+ *                  blank single_line_text_field values), which leaves the
+ *                  previous value in place until a real token exists.
  */
 export async function syncShopSettingsMetafields(
   admin: AdminClient,
@@ -274,19 +355,13 @@ export async function syncShopSettingsMetafields(
     emitJsonLd: boolean;
     designTheme: string;
     isLive: boolean;
+    previewToken: string | null;
+    proxySubpath?: string | null;
   },
 ): Promise<void> {
   try {
-    const shopResponse = await admin.graphql(`#graphql
-      query CellexiaShopId { shop { id } }`);
-    const shopJson = (await shopResponse.json()) as {
-      data?: { shop?: { id?: string } };
-    };
-    const ownerId = shopJson.data?.shop?.id;
-    if (!ownerId) {
-      console.error("[cellexia] syncShopSettingsMetafields: no shop id");
-      return;
-    }
+    const ownerId = await fetchShopId(admin, "syncShopSettingsMetafields");
+    if (!ownerId) return;
 
     const metafields = [
       {
@@ -324,32 +399,235 @@ export async function syncShopSettingsMetafields(
         type: "boolean",
         value: settings.isLive ? "true" : "false",
       },
+      {
+        ownerId,
+        namespace: NAMESPACE,
+        key: "proxy_path",
+        type: "single_line_text_field",
+        value: sanitizeProxySubpath(settings.proxySubpath),
+      },
     ];
 
-    const response = await admin.graphql(METAFIELDS_SET, { variables: { metafields } });
-    const json = (await response.json()) as {
-      data?: {
-        metafieldsSet?: {
-          userErrors?: Array<{ field?: unknown; message?: string; code?: string }>;
-        };
-      };
-      errors?: unknown;
-    };
-    const userErrors = json.data?.metafieldsSet?.userErrors ?? [];
-    if (userErrors.length > 0) {
-      console.error("[cellexia] syncShopSettingsMetafields userErrors:", userErrors);
+    const previewToken = (settings.previewToken ?? "").trim();
+    if (previewToken) {
+      metafields.push({
+        ownerId,
+        namespace: NAMESPACE,
+        key: "preview_token",
+        type: "single_line_text_field",
+        value: previewToken,
+      });
     }
-    if (json.errors) {
-      console.error("[cellexia] syncShopSettingsMetafields errors:", json.errors);
-    }
+
+    await writeShopMetafields(admin, "syncShopSettingsMetafields", metafields);
   } catch (error) {
     console.error("[cellexia] syncShopSettingsMetafields failed", error);
+  }
+}
+
+/**
+ * Writes only the `cellexia.proxy_path` SHOP metafield (SPEC-1.6 §2).
+ *
+ * Called by `probeProxySubpath` the moment auto-discovery confirms which
+ * subpath this install actually serves, so the theme extension follows the
+ * detected path without waiting for a settings save. Failures are logged,
+ * never thrown — a metafield hiccup must not fail an install or a health
+ * check, and cx-proxy.liquid falls back to the shipped default.
+ */
+export async function setShopProxyPathMetafield(
+  admin: AdminClient,
+  subpath: string,
+): Promise<void> {
+  try {
+    const ownerId = await fetchShopId(admin, "setShopProxyPathMetafield");
+    if (!ownerId) return;
+
+    await writeShopMetafields(admin, "setShopProxyPathMetafield", [
+      {
+        ownerId,
+        namespace: NAMESPACE,
+        key: "proxy_path",
+        type: "single_line_text_field",
+        value: sanitizeProxySubpath(subpath),
+      },
+    ]);
+  } catch (error) {
+    console.error("[cellexia] setShopProxyPathMetafield failed", error);
   }
 }
 
 /* ------------------------------------------------------------------------- *
  * Internals
  * ------------------------------------------------------------------------- */
+
+interface ShopMetafieldInput {
+  ownerId: string;
+  namespace: string;
+  key: string;
+  type: string;
+  value: string;
+}
+
+/** GraphQL userError as returned by metafieldsSet. `field` is a path array. */
+interface MetafieldUserError {
+  field?: unknown;
+  message?: string;
+  code?: string;
+}
+
+/** Parsed metafieldsSet response — both error channels are optional. */
+interface MetafieldsSetResponse {
+  data?: {
+    metafieldsSet?: {
+      userErrors?: MetafieldUserError[];
+    };
+  };
+  errors?: unknown;
+}
+
+/* --- Sync failure reporting (SPEC-1.6.1 §A) -------------------------------- */
+
+/**
+ * The one reason to report for a metafieldsSet answer, or null when the write
+ * succeeded. Priority follows how specific each channel is:
+ *
+ *   1. the first `userErrors` entry — Shopify explaining which metafield it
+ *      refused and why (`field: message (code)`), by far the most actionable;
+ *   2. a top-level GraphQL error — throttling, a missing scope, a malformed
+ *      query: it applies to the whole request, so any one of them is the story;
+ *   3. an unreadable body or a non-2xx status — nothing structured to quote,
+ *      so report what is known: the HTTP status.
+ */
+function firstMetafieldFailure(
+  json: MetafieldsSetResponse | null,
+  status: number,
+  ok: boolean,
+): string | null {
+  const userError = json?.data?.metafieldsSet?.userErrors?.[0];
+  if (userError) return formatUserError(userError);
+
+  const graphqlError = formatGraphqlError(json?.errors);
+  if (graphqlError) return graphqlError;
+
+  if (json === null) {
+    return `Shopify returned HTTP ${status} and a response the app could not read as JSON.`;
+  }
+  if (!ok) return `Shopify returned HTTP ${status}.`;
+
+  return null;
+}
+
+/** `field: message (code)` — each part omitted when Shopify did not send it. */
+function formatUserError(error: MetafieldUserError): string {
+  const field = formatUserErrorField(error.field);
+  const message = (error.message ?? "").trim();
+  const code = (error.code ?? "").trim();
+  const head = field && message ? `${field}: ${message}` : field || message;
+  if (!head) return code ? `(${code})` : UNKNOWN_SYNC_ERROR;
+  return code ? `${head} (${code})` : head;
+}
+
+/**
+ * GraphQL `field` is a path array (`["metafields", "0", "value"]`); older
+ * shapes send a plain string. Both become a dotted path.
+ */
+function formatUserErrorField(field: unknown): string {
+  if (typeof field === "string") return field.trim();
+  if (!Array.isArray(field)) return "";
+  return field
+    .filter((part): part is string => typeof part === "string" && part.trim() !== "")
+    .map((part) => part.trim())
+    .join(".");
+}
+
+/**
+ * The first top-level GraphQL error as `message (code)`. Tolerates every shape
+ * the client can hand back: the spec's array of `{ message, extensions.code }`,
+ * a single object, or a bare string.
+ */
+function formatGraphqlError(errors: unknown): string | null {
+  const first = Array.isArray(errors) ? errors[0] : errors;
+  if (first === null || first === undefined) return null;
+
+  if (typeof first === "string") return first.trim() || null;
+
+  if (typeof first === "object") {
+    const record = first as { message?: unknown; extensions?: { code?: unknown } };
+    const message = typeof record.message === "string" ? record.message.trim() : "";
+    const code =
+      typeof record.extensions?.code === "string" ? record.extensions.code.trim() : "";
+    if (message) return code ? `${message} (${code})` : message;
+    if (code) return `(${code})`;
+  }
+
+  return null;
+}
+
+/**
+ * Message for a thrown failure. `GraphqlQueryError` from the Shopify client
+ * carries the useful part in `body.errors`, not in `message` ("GraphQL query
+ * returned errors"), so unwrap it when it is there.
+ */
+function thrownErrorMessage(error: unknown): string {
+  if (typeof error === "string") return error.trim() || UNKNOWN_SYNC_ERROR;
+
+  if (typeof error === "object" && error !== null) {
+    const record = error as { message?: unknown; body?: { errors?: unknown } };
+    const message = typeof record.message === "string" ? record.message.trim() : "";
+    const nested = formatGraphqlError(record.body?.errors);
+    if (message && nested && !message.includes(nested)) return `${message}: ${nested}`;
+    if (message) return message;
+    if (nested) return nested;
+  }
+
+  const text = String(error ?? "").trim();
+  return text && text !== "[object Object]" ? text : UNKNOWN_SYNC_ERROR;
+}
+
+/**
+ * One line, at most `MAX_SYNC_ERROR_CHARS` characters (the ellipsis counts), so
+ * the value is safe for a database column, a JSON response and a Polaris table
+ * cell no matter how verbose Shopify was.
+ */
+function compactSyncError(message: string): string {
+  const cleaned = message.replace(/\s+/g, " ").trim();
+  if (!cleaned) return UNKNOWN_SYNC_ERROR;
+  return cleaned.length > MAX_SYNC_ERROR_CHARS
+    ? `${cleaned.slice(0, MAX_SYNC_ERROR_CHARS - 1)}…`
+    : cleaned;
+}
+
+/** The SHOP GID, or null when the query fails (logged, never thrown). */
+async function fetchShopId(admin: AdminClient, context: string): Promise<string | null> {
+  const response = await admin.graphql(`#graphql
+      query CellexiaShopId { shop { id } }`);
+  const json = (await response.json()) as {
+    data?: { shop?: { id?: string } };
+  };
+  const ownerId = json.data?.shop?.id;
+  if (!ownerId) {
+    console.error(`[cellexia] ${context}: no shop id`);
+    return null;
+  }
+  return ownerId;
+}
+
+/** metafieldsSet for SHOP-owned metafields; userErrors/errors are logged. */
+async function writeShopMetafields(
+  admin: AdminClient,
+  context: string,
+  metafields: ShopMetafieldInput[],
+): Promise<void> {
+  const response = await admin.graphql(METAFIELDS_SET, { variables: { metafields } });
+  const json = (await response.json()) as MetafieldsSetResponse;
+  const userErrors = json.data?.metafieldsSet?.userErrors ?? [];
+  if (userErrors.length > 0) {
+    console.error(`[cellexia] ${context} userErrors:`, userErrors);
+  }
+  if (json.errors) {
+    console.error(`[cellexia] ${context} errors:`, json.errors);
+  }
+}
 
 function isAlreadyExistsError(error: { message?: string; code?: string }): boolean {
   if (error.code && ["TAKEN", "DUPLICATE_KEY"].includes(error.code)) return true;

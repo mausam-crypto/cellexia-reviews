@@ -137,6 +137,17 @@
       "note": "Vain sinä näet tämän — widget ei ole näkyvissä kävijöille.",
       "exit": "Poistu esikatselusta"
     },
+    "notice": {
+      "expired_title": "Esikatseluistunto on vanhentunut",
+      "expired_body": "Avaa “Preview on your store” uudelleen sovelluksen Dashboard-näkymästä jatkaaksesi esikatselua.",
+      "unconfigured_title": "Verkkokauppayhteyttä ei ole määritetty",
+      "unconfigured_body": "Avaa sovellus Shopify-hallinnassa → Dashboard → “Test storefront connection”.",
+      "error_title": "Arvostelut eivät ole tilapäisesti käytettävissä",
+      "error_body": "Tämä viesti näkyy vain sinulle esikatselun aikana.",
+      "empty_merchant": "Ei vielä arvosteluja — tuo arvostelusi tai luo testidataa sovelluksessa.",
+      "empty_pending": "Ei vielä julkaistuja arvosteluja — [[count]] odottaa hyväksyntää sovelluksessa.",
+      "retry": "Yritä uudelleen"
+    },
     "form": {
       "title": "Kirjoita arvostelu",
       "rating_label": "Kokonaisarvio",

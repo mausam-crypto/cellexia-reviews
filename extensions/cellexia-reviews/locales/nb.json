@@ -137,6 +137,17 @@
       "note": "Bare du kan se dette – widgeten er ikke synlig for besøkende.",
       "exit": "Avslutt forhåndsvisning"
     },
+    "notice": {
+      "expired_title": "Forhåndsvisningsøkten er utløpt",
+      "expired_body": "Åpne «Preview on your store» på nytt fra appens Dashboard for å fortsette forhåndsvisningen.",
+      "unconfigured_title": "Tilkoblingen til nettbutikken er ikke konfigurert",
+      "unconfigured_body": "Åpne appen i Shopify-administrasjonen → Dashboard → «Test storefront connection».",
+      "error_title": "Anmeldelser er midlertidig utilgjengelige",
+      "error_body": "Denne meldingen er bare synlig for deg under forhåndsvisning.",
+      "empty_merchant": "Ingen anmeldelser ennå – importer anmeldelsene dine eller generer testdata i appen.",
+      "empty_pending": "Ingen publiserte anmeldelser ennå – [[count]] venter på godkjenning i appen.",
+      "retry": "Prøv igjen"
+    },
     "form": {
       "title": "Skriv en anmeldelse",
       "rating_label": "Samlet vurdering",

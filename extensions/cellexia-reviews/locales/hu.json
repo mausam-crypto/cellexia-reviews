@@ -137,6 +137,17 @@
       "note": "Ezt csak Ön látja – a widget nem látható a látogatók számára.",
       "exit": "Kilépés az előnézetből"
     },
+    "notice": {
+      "expired_title": "Az előnézeti munkamenet lejárt",
+      "expired_body": "Az előnézet folytatásához nyissa meg újra a(z) “Preview on your store” gombot az alkalmazás Dashboard felületén.",
+      "unconfigured_title": "A webáruház-kapcsolat nincs beállítva",
+      "unconfigured_body": "Nyissa meg az alkalmazást a Shopify adminfelületén → Dashboard → “Test storefront connection”.",
+      "error_title": "Az értékelések átmenetileg nem érhetők el",
+      "error_body": "Ezt az üzenetet csak Ön látja az előnézet ideje alatt.",
+      "empty_merchant": "Még nincsenek értékelések – importálja az értékeléseit, vagy hozzon létre tesztadatokat az alkalmazásban.",
+      "empty_pending": "Még nincsenek közzétett értékelések – [[count]] jóváhagyásra vár az alkalmazásban.",
+      "retry": "Újrapróbálkozás"
+    },
     "form": {
       "title": "Értékelés írása",
       "rating_label": "Összesített értékelés",

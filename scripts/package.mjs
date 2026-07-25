@@ -40,6 +40,10 @@ const EXCLUDED_DIR_NAMES = new Set([
   ".idea",
   ".vscode",
   ".claude",
+  // SPEC-1.6 §7 verification harness (demo/_verify): a CDP-driven test rig and
+  // its raw results.json. Repo-only, like SPEC*.md below — never handed to the
+  // installing developer.
+  "_verify",
 ]);
 
 /** @param {string} name */

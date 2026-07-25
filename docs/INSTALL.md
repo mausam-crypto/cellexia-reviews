@@ -268,10 +268,14 @@ forwards it to `https://YOUR-APP-URL/proxy/api/reviews`. If the proxy is misconf
 data, submission, votes and translation all fail (on a live store the widget's SSR part still
 renders — it comes from metafields).
 
-> **Keep the subpath in sync with the theme extension.** The storefront-side path is
-> single-sourced in `extensions/cellexia-reviews/snippets/cx-proxy.liquid`
-> (`/apps/cellexia-reviews/api`). If you ever change `subpath` in `shopify.app.toml`, change
-> that snippet to match and run `npm run deploy` — they must always agree.
+> **The subpath is detected, not configured twice.** You may use any `subpath` you like (change
+> it if another app already owns `/apps/cellexia-reviews`). The theme extension no longer
+> hard-codes it: on install — and whenever you run **Test storefront connection** on the
+> Dashboard, or `npm run selftest` (§10) — the app probes `/apps/<candidate>/api/ping` on the
+> shop domain, detects the subpath Shopify actually serves, and stores it in the shop metafield
+> `cellexia.proxy_path`, which `extensions/cellexia-reviews/snippets/cx-proxy.liquid` reads
+> (falling back to `cellexia-reviews`). After changing `subpath`, run `npm run deploy` and then
+> the connection test once, so the new path is detected and written to the metafield.
 
 Push the configuration **and** the theme extension to Shopify:
 
@@ -292,8 +296,8 @@ Confirm the release when prompted. Re-run `npm run deploy` any time you change
 3. Approve the requested scopes: `read_orders`, `read_products`, `write_products`,
    `read_files`, `write_files`.
 4. The embedded admin opens. On first load the app registers its webhooks, creates the
-   `cellexia` product metafield definitions and syncs the store's settings to shop metafields
-   automatically.
+   `cellexia` product metafield definitions, syncs the store's settings (including the preview
+   token) to shop metafields, and detects its own app-proxy subpath — all automatically.
 
 A fresh install starts **Not live**: nothing whatsoever appears on the storefront — no widget,
 no data, no structured data — until you complete §9. You can therefore do §8 and all testing
@@ -378,7 +382,10 @@ placement is normal at first.
 
 Note that the **theme editor always shows the full widget**, whether or not the store is live —
 that is intentional, so you can place and configure the widget here before anyone can see it.
-On the real storefront, block and embed alike stay invisible until you go live (next section).
+Since 1.6.0 it shows the store's **real review data** there too (the app hands the editor the
+preview token through a shop metafield, in design mode only — a normal storefront page never
+carries it). On the real storefront, block and embed alike stay invisible until you go live
+(next section).
 
 ---
 
@@ -409,25 +416,54 @@ with **Settings → Data → Regenerate preview link**. Merchant-facing detail:
 
 ## 10. Final verification checklist
 
-Work through every line; each has an unambiguous pass signal.
+Work through every line; each has an unambiguous pass signal. **Start with the storefront
+connection test** — it covers, in one click, most of what the rest of this list checks by hand.
 
+- [ ] **Storefront connection test passes** *(do this first)*: Shopify admin → Apps →
+      Cellexia Reviews → Dashboard → the **Storefront connection** card at the top →
+      **Run test again**. Pass signal: the banner reads **"Storefront connection verified"**.
+      The card runs seven checks — *App proxy reachable*, *Preview token round-trip*,
+      *Theme extension active*, *Review data*, *Metafield sync*, *Database persistence*,
+      *Live state* — and prints the fix next to anything that isn't a pass. Two warnings are
+      normal at this point in the install and are not failures:
+      *Theme extension active* warns until the storefront has been loaded once with the app
+      embed on (§8), and *Review data* warns while the app holds no published reviews yet
+      (import them or generate QA data — the app never shows another app's reviews).
+      **Any red *fail* must be resolved before continuing**: a failing *App proxy reachable*
+      or *Preview token round-trip* means the storefront cannot talk to the backend at all.
+      Re-run the card after each fix.
+- [ ] **Same test from a terminal** (no admin access needed — handy before handover, or from
+      CI): run `npm run selftest -- --shop=<your-store>.myshopify.com`. It probes
+      `/apps/<candidate>/api/ping` for each candidate subpath and prints PASS/FAIL per candidate
+      plus the path it detected; exit code 0 means a working path was found. No dependencies, no
+      credentials, and it returns no store data beyond the app's name and version.
 - [ ] **Backend up**: `https://YOUR-APP-URL` responds (the root route shows a minimal login
       form / redirects — anything but a connection error).
 - [ ] **Embedded admin loads**: Shopify admin → Apps → Cellexia Reviews shows the Dashboard
       with the 4-step setup guide and the "Not live yet" banner.
-- [ ] **App proxy reachable**: open
+- [ ] **App proxy reachable by hand** (the manual version of check 1 above): open
+      `https://<shop-domain>/apps/cellexia-reviews/api/ping` in a browser — it answers
+      `{"ok":true,"app":"cellexia-reviews","version":"<app version>",…}` whether or not the
+      store is live, which proves Shopify forwards signed requests to your backend and that
+      `SHOPIFY_API_SECRET` matches. A Shopify 404 page means the proxy isn't deployed on that
+      subpath; a 401 means the secret is wrong. Then, with a product id (from the product's
+      admin URL):
       `https://<shop-domain>/apps/cellexia-reviews/api/reviews?product_id=<numeric-product-id>`
-      in a browser — while the store is still not live, the pass signal is a small JSON error
-      (`{"ok":false,"errors":{"_":"not_live"}}`, HTTP 403): it proves Shopify forwards signed
-      requests to your backend. A Shopify 404 page or a 401 means the proxy or the API secret
-      is misconfigured. (Get the numeric id from the product's admin URL; after going live
-      below, the same URL returns full JSON: `{"product": ..., "reviews": [...]}`.)
+      — while the store is not live the expected answer is
+      `{"ok":false,"errors":{"_":"not_live"}}` (HTTP 403); after going live below, the same URL
+      returns full JSON: `{"product": ..., "reviews": [...]}`.
 - [ ] **Not-live storefront is clean**: open the product page as a normal visitor (no preview
       link, or after "Exit preview") — no review widget, no star badge, no card badges,
       nothing visible.
 - [ ] **Preview works**: Dashboard → **Preview on your store** — the widget (block or embed)
       renders fully on the live theme with the "Preview mode" ribbon at the bottom;
       **Exit preview** hides it again.
+- [ ] **Theme editor shows real data**: Online Store → Themes → Customize → a product page —
+      the widget renders with the store's actual reviews (or the "No reviews yet" empty state
+      if there are none). No error box, and no "Reviews could not be loaded" message. If you
+      see the amber "Preview session expired" or "Storefront connection not configured" notice
+      here, re-run the storefront connection test above — that notice is merchant-only and is
+      never rendered for shoppers.
 - [ ] **Go live**: Dashboard → **Go live** → confirm. The banner switches to "Live — visitors
       can see the review widget."
 - [ ] **Widget renders**: the product page now shows the "Customer reviews" widget (block or
@@ -471,6 +507,11 @@ Handing the store over to the merchant next? Point them at `docs/CONFIGURATION.m
 Every failure we can anticipate on a fresh install, with its exact cause. Find your symptom;
 apply the fix; re-run the relevant §10 checklist line.
 
+For anything storefront-related, run **Dashboard → Storefront connection → Run test again**
+before reading further — it names the broken link in the chain (proxy, preview token, theme
+extension, review data, metafield sync, database, live state) and prints the fix inline. The
+"Storefront & theme editor" table below is the long-form version of what that card reports.
+
 ### Setup & deploy
 
 | Symptom | Cause → fix |
@@ -488,18 +529,30 @@ apply the fix; re-run the relevant §10 checklist line.
 | --- | --- |
 | Embedded admin shows a blank page or an endless redirect loop | `SHOPIFY_APP_URL` doesn't exactly match the deployed URL (protocol/trailing slash matter), or the `[auth] redirect_urls` in `shopify.app.toml` still contain placeholders. Fix both, `npm run deploy`, reinstall the app. |
 | Admin shows "App couldn't be loaded" right after install | The backend was asleep or unreachable during OAuth. Free-tier instances that sleep are unsuitable — use a non-sleeping instance (§5A note). |
-| Proxy URL `https://<shop>/apps/cellexia-reviews/...` returns Shopify's own 404 page | The `[app_proxy]` block wasn't deployed (run `npm run deploy` and confirm the release) — or another app already owns the `/apps/cellexia-reviews` path prefix. Path collision: change `subpath` in `shopify.app.toml` **and** the single-sourced path in `extensions/cellexia-reviews/snippets/cx-proxy.liquid` to the same new value, then `npm run deploy`. |
+| Proxy URL `https://<shop>/apps/cellexia-reviews/...` returns Shopify's own 404 page | The `[app_proxy]` block wasn't deployed (run `npm run deploy` and confirm the release) — or another app already owns the `/apps/cellexia-reviews` path prefix. Path collision: change `subpath` in `shopify.app.toml` to a free value and `npm run deploy`; you do **not** have to edit the extension, but do run Dashboard → **Test storefront connection** (or `npm run selftest -- --shop=…`) afterwards so the app detects the new path and writes it to the `cellexia.proxy_path` metafield the theme reads. |
 | Proxy URL returns `{"ok":false,"errors":{"_":"unauthorized"}}` (401) | `SHOPIFY_API_SECRET` on the host doesn't match the app's current Client secret (rotated?). Update the env var and restart. |
 | Proxy URL returns `{"ok":false,"errors":{"_":"not_live"}}` (403) | Not an error — the store isn't live yet (§9). This is the expected pass signal pre-go-live. |
 | Blocks don't appear under the theme editor's **Apps** tab | The extension wasn't deployed (`npm run deploy`, confirm the release), or the app isn't installed on this store yet (§7 before §8). |
 | **Can't add the block on the product page** — the extension is deployed, other pages offer the blocks, but **Add section → Apps** on the product template shows no Cellexia blocks | The theme doesn't support app blocks on product templates. Not fixable from our side and nothing is misconfigured — use §8 **Option A**: the app embed (Theme settings → App embeds → toggle **Cellexia Reviews**) mounts the widget on every theme. |
 | Reviews never get the Verified Purchase badge | Protected customer data access for orders hasn't been approved (§3 note). Development stores don't need it; live stores do. |
 
+### Storefront & theme editor — the three symptoms of a broken pipeline
+
+These are the failures reported from the field on 1.5.x. **Run Dashboard → Storefront connection
+→ Run test again first**: it tells you which of the three you have, and each row below is just
+the longer explanation of what that card reports.
+
+| Symptom | Cause → fix |
+| --- | --- |
+| **Theme editor shows "Reviews could not be loaded. Please try again."** (or an empty widget frame) | Fixed in 1.6.0 — the widget in the theme editor had no way to authenticate, so every data request was rejected and the widget fell back to a generic error. If you still see it after upgrading, the theme has no preview token to use: the shop metafield `cellexia.preview_token` is missing or stale. Fix: run the connection test — **Preview token round-trip** will fail; then **Settings → Data → Regenerate preview link** (this rewrites the metafield), reload the theme editor, and re-run the test. Still failing? The app couldn't write shop metafields — check the backend logs for `[cellexia]` lines around the last settings save and confirm the app's scopes match §3. The editor may legitimately show the amber "Preview session expired" / "Storefront connection not configured" notice — that is the merchant-only message, never shown to shoppers. |
+| **Nothing appears at all on the storefront** — the widget doesn't even render, in preview or live | Two possible causes, in order. (1) Expected: the store is **Not live** (§9) — outside the theme editor and preview the widget removes itself completely by design. (2) The storefront can't reach the app: *App proxy reachable* fails in the connection test. Then the `[app_proxy]` block was never deployed (`npm run deploy`), the subpath is owned by another app (see the 404 row above), or `SHOPIFY_APP_URL`/`SHOPIFY_API_SECRET` are wrong (§3). Confirm from a terminal with `npm run selftest -- --shop=<store>.myshopify.com`. On a live storefront a shopper never sees an error box for either case — which is why the connection test, not the storefront, is the place to diagnose this. |
+| **No stars anywhere** — the widget renders, but there is no star row under the product title and no badges on product cards | Almost always: **the app has no published reviews of its own yet.** *Review data* warns with 0 published in the connection test. Reviews that live in a previous review app are invisible to this app — bring them over on the **Import / Export** page, add them on **Bulk add**, or generate believable test reviews on **QA data** (delete every batch before going live). With zero reviews the title badge and the card badges are suppressed on purpose. If reviews *do* exist and the stars are still missing, it's the rating cache in the theme: *Metafield sync* warns → press **Re-sync all products** on the card. (Card badges additionally need the app embed and its badges setting — §8 Option A.) |
+
 ### The most common one
 
 | Symptom | Cause → fix |
 | --- | --- |
-| **"We added the block but nothing shows on the product page."** | Working as designed: a fresh install is **Not live** and the widget is invisible to visitors until you click **Go live** (§9). Use **Preview on your store** to see it privately first. In the *theme editor* the widget always renders so you can position it. |
+| **"We added the block but nothing shows on the product page."** | Working as designed: a fresh install is **Not live** and the widget is invisible to visitors until you click **Go live** (§9). Use **Preview on your store** to see it privately first. In the *theme editor* the widget always renders — with your real reviews — so you can position it. |
 
 ### Features
 

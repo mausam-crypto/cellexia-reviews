@@ -1,12 +1,31 @@
 {%- comment -%}
-  Cellexia Reviews — single source of the storefront app-proxy base path
-  (v1.5.1 audit). MUST match [app_proxy] in shopify.app.toml: prefix "apps" +
-  subpath "cellexia-reviews" (the live store's measured subpath, SPEC-1.5.1).
-  Both blocks render this value into their data-proxy attribute and
-  blocks/embed.liquid also emits it in the #cx-embed-config JSON, so the path
-  can never drift between files; the string literals inside
-  assets/cellexia-reviews.js are last-ditch fallbacks only.
-  If the subpath ever changes, edit it HERE and in shopify.app.toml, then
-  `npm run deploy`.
+  Cellexia Reviews — single source of the storefront app-proxy base path.
+
+  v1.6.0 (SPEC-1.6 §2): the value is now METAFIELD-DRIVEN. The app probes the
+  live storefront (`probeProxySubpath`) and writes the subpath it proved working
+  into the SHOP metafield `cellexia.proxy_path` (single_line_text_field, e.g.
+  "cellexia-reviews"). Liquid renders that value, so the theme extension can no
+  longer drift from the [app_proxy] block in shopify.app.toml — whatever subpath
+  the merchant's app is actually mounted on is what the storefront calls.
+
+  Nil-safe: an absent metafield, an empty value or a whitespace-only value falls
+  back to the default subpath "cellexia-reviews". Stray slashes and spaces are
+  stripped so a value pasted as "/apps/cellexia-reviews/" still yields a single
+  clean path segment.
+
+  Consumers: blocks/reviews.liquid + blocks/embed.liquid render it into
+  data-proxy, and embed.liquid also carries it in the #cx-embed-config JSON
+  (badge-only pages have no widget root to read the attribute from). If even
+  this value is wrong, assets/cellexia-reviews.js runs ONE client-side discovery
+  sweep over the known candidate subpaths and retries — see SPEC-1.6 §2.
+
+  Output contract: exactly "/apps/<subpath>/api", no surrounding whitespace.
 {%- endcomment -%}
-{{- '/apps/cellexia-reviews/api' -}}
+{%- liquid
+  assign cx_proxy_subpath = shop.metafields.cellexia.proxy_path.value | default: '' | append: '' | strip
+  assign cx_proxy_subpath = cx_proxy_subpath | remove: '/' | remove: ' '
+  if cx_proxy_subpath == blank
+    assign cx_proxy_subpath = 'cellexia-reviews'
+  endif
+-%}
+{{- '/apps/' | append: cx_proxy_subpath | append: '/api' -}}

@@ -4,7 +4,8 @@
  * Implements the §7 service contract consumed by the proxy and admin routes:
  *   - listReviews(shop, params)  → §6 ListResponse (published reviews only,
  *     product stats with integer percents that sum to 100, summary, media
- *     gallery on page 1, filters/search/sort semantics)
+ *     gallery on page 1, filters/search/sort semantics), plus the opt-in
+ *     merchant-only `meta.pendingCount` of SPEC-1.6.1 §B
  *   - createReview(shop, input)  → persists a review + media rows; records
  *     v1.4 provenance (source defaults to "storefront"; the import/bulk-add/
  *     synthetic services pass their own source + metadata)
@@ -57,6 +58,16 @@ export interface ListParams {
   topic?: string;
   q?: string;
   locale?: string;
+  /**
+   * Populate the merchant-only `ListResponse.meta` (SPEC-1.6.1 §B).
+   *
+   * SECURITY: `meta` carries moderation data (how many reviews are waiting for
+   * approval) that a shopper must never see. This flag is the only way to get
+   * it, it defaults to off, and the only caller that may turn it on is the
+   * proxy route — after it has verified that the request carried the shop's
+   * current preview token. Never derive it from the shop's live state.
+   */
+  includeMeta?: boolean;
 }
 
 /** Media descriptor accepted by createReview. */
@@ -171,7 +182,10 @@ export async function listReviews(shop: string, params: ListParams): Promise<Lis
       ? [{ helpfulCount: "desc" }, { verified: "desc" }, { createdAt: "desc" }]
       : [{ createdAt: "desc" }];
 
-  const [total, rows, stats] = await Promise.all([
+  // The pending count deliberately ignores `where`: it answers "is anything
+  // waiting for approval on this product?", not "does anything match the
+  // shopper's filters?". Only queried when the caller asked for it.
+  const [total, rows, stats, pendingCount] = await Promise.all([
     prisma.review.count({ where }),
     prisma.review.findMany({
       where,
@@ -181,6 +195,9 @@ export async function listReviews(shop: string, params: ListParams): Promise<Lis
       include: { media: { orderBy: { position: "asc" } } },
     }),
     computeProductStats(shop, productId),
+    params.includeMeta === true
+      ? prisma.review.count({ where: { shop, productId, status: "PENDING" } })
+      : Promise.resolve(null),
   ]);
 
   const summary = settings.showSummary
@@ -189,7 +206,7 @@ export async function listReviews(shop: string, params: ListParams): Promise<Lis
   const mediaGallery =
     page === 1 && settings.showMediaStrip ? await loadMediaGallery(shop, productId) : [];
 
-  return {
+  const response = {
     product: stats,
     summary,
     reviews: rows.map(toReviewDTO),
@@ -204,6 +221,15 @@ export async function listReviews(shop: string, params: ListParams): Promise<Lis
       designTheme: settings.designTheme,
     },
   } as ListResponse;
+
+  // SPEC-1.6.1 §B — merchant-only. The key is ADDED here, never defaulted:
+  // without an explicit `includeMeta` the serialized payload has no `meta`
+  // property at all, so a shopper response cannot carry it even as `null`.
+  if (params.includeMeta === true && pendingCount !== null) {
+    response.meta = { pendingCount };
+  }
+
+  return response;
 }
 
 /**

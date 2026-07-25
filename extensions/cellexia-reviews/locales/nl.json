@@ -137,6 +137,17 @@
       "note": "Alleen u kunt dit zien — de widget is niet zichtbaar voor bezoekers.",
       "exit": "Voorbeeld verlaten"
     },
+    "notice": {
+      "expired_title": "Voorbeeldsessie verlopen",
+      "expired_body": "Open “Preview on your store” opnieuw via het Dashboard van de app om verder te gaan met het voorbeeld.",
+      "unconfigured_title": "Verbinding met de webshop is niet geconfigureerd",
+      "unconfigured_body": "Open de app in uw Shopify-beheer → Dashboard → “Test storefront connection”.",
+      "error_title": "Beoordelingen zijn tijdelijk niet beschikbaar",
+      "error_body": "Dit bericht is alleen voor u zichtbaar tijdens het bekijken van het voorbeeld.",
+      "empty_merchant": "Nog geen beoordelingen — importeer uw beoordelingen of genereer testgegevens in de app.",
+      "empty_pending": "Nog geen gepubliceerde beoordelingen — [[count]] wachten op goedkeuring in de app.",
+      "retry": "Opnieuw proberen"
+    },
     "form": {
       "title": "Schrijf een beoordeling",
       "rating_label": "Algemene waardering",

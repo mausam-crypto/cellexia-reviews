@@ -137,6 +137,17 @@
       "note": "Solo Lei può vedere questa anteprima — il widget non è visibile ai visitatori.",
       "exit": "Esci dall'anteprima"
     },
+    "notice": {
+      "expired_title": "Sessione di anteprima scaduta",
+      "expired_body": "Riapra “Preview on your store” dal Dashboard dell'app per continuare l'anteprima.",
+      "unconfigured_title": "Connessione al negozio non configurata",
+      "unconfigured_body": "Apra l'app nel suo admin Shopify → Dashboard → “Test storefront connection”.",
+      "error_title": "Le recensioni non sono temporaneamente disponibili",
+      "error_body": "Questo messaggio è visibile solo a Lei durante l'anteprima.",
+      "empty_merchant": "Nessuna recensione al momento — importi le sue recensioni o generi dati di prova nell'app.",
+      "empty_pending": "Nessuna recensione pubblicata — [[count]] in attesa di approvazione nell'app.",
+      "retry": "Riprova"
+    },
     "form": {
       "title": "Scrivi una recensione",
       "rating_label": "Valutazione complessiva",

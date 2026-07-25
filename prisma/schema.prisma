@@ -137,4 +137,27 @@ model Setting {
   designTheme          String  @default("amazon") // amazon | cellexia
   isLive               Boolean @default(false) // storefront visibility gate; new installs start NOT live
   previewToken         String? // tokenized live-theme preview; lazily generated in getSettings
+  // v1.6 (SPEC-1.6 §2): the app-proxy subpath this install actually serves —
+  // single source of truth for the storefront path. Detected by
+  // probeProxySubpath (afterAuth + the storefront health check) and mirrored
+  // onto the `cellexia.proxy_path` shop metafield that cx-proxy.liquid reads.
+  proxySubpath         String  @default("cellexia-reviews")
+  // Last app-proxy request that passed HMAC verification (any storefront
+  // route). Powers the "is the theme extension enabled?" health check; null
+  // means no storefront request has ever arrived. Written at most once per
+  // 60 s per shop (recordStorefrontHit in proxy.server.ts).
+  lastStorefrontHitAt  DateTime?
+  // v1.6.1 (SPEC-1.6.1 §A): outcome of the most recent product metafield sync.
+  // Until v1.6.1 every metafieldsSet failure (userErrors, missing scope,
+  // throttling, definition/type conflicts) went into a console.error the
+  // merchant never saw, so a store could sit with stale metafields — no SSR
+  // stars, no rich snippets, no title badge — with nothing in the admin saying
+  // so. `lastSyncError` holds the compact reason for the last FAILED sync
+  // (first userError as "field: message (code)", or the thrown message, max
+  // 500 chars) and is cleared the moment a sync succeeds; `lastSyncAt` is when
+  // that attempt ran, success or failure. Written by recomputeProduct
+  // (aggregates.server.ts), surfaced verbatim by health check 5 and by the
+  // token-gated `diag` block of /api/ping.
+  lastSyncError        String?
+  lastSyncAt           DateTime?
 }

@@ -137,6 +137,17 @@
       "note": "Isto só está visível para si — o widget não está visível para os visitantes.",
       "exit": "Sair da pré-visualização"
     },
+    "notice": {
+      "expired_title": "A sessão de pré-visualização expirou",
+      "expired_body": "Volte a abrir “Preview on your store” no Dashboard da aplicação para continuar a pré-visualização.",
+      "unconfigured_title": "Ligação à loja não configurada",
+      "unconfigured_body": "Abra a aplicação na administração da Shopify → Dashboard → “Test storefront connection”.",
+      "error_title": "As avaliações estão temporariamente indisponíveis",
+      "error_body": "Esta mensagem só está visível para si durante a pré-visualização.",
+      "empty_merchant": "Ainda não existem avaliações — importe as suas avaliações ou gere dados de teste na aplicação.",
+      "empty_pending": "Ainda não existem avaliações publicadas — [[count]] a aguardar aprovação na aplicação.",
+      "retry": "Tentar novamente"
+    },
     "form": {
       "title": "Escrever uma avaliação",
       "rating_label": "Classificação geral",

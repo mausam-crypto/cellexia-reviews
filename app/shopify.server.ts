@@ -11,6 +11,7 @@ import {
   ensureMetafieldDefinitions,
   syncShopSettingsMetafields,
 } from "~/services/metafields.server";
+import { probeProxySubpath } from "~/services/proxyhealth.server";
 import { getSettings } from "~/services/settings.server";
 
 const shopify = shopifyApp({
@@ -39,6 +40,19 @@ const shopify = shopifyApp({
         // shops re-sync their true current state.
         const settings = await getSettings(session.shop);
         await syncShopSettingsMetafields(admin, settings);
+
+        // SPEC-1.6 §2: discover which `/apps/<subpath>/api` this install
+        // actually serves and persist it (Setting.proxySubpath +
+        // `cellexia.proxy_path`), so the storefront path can never drift from
+        // the app configuration again. Deliberately NOT awaited: it makes up
+        // to four cross-internet requests, and OAuth must finish immediately.
+        // Failures are logged and retried by the Dashboard's storefront health
+        // check, which is the authoritative place to see the result.
+        void probeProxySubpath(session.shop, settings.proxySubpath, admin).catch(
+          (error: unknown) => {
+            console.error("[cellexia] afterAuth proxy subpath probe failed", error);
+          },
+        );
       } catch (error) {
         // Metafield definitions/sync are re-attempted on the next auth; never
         // block the OAuth callback on this.

@@ -71,6 +71,7 @@
       "translate": "Traducir",
       "translating": "Traduciendo…",
       "see_original": "Ver original",
+      "see_translation": "Ver traducción",
       "translated_from": "Traducido del [[language]]",
       "reply_from": "Respuesta de [[brand]]",
       "read_more": "Leer más",
@@ -136,6 +137,11 @@
       "badge": "Modo de vista previa",
       "note": "Solo usted puede ver esto — el widget no está visible para los visitantes.",
       "exit": "Salir de la vista previa"
+    },
+    "overall": {
+      "based_on": "Basado en [[count]] opiniones de todos nuestros productos",
+      "verified_share": "[[percent]] % de compras verificadas",
+      "read_reviews": "Leer [[count]] opiniones"
     },
     "notice": {
       "expired_title": "La sesión de vista previa ha caducado",

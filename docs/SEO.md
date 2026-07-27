@@ -83,10 +83,27 @@ If you migrated from another review app (Judge.me, Loox, Yotpo), double-check th
 snippets/JSON-LD were removed on uninstall — leftovers are the most common source of
 conflicting rating markup.
 
+## Why the "Overall reviews" block emits no structured data (on purpose)
+
+The brand-wide **Cellexia Overall Reviews** block (v1.9, typically placed on the home page)
+deliberately outputs **no JSON-LD at all** — no `aggregateRating`, no `Organization` review
+markup. That is not an omission: Google explicitly ignores "self-serving" review markup —
+star ratings about your own organization, published on your own site — so an
+organization-level rating on the home page can never produce a star rich snippet, and adding
+a second, page-level `aggregateRating` entity would only create markup warnings and the risk
+of conflicting rating data next to your product markup. The stars Google can actually show
+come from the **Product** JSON-LD on your product pages, described above, which this app
+already emits and keeps in sync. In short: the homepage block is built to convince shoppers;
+the product pages carry the markup that convinces Google.
+
 ## Performance notes (also ranking-relevant)
 
 - Meaningful first paint is server-rendered from metafields; JavaScript hydrates in place, so
   there is **no layout shift** from the widget.
 - Exactly one CSS file and one deferred JS file; no external requests other than the review API
   (GET responses cached 60 s) and Shopify's media CDN; images lazy-load.
-- Budgets enforced by design: CSS ≤ 30 KB, JS ≤ 60 KB unminified.
+- Budgets enforced by design: CSS ≤ 54 KiB, JS ≤ 108 KiB unminified (the v1.9 budgets,
+  raised to accommodate the Overall reviews block; still one file each).
+- The Overall reviews block follows the same rules: its first paint is fully server-rendered
+  from two shop metafields — **zero** API requests on page load; the only fetch it can ever
+  make is the one triggered by a shopper clicking a distribution bar (cached 60 s).

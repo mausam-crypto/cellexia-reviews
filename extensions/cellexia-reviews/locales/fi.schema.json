@@ -66,8 +66,41 @@
         }
       }
     },
+    "overall_block": {
+      "name": "Cellexia-kokonaisarvostelut",
+      "settings": {
+        "heading": {
+          "label": "Otsikko"
+        },
+        "max_reviews": {
+          "label": "Näytettävien arvostelujen määrä"
+        },
+        "layout": {
+          "label": "Asettelu",
+          "options__1": {
+            "label": "Ruudukko"
+          },
+          "options__2": {
+            "label": "Karuselli"
+          }
+        },
+        "show_distribution": {
+          "label": "Näytä arvioiden jakauman palkit"
+        },
+        "show_product_links": {
+          "label": "Linkitä jokainen arvostelu tuotteeseensa"
+        },
+        "cta_label": {
+          "label": "Painikkeen teksti (valinnainen)"
+        },
+        "cta_url": {
+          "label": "Painikkeen linkki"
+        }
+      }
+    },
     "defaults": {
-      "heading": "Asiakasarvostelut"
+      "heading": "Asiakasarvostelut",
+      "overall_heading": "Mitä asiakkaamme sanovat"
     }
   }
 }

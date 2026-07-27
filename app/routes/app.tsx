@@ -8,9 +8,19 @@ import { NavMenu } from "@shopify/app-bridge-react";
 import "@shopify/polaris/build/esm/styles.css";
 
 import { authenticate } from "~/shopify.server";
+import { kickRunner } from "~/services/jobs.server";
+import { GenerationActivityBar } from "~/components/admin/GenerationActivityBar";
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   await authenticate.admin(request);
+  // Every admin page renders the generation activity bar, so every admin
+  // loader keeps the background job runner alive (SPEC-1.7 §3 — kickRunner is
+  // idempotent and cheap). A runner hiccup must never block the admin.
+  try {
+    kickRunner();
+  } catch (error) {
+    console.error("[cellexia] app loader kickRunner failed", error);
+  }
   return { apiKey: process.env.SHOPIFY_API_KEY || "" };
 };
 
@@ -24,11 +34,15 @@ export default function App() {
           Dashboard
         </Link>
         <Link to="/app/reviews">Reviews</Link>
+        <Link to="/app/display">Display order</Link>
         <Link to="/app/bulk-add">Bulk add</Link>
         <Link to="/app/import-export">Import / Export</Link>
         <Link to="/app/qa-generator">QA data</Link>
         <Link to="/app/settings">Settings</Link>
       </NavMenu>
+      {/* Global generation progress — visible on every admin page while ≥ 1
+          background job is active (SPEC-1.7 §5). */}
+      <GenerationActivityBar />
       <Outlet />
     </AppProvider>
   );

@@ -71,6 +71,7 @@
       "translate": "Translate",
       "translating": "Translating…",
       "see_original": "See original",
+      "see_translation": "See translation",
       "translated_from": "Translated from [[language]]",
       "reply_from": "Response from [[brand]]",
       "read_more": "Read more",
@@ -136,6 +137,11 @@
       "badge": "Preview mode",
       "note": "Only you can see this — the widget is not live for visitors.",
       "exit": "Exit preview"
+    },
+    "overall": {
+      "based_on": "Based on [[count]] reviews across our products",
+      "verified_share": "[[percent]]% from verified purchases",
+      "read_reviews": "Read [[count]] reviews"
     },
     "notice": {
       "expired_title": "Preview session expired",

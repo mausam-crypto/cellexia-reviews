@@ -8,7 +8,10 @@
  *   (a) the `productHandle` column on Review rows (one groupBy — reviews
  *       created by the storefront widget, CSV import and Bulk add carry it),
  *   (b) for handles with no Review rows, one batched Admin API lookup via
- *       `resolveProducts` (import.server),
+ *       `resolveProducts` (import.server) — and the proven handle↔productId
+ *       mapping is persisted back onto Review rows whose productHandle is
+ *       NULL/empty (v1.8, SPEC-1.8 §5 audit #3), so those products resolve
+ *       from the DB alone on every later request,
  *
  * fronted by a module-level in-memory handle→productId cache (TTL 6 h,
  * capped at 2 000 entries). Averages and counts reuse `computeProductStats`
@@ -166,6 +169,30 @@ export async function badgeStatsByHandles(
         if (product) {
           productIdByHandle.set(handle, product.id);
           cacheSet(shop, handle, product.id);
+        }
+      }
+      // SPEC-1.8 §5 audit #3: a product whose Review rows ALL have a NULL
+      // productHandle (pre-1.5 data, or imports that only carried product
+      // ids) lands here on every badge request. The Admin API just proved
+      // the mapping in both directions (handle ↔ productId), so persist the
+      // handle back onto those rows: the next request resolves from the DB
+      // alone — no Admin API dependency, and badges keep working even when
+      // the offline admin client is unavailable later. Failures are
+      // non-fatal (this request already has its mapping in memory).
+      for (const handle of unresolved) {
+        const product = resolved.get(handle);
+        if (!product) continue;
+        try {
+          await prisma.review.updateMany({
+            where: {
+              shop,
+              productId: product.id,
+              OR: [{ productHandle: null }, { productHandle: "" }],
+            },
+            data: { productHandle: product.handle || handle },
+          });
+        } catch (error) {
+          console.error("[cellexia] badge productHandle backfill failed", error);
         }
       }
     } catch (error) {

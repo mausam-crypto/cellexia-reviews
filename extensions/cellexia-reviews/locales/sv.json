@@ -71,6 +71,7 @@
       "translate": "Översätt",
       "translating": "Översätter…",
       "see_original": "Visa original",
+      "see_translation": "Visa översättning",
       "translated_from": "Översatt från [[language]]",
       "reply_from": "Svar från [[brand]]",
       "read_more": "Läs mer",
@@ -136,6 +137,11 @@
       "badge": "Förhandsgranskningsläge",
       "note": "Endast du kan se detta — widgeten är inte synlig för besökare.",
       "exit": "Avsluta förhandsgranskning"
+    },
+    "overall": {
+      "based_on": "Baserat på [[count]] recensioner av alla våra produkter",
+      "verified_share": "[[percent]] % från verifierade köp",
+      "read_reviews": "Läs [[count]] recensioner"
     },
     "notice": {
       "expired_title": "Förhandsgranskningssessionen har upphört",

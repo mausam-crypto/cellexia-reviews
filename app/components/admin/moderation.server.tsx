@@ -9,6 +9,7 @@
  */
 import prisma from "~/db.server";
 import { recomputeProduct } from "~/services/aggregates.server";
+import { scheduleShopRatingSync } from "~/services/brand.server";
 
 /** Admin API context type as declared by the services layer (SPEC §7). */
 export type AdminApi = Parameters<typeof recomputeProduct>[2];
@@ -17,9 +18,18 @@ export type AdminApi = Parameters<typeof recomputeProduct>[2];
  * Recomputes aggregates for a product and pushes them (plus top reviews and the latest
  * AI summary) into the product metafields. Returns the recomputed stats.
  * recomputeProduct handles the metafield sync internally — no extra work needed here.
+ *
+ * v1.9 (SPEC-1.9 §1): every per-product re-sync can also move the brand-wide
+ * aggregates the "Overall reviews" homepage block shows, so a debounced
+ * shop-rating sync is scheduled after each one. All moderation / import /
+ * generation / display-config paths funnel through this function, and the
+ * 60 s per-shop debounce keeps bulk operations cheap (one metafield write per
+ * window, reading fresh data when it fires). Fire-and-forget by design.
  */
 export async function syncProductData(shop: string, productId: string, admin: AdminApi) {
-  return recomputeProduct(shop, productId, admin);
+  const stats = await recomputeProduct(shop, productId, admin);
+  scheduleShopRatingSync(shop, admin);
+  return stats;
 }
 
 /**

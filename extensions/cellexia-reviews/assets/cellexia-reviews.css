@@ -90,6 +90,13 @@
 /* Stars (base row + partial-width overlay) */
 .cx-stars { position:relative;display:inline-flex;line-height:0;vertical-align:middle;flex:none;}
 .cx-stars svg { inline-size:var(--cx-star-size, 16px);block-size:var(--cx-star-size, 16px);flex:none;display:block;}
+/* v1.9 fix: the SSR snippet (cx-stars.liquid) nests its svgs inside
+   .cx-stars__row spans whose inline style is display:inline-block — the
+   display:block above (written for the JS-built flex markup, svgs as direct
+   children) stacked those SSR stars VERTICALLY wherever Liquid renders them
+   (overall-reviews header/cards keep their SSR stars forever). Inline-block
+   restores the horizontal row; the % -width fill overlay is unaffected. */
+.cx-stars__row svg { display:inline-block;}
 .cx-stars__base { display:inline-flex;}
 .cx-stars__fill {
   position:absolute;inset-block-start:0;inset-inline-start:0;
@@ -685,6 +692,68 @@ a.cx.cx-badge-inline:is(:hover, :focus, :active) { text-decoration:none;color:va
 .cx-retry-inline { margin-block:8px 4px;font-size:13px;}
 @media print { .cx-notice, .cx-retry-inline { display:none !important;} }
 
+/* 18. v1.9 "Overall reviews" brand-wide block (SPEC-1.9 §2/§3). Homepage-scale
+   centered header, reused cx-dist bars, condensed cards as a responsive grid
+   (1 col / 2 ≥640px / 3 ≥1024px) or a scroll-snap carousel that scrolls
+   natively without JS (prev/next buttons are JS-built and JS-only). These
+   defaults ARE the amazon skin; cellexia/luxe add touches in their sections. */
+.cx-overall { margin-block:clamp(28px, 5vw, 56px);min-inline-size:0;}
+.cx-overall__header { text-align:center;max-inline-size:640px;margin-inline:auto;margin-block-end:8px;}
+.cx-overall__heading { font-size:26px;line-height:1.2;margin-block-end:10px;}
+@media (min-width:768px) { .cx-overall__heading { font-size:32px;} }
+.cx-overall__score { display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;margin-block:8px 6px;}
+.cx-overall__score .cx-stars { --cx-star-size:28px;}
+.cx-overall__score .cx-avg-text { font-size:18px;font-weight:700;}
+.cx-overall__based { color:var(--cx-muted);font-size:14px;margin-block-end:4px;}
+.cx-overall__trust { color:var(--cx-verified);font-size:13px;font-weight:700;margin-block-end:0;}
+.cx-overall .cx-dist { max-inline-size:420px;margin-inline:auto;margin-block:16px 8px;}
+.cx-overall__reset { display:flex;margin-block:12px 0;margin-inline:auto;} /* JS-built "All ratings" chip */
+.cx-overall__cards { margin-block:20px;}
+.cx-overall__cards--grid { display:grid;gap:16px;grid-template-columns:minmax(0, 1fr);}
+@media (min-width:640px) { .cx-overall__cards--grid { grid-template-columns:repeat(2, minmax(0, 1fr));gap:20px;} }
+@media (min-width:1024px) { .cx-overall__cards--grid { grid-template-columns:repeat(3, minmax(0, 1fr));} }
+.cx-overall__card {
+  display:flex;flex-direction:column;align-items:flex-start;
+  margin:0;padding:16px;background:#fff;min-inline-size:0;
+  border:1px solid var(--cx-border-light);border-radius:var(--cx-radius);
+}
+.cx-overall__card .cx-card__titleline { align-items:flex-start;}
+.cx-overall__body { font-size:14px;line-height:1.45;margin-block:8px 0;overflow-wrap:anywhere;}
+.cx-overall__body p { margin:0;}
+.cx-overall__card .cx-read-more { padding-block:4px;}
+.cx-overall__card .cx-card__meta { margin-block:8px 2px;}
+.cx-overall__media { display:flex;align-items:center;gap:6px;font-size:12px;color:var(--cx-muted);margin-block:4px 0;}
+.cx-overall__mediadot { inline-size:7px;block-size:7px;border-radius:50%;background:var(--cx-star);flex:none;}
+.cx-overall__foot {
+  align-self:stretch;margin-block-start:auto;padding-block-start:10px;
+  display:flex;flex-direction:column;align-items:flex-start;gap:2px;
+  border-block-start:1px solid var(--cx-border-light);font-size:13px;
+}
+.cx-overall__card > :nth-last-child(2) { margin-block-end:10px;} /* breathing room above the pinned footer */
+.cx-overall__plink { font-weight:600;overflow-wrap:anywhere;}
+.cx-overall__read { font-size:13px;}
+/* Carousel: native horizontal scroll + snap; no JS required to reach content */
+.cx-overall__cards--carousel {
+  display:flex;gap:16px;overflow-x:auto;scroll-snap-type:x mandatory;scroll-behavior:smooth;
+  -webkit-overflow-scrolling:touch;padding-block-end:8px;scrollbar-width:thin;
+}
+.cx-overall__cards--carousel > .cx-overall__card { flex:0 0 84%;scroll-snap-align:start;}
+@media (min-width:640px) { .cx-overall__cards--carousel > .cx-overall__card { flex-basis:46%;} }
+@media (min-width:1024px) { .cx-overall__cards--carousel > .cx-overall__card { flex-basis:31%;} }
+.cx-overall__nav { display:flex;justify-content:center;gap:12px;margin-block:4px 0;}
+.cx-overall__navbtn {
+  display:inline-flex;align-items:center;justify-content:center;flex:none;
+  inline-size:44px;block-size:44px;border-radius:50%;
+  background:#fff;border:1px solid var(--cx-border);box-shadow:var(--cx-shadow);
+  font-size:22px;line-height:1;color:var(--cx-text);
+}
+.cx-overall__navbtn:hover:not(:disabled) { background:#F7FAFA;}
+.cx-overall__navbtn:disabled { color:var(--cx-muted);background:var(--cx-bg-soft);box-shadow:none;cursor:default;}
+.cx-overall[dir="rtl"] .cx-overall__navbtn { transform:scaleX(-1);} /* glyphs point along the reading direction */
+.cx-overall__cta { display:flex;justify-content:center;margin-block:20px 4px;}
+@media (prefers-reduced-motion:reduce) { .cx-overall__cards--carousel { scroll-behavior:auto !important;} }
+@media print { .cx-overall__nav, .cx-overall__reset { display:none !important;} }
+
 /* ===== Skin: cellexia ===== */
 /* v1.1 (SPEC-1.1) CSS-only skin, scoped to data-cx-skin="cellexia" (.cx roots +
    top-layer surfaces — the JS copies the attr on open, mirroring §1). No font
@@ -795,6 +864,14 @@ a.cx.cx-badge-inline:is(:hover, :focus, :active) { text-decoration:none;color:va
   [data-cx-skin="cellexia"].cx-lightbox { border:1px solid var(--cx-border-light);border-radius:16px;}
 }
 
+/* v1.9 Overall block: the Gobold UPPERCASE heading rides the :is(h2,…) rule
+   above; cards + carousel arrows join the flat outlined-ink language. */
+[data-cx-skin="cellexia"] .cx-overall__card { border-radius:12px;box-shadow:none;}
+[data-cx-skin="cellexia"] .cx-overall__trust { color:var(--cx-text);}
+[data-cx-skin="cellexia"] .cx-overall__mediadot { background:var(--cx-bar);}
+[data-cx-skin="cellexia"] .cx-overall__navbtn { border-color:var(--cx-text);box-shadow:none;}
+[data-cx-skin="cellexia"] .cx-overall__navbtn:hover:not(:disabled) { background:var(--cx-text);color:#fff;}
+
 /* ===== Skin: luxe ===== */
 /* v1.3 (SPEC-1.3), scoped like cellexia */
 
@@ -887,3 +964,10 @@ a.cx.cx-badge-inline:is(:hover, :focus, :active) { text-decoration:none;color:va
   [data-cx-skin="luxe"].cx-dialog { border-radius:14px;}
   [data-cx-skin="luxe"].cx-lightbox { border:1px solid var(--cx-border-light);box-shadow:var(--cx-shadow);}
 }
+
+/* v1.9 Overall block: the serif heading rides the :is(h2,…) rule above;
+   champagne hairline accents keep the luxe language. */
+[data-cx-skin="luxe"] .cx-overall__card { border-radius:12px;border-block-start:2px solid var(--cx-star);box-shadow:var(--cx-shadow);}
+[data-cx-skin="luxe"] .cx-overall__trust { color:var(--cx-verified);}
+[data-cx-skin="luxe"] .cx-overall__navbtn { border-radius:10px;box-shadow:none;}
+[data-cx-skin="luxe"] .cx-overall__navbtn:hover:not(:disabled) { background:var(--cx-bg-soft);border-color:var(--cx-text);}

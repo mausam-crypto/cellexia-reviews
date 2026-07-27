@@ -66,8 +66,41 @@
         }
       }
     },
+    "overall_block": {
+      "name": "Cellexia Overall Reviews",
+      "settings": {
+        "heading": {
+          "label": "Heading"
+        },
+        "max_reviews": {
+          "label": "Number of reviews to show"
+        },
+        "layout": {
+          "label": "Layout",
+          "options__1": {
+            "label": "Grid"
+          },
+          "options__2": {
+            "label": "Carousel"
+          }
+        },
+        "show_distribution": {
+          "label": "Show rating distribution bars"
+        },
+        "show_product_links": {
+          "label": "Link each review to its product"
+        },
+        "cta_label": {
+          "label": "Button label (optional)"
+        },
+        "cta_url": {
+          "label": "Button link"
+        }
+      }
+    },
     "defaults": {
-      "heading": "Customer reviews"
+      "heading": "Customer reviews",
+      "overall_heading": "What our customers say"
     }
   }
 }

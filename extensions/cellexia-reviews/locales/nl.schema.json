@@ -66,8 +66,41 @@
         }
       }
     },
+    "overall_block": {
+      "name": "Cellexia Algemene beoordelingen",
+      "settings": {
+        "heading": {
+          "label": "Kop"
+        },
+        "max_reviews": {
+          "label": "Aantal te tonen beoordelingen"
+        },
+        "layout": {
+          "label": "Lay-out",
+          "options__1": {
+            "label": "Raster"
+          },
+          "options__2": {
+            "label": "Carrousel"
+          }
+        },
+        "show_distribution": {
+          "label": "Balken met beoordelingsverdeling tonen"
+        },
+        "show_product_links": {
+          "label": "Elke beoordeling aan het bijbehorende product koppelen"
+        },
+        "cta_label": {
+          "label": "Knoptekst (optioneel)"
+        },
+        "cta_url": {
+          "label": "Knoplink"
+        }
+      }
+    },
     "defaults": {
-      "heading": "Klantbeoordelingen"
+      "heading": "Klantbeoordelingen",
+      "overall_heading": "Wat onze klanten zeggen"
     }
   }
 }

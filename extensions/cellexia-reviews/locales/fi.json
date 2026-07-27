@@ -71,6 +71,7 @@
       "translate": "Käännä",
       "translating": "Käännetään…",
       "see_original": "Näytä alkuperäinen",
+      "see_translation": "Näytä käännös",
       "translated_from": "Käännetty kielestä [[language]]",
       "reply_from": "Vastaus: [[brand]]",
       "read_more": "Lue lisää",
@@ -136,6 +137,11 @@
       "badge": "Esikatselutila",
       "note": "Vain sinä näet tämän — widget ei ole näkyvissä kävijöille.",
       "exit": "Poistu esikatselusta"
+    },
+    "overall": {
+      "based_on": "Perustuu [[count]] arvosteluun kaikista tuotteistamme",
+      "verified_share": "[[percent]] % vahvistetuista ostoista",
+      "read_reviews": "Lue [[count]] arvostelua"
     },
     "notice": {
       "expired_title": "Esikatseluistunto on vanhentunut",

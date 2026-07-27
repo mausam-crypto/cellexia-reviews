@@ -71,6 +71,7 @@
       "translate": "Übersetzen",
       "translating": "Wird übersetzt…",
       "see_original": "Original anzeigen",
+      "see_translation": "Übersetzung anzeigen",
       "translated_from": "Übersetzt aus dem [[language]]",
       "reply_from": "Antwort von [[brand]]",
       "read_more": "Mehr lesen",
@@ -136,6 +137,11 @@
       "badge": "Vorschaumodus",
       "note": "Nur Sie können dies sehen — das Widget ist für Besucher nicht sichtbar.",
       "exit": "Vorschau beenden"
+    },
+    "overall": {
+      "based_on": "Basierend auf [[count]] Rezensionen zu all unseren Produkten",
+      "verified_share": "[[percent]] % aus verifizierten Käufen",
+      "read_reviews": "[[count]] Rezensionen lesen"
     },
     "notice": {
       "expired_title": "Vorschausitzung abgelaufen",

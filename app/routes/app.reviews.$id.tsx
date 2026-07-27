@@ -22,11 +22,13 @@ import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
 import { authenticate } from "~/shopify.server";
 import prisma from "~/db.server";
 import { getSettings } from "~/services/settings.server";
+import { syncShopRating } from "~/services/brand.server";
 import { translateReviews } from "~/services/translate.server";
 import { SHOP_LOCALES, REVIEW_STATUSES } from "~/types/cellexia";
 import type { ReviewSource } from "~/types/cellexia";
 import {
   deleteReviews,
+  syncProductData,
   updateReviewStatuses,
 } from "~/components/admin/moderation.server";
 import { StarRating } from "~/components/admin/StarRating";
@@ -49,6 +51,54 @@ import {
   pluralize,
 } from "~/components/admin/labels";
 
+/** Featured ("pinned") reviews per product — SPEC-1.8 §3 cap, both ends. */
+const MAX_PINNED = 10;
+
+/**
+ * Hand-picked reviews in the brand-wide "Overall reviews" homepage block —
+ * SPEC-1.9 §4 cap, matching the Display order page and the 12-entry ceiling
+ * of the `cellexia.shop_top_reviews` metafield.
+ */
+const MAX_OVERALL_PICKED = 12;
+
+/** Parses ProductDisplayConfig.pinnedIds (JSON string[]). */
+function parsePinnedIds(value: string | null | undefined): string[] {
+  if (!value) return [];
+  try {
+    const parsed: unknown = JSON.parse(value);
+    return Array.isArray(parsed)
+      ? parsed.filter((v): v is string => typeof v === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+/**
+ * Parses Setting.overallWidget (SPEC-1.9 §1): JSON
+ * `{ mode?: "auto" | "picked", pickedIds?: string[] }`, validated on read —
+ * anything unknown or unparsable falls back to auto with no picks.
+ */
+function parseOverallWidget(raw: string | null | undefined): {
+  mode: "auto" | "picked";
+  pickedIds: string[];
+} {
+  try {
+    const parsed: unknown = raw ? JSON.parse(raw) : {};
+    const record =
+      parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : {};
+    const mode = record.mode === "picked" ? "picked" : "auto";
+    const pickedIds = Array.isArray(record.pickedIds)
+      ? record.pickedIds.filter((v): v is string => typeof v === "string")
+      : [];
+    return { mode, pickedIds: [...new Set(pickedIds)] };
+  } catch {
+    return { mode: "auto", pickedIds: [] };
+  }
+}
+
 export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   const { session } = await authenticate.admin(request);
   const shop = session.shop;
@@ -63,6 +113,19 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
   }
 
   const settings = await getSettings(shop);
+
+  // v1.8 (SPEC-1.8 §3): featured ("pinned") state of this review on its
+  // product page — powers the Feature / Unfeature fast path from moderation.
+  const displayConfig = await prisma.productDisplayConfig.findUnique({
+    where: { shop_productId: { shop, productId: review.productId } },
+  });
+  const pinnedIds = parsePinnedIds(displayConfig?.pinnedIds);
+  const pinnedIndex = pinnedIds.indexOf(review.id);
+
+  // v1.9 (SPEC-1.9 §4): hand-picked state of this review in the brand-wide
+  // "Overall reviews" homepage block — the same fast path, one level up.
+  const overallConfig = parseOverallWidget(settings.overallWidget);
+  const overallIndex = overallConfig.pickedIds.indexOf(review.id);
 
   const reportReasons: Record<string, number> = {};
   for (const vote of review.votes) {
@@ -113,6 +176,17 @@ export const loader = async ({ request, params }: LoaderFunctionArgs) => {
     reportReasons,
     brand: settings.brandDisplayName,
     translationProvider: settings.translationProvider,
+    display: {
+      isPinned: pinnedIndex >= 0,
+      position: pinnedIndex >= 0 ? pinnedIndex + 1 : null,
+      pinnedCount: pinnedIds.length,
+    },
+    homepage: {
+      mode: overallConfig.mode,
+      isFeatured: overallIndex >= 0,
+      position: overallIndex >= 0 ? overallIndex + 1 : null,
+      featuredCount: overallConfig.pickedIds.length,
+    },
   });
 };
 
@@ -123,7 +197,10 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
   const form = await request.formData();
   const intent = String(form.get("intent") ?? "");
 
-  const review = await prisma.review.findFirst({ where: { id, shop }, select: { id: true } });
+  const review = await prisma.review.findFirst({
+    where: { id, shop },
+    select: { id: true, productId: true, status: true },
+  });
   if (!review) {
     return json({ ok: false, message: "Review not found" }, { status: 404 });
   }
@@ -176,6 +253,161 @@ export const action = async ({ request, params }: ActionFunctionArgs) => {
       return json({ ok: true, translation, target });
     }
 
+    // v1.8 (SPEC-1.8 §3): the moderation fast path — append/remove this review
+    // in its product's ProductDisplayConfig.pinnedIds, respecting the cap.
+    if (intent === "feature") {
+      if (review.status !== "PUBLISHED") {
+        return json({
+          ok: false,
+          message: "Only published reviews can be featured on the product page.",
+        });
+      }
+      const config = await prisma.productDisplayConfig.findUnique({
+        where: { shop_productId: { shop, productId: review.productId } },
+      });
+      const stored = parsePinnedIds(config?.pinnedIds);
+      // Drop stale entries (deleted / unpublished reviews) before applying the
+      // cap, so ghost ids never block featuring a real review.
+      let pinned = stored;
+      if (stored.length) {
+        const valid = await prisma.review.findMany({
+          where: {
+            shop,
+            productId: review.productId,
+            status: "PUBLISHED",
+            id: { in: stored },
+          },
+          select: { id: true },
+        });
+        const validIds = new Set(valid.map((r) => r.id));
+        pinned = stored.filter((pinnedId) => validIds.has(pinnedId));
+      }
+      if (pinned.includes(id)) {
+        return json({ ok: true, message: "This review is already featured." });
+      }
+      if (pinned.length >= MAX_PINNED) {
+        return json({
+          ok: false,
+          message: `This product already has ${MAX_PINNED} featured reviews — remove one on the Display order page first.`,
+        });
+      }
+      pinned.push(id);
+      await prisma.productDisplayConfig.upsert({
+        where: { shop_productId: { shop, productId: review.productId } },
+        update: { pinnedIds: JSON.stringify(pinned) },
+        create: {
+          shop,
+          productId: review.productId,
+          strategy: null,
+          pinnedIds: JSON.stringify(pinned),
+        },
+      });
+      await syncProductData(shop, review.productId, admin);
+      return json({
+        ok: true,
+        message: "Review featured — it now appears first on the product page.",
+      });
+    }
+
+    if (intent === "unfeature") {
+      const config = await prisma.productDisplayConfig.findUnique({
+        where: { shop_productId: { shop, productId: review.productId } },
+      });
+      const stored = parsePinnedIds(config?.pinnedIds);
+      const pinned = stored.filter((pinnedId) => pinnedId !== id);
+      if (!config || pinned.length === stored.length) {
+        return json({ ok: true, message: "This review is not featured." });
+      }
+      if (!config.strategy && pinned.length === 0) {
+        // Back to default-with-no-pins → no row at all (SPEC-1.8 §3).
+        await prisma.productDisplayConfig.deleteMany({
+          where: { shop, productId: review.productId },
+        });
+      } else {
+        await prisma.productDisplayConfig.update({
+          where: { shop_productId: { shop, productId: review.productId } },
+          data: { pinnedIds: JSON.stringify(pinned) },
+        });
+      }
+      await syncProductData(shop, review.productId, admin);
+      return json({ ok: true, message: "Review removed from the featured list." });
+    }
+
+    // v1.9 (SPEC-1.9 §4): the homepage fast path — append/remove this review
+    // in Setting.overallWidget.pickedIds (the brand-wide "Overall reviews"
+    // block), respecting the cap. Both paths call syncShopRating synchronously
+    // so the shop metafields the block SSRs from update right away.
+    if (intent === "feature-homepage") {
+      if (review.status !== "PUBLISHED") {
+        return json({
+          ok: false,
+          message: "Only published reviews can be featured in the homepage block.",
+        });
+      }
+      const settings = await getSettings(shop);
+      const stored = parseOverallWidget(settings.overallWidget);
+      // Drop stale entries (deleted / unpublished reviews) before applying the
+      // cap, so ghost ids never block featuring a real review.
+      let picked = stored.pickedIds;
+      if (picked.length) {
+        const valid = await prisma.review.findMany({
+          where: { shop, status: "PUBLISHED", id: { in: picked } },
+          select: { id: true },
+        });
+        const validIds = new Set(valid.map((r) => r.id));
+        picked = picked.filter((pickedId) => validIds.has(pickedId));
+      }
+      if (picked.includes(id)) {
+        return json({
+          ok: true,
+          message: "This review is already featured in the homepage block.",
+        });
+      }
+      if (picked.length >= MAX_OVERALL_PICKED) {
+        return json({
+          ok: false,
+          message: `The homepage block already has ${MAX_OVERALL_PICKED} hand-picked reviews — remove one on the Display order page first.`,
+        });
+      }
+      picked.push(id);
+      // Featuring switches the block to hand-picked so the button has a
+      // visible effect even when the block was on Auto; the auto ranking
+      // still backfills every remaining spot (SPEC-1.9 §1 picked-mode
+      // semantics), so nothing else about the block changes.
+      await prisma.setting.update({
+        where: { shop },
+        data: { overallWidget: JSON.stringify({ mode: "picked", pickedIds: picked }) },
+      });
+      await syncShopRating(shop, admin);
+      return json({
+        ok: true,
+        message: "Review featured — it now appears in your homepage Overall reviews block.",
+      });
+    }
+
+    if (intent === "unfeature-homepage") {
+      const settings = await getSettings(shop);
+      const stored = parseOverallWidget(settings.overallWidget);
+      const picked = stored.pickedIds.filter((pickedId) => pickedId !== id);
+      if (picked.length === stored.pickedIds.length) {
+        return json({
+          ok: true,
+          message: "This review is not featured in the homepage block.",
+        });
+      }
+      // The mode is left as the merchant set it: hand-picked with fewer picks
+      // (or none) backfills from the auto ranking, so removing a pick never
+      // empties the block.
+      await prisma.setting.update({
+        where: { shop },
+        data: {
+          overallWidget: JSON.stringify({ mode: stored.mode, pickedIds: picked }),
+        },
+      });
+      await syncShopRating(shop, admin);
+      return json({ ok: true, message: "Review removed from the homepage block." });
+    }
+
     return json({ ok: false, message: "Unknown action" }, { status: 400 });
   } catch (error) {
     console.error("Review detail action failed", error);
@@ -215,13 +447,15 @@ function AttrRow({ label, value }: { label: string; value: string | null }) {
 }
 
 export default function ReviewDetail() {
-  const { review, reportReasons, brand, translationProvider } =
+  const { review, reportReasons, brand, translationProvider, display, homepage } =
     useLoaderData<typeof loader>();
 
   const shopify = useAppBridge();
   const statusFetcher = useFetcher<typeof action>();
   const replyFetcher = useFetcher<typeof action>();
   const translateFetcher = useFetcher<typeof action>();
+  const featureFetcher = useFetcher<typeof action>();
+  const homepageFetcher = useFetcher<typeof action>();
 
   const copyBatchId = useCallback(async () => {
     const batchId = review.syntheticBatchId;
@@ -242,6 +476,8 @@ export default function ReviewDetail() {
   useResultToast(statusFetcher);
   useResultToast(replyFetcher);
   useResultToast(translateFetcher);
+  useResultToast(featureFetcher);
+  useResultToast(homepageFetcher);
 
   const [replyDraft, setReplyDraft] = useState(review.reply ?? "");
   const [deleteOpen, setDeleteOpen] = useState(false);
@@ -590,6 +826,127 @@ export default function ReviewDetail() {
                     Delete review
                   </Button>
                 </BlockStack>
+              </BlockStack>
+            </Card>
+
+            <Card>
+              <BlockStack gap="200">
+                <Text as="h2" variant="headingMd">
+                  Product page display
+                </Text>
+                {display.isPinned ? (
+                  <InlineStack gap="200" blockAlign="center" wrap>
+                    <Badge tone="info">Featured</Badge>
+                    <Text as="span" variant="bodySm" tone="subdued">
+                      Position {display.position} of {display.pinnedCount} featured
+                    </Text>
+                  </InlineStack>
+                ) : (
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    Featured reviews always appear first on the product page, in the
+                    order you pick.
+                  </Text>
+                )}
+                {display.isPinned ? (
+                  <Button
+                    fullWidth
+                    loading={featureFetcher.state !== "idle"}
+                    onClick={() =>
+                      featureFetcher.submit({ intent: "unfeature" }, { method: "post" })
+                    }
+                  >
+                    Unfeature
+                  </Button>
+                ) : (
+                  <Button
+                    fullWidth
+                    loading={featureFetcher.state !== "idle"}
+                    disabled={review.status !== "PUBLISHED"}
+                    onClick={() =>
+                      featureFetcher.submit({ intent: "feature" }, { method: "post" })
+                    }
+                  >
+                    Feature on product page
+                  </Button>
+                )}
+                {!display.isPinned && review.status !== "PUBLISHED" ? (
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    Only published reviews can be featured.
+                  </Text>
+                ) : null}
+                <Button
+                  variant="plain"
+                  url={`/app/display?product=${review.productId}`}
+                >
+                  Manage display order
+                </Button>
+              </BlockStack>
+            </Card>
+
+            <Card>
+              <BlockStack gap="200">
+                <Text as="h2" variant="headingMd">
+                  Homepage display
+                </Text>
+                {homepage.isFeatured ? (
+                  <InlineStack gap="200" blockAlign="center" wrap>
+                    <Badge tone="info">Featured</Badge>
+                    <Text as="span" variant="bodySm" tone="subdued">
+                      Position {homepage.position} of {homepage.featuredCount} in the
+                      homepage block
+                    </Text>
+                  </InlineStack>
+                ) : (
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    The Overall reviews block on your homepage can feature this
+                    review first, across all products.
+                  </Text>
+                )}
+                {homepage.isFeatured ? (
+                  <Button
+                    fullWidth
+                    loading={homepageFetcher.state !== "idle"}
+                    onClick={() =>
+                      homepageFetcher.submit(
+                        { intent: "unfeature-homepage" },
+                        { method: "post" },
+                      )
+                    }
+                  >
+                    Unfeature
+                  </Button>
+                ) : (
+                  <Button
+                    fullWidth
+                    loading={homepageFetcher.state !== "idle"}
+                    disabled={review.status !== "PUBLISHED"}
+                    onClick={() =>
+                      homepageFetcher.submit(
+                        { intent: "feature-homepage" },
+                        { method: "post" },
+                      )
+                    }
+                  >
+                    Feature on homepage
+                  </Button>
+                )}
+                {!homepage.isFeatured &&
+                review.status === "PUBLISHED" &&
+                homepage.mode === "auto" ? (
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    Your homepage block currently picks reviews automatically —
+                    featuring this review switches it to hand-picked (the auto
+                    ranking fills the remaining spots).
+                  </Text>
+                ) : null}
+                {!homepage.isFeatured && review.status !== "PUBLISHED" ? (
+                  <Text as="p" variant="bodySm" tone="subdued">
+                    Only published reviews can be featured.
+                  </Text>
+                ) : null}
+                <Button variant="plain" url="/app/display">
+                  Manage homepage reviews
+                </Button>
               </BlockStack>
             </Card>
 

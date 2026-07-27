@@ -11,10 +11,10 @@
  *     name pools.
  *   - The AI writes ONLY title / body / (optional) merchant reply, in the
  *     assigned language, via strict-JSON chunks of 8 reviews per Messages API
- *     call (shared low-level `callClaude` helper from ai.server.ts — the fetch
- *     is never duplicated). Parallelism 2 inside `generateSyntheticBatch`;
- *     per-chunk retry once; failed chunks are reported in `errors` without
- *     aborting the batch.
+ *     call (`callClaudeWithUsage` below — a usage-capturing mirror of the
+ *     ai.server.ts client, see its comment). Parallelism 2 inside
+ *     `generateSyntheticBatch`; per-chunk retry once; failed chunks are
+ *     reported in `errors` without aborting the batch.
  *   - Every row is flagged `isSynthetic: true, source: "synthetic",
  *     syntheticBatchId, syntheticGeneratedAt` with `ipHash: null`. Those
  *     columns are admin-only and are never serialized to the storefront.
@@ -30,6 +30,15 @@
  * key, network errors, malformed JSON and refusals all degrade into honest
  * per-chunk `errors` entries with `failed` counts. Database errors are caught
  * per row. `syntheticStats` never throws (the QA page loader depends on it).
+ *
+ * v1.7 (SPEC-1.7): the per-batch cap is gone and the background job runner
+ * (jobs.server.ts) drives the exported per-chunk unit `generateChunk`, which
+ * additionally reports ACTUAL Anthropic token usage, the model used and the
+ * wall-clock chunk duration (feeding GenerationJob cost actuals and the
+ * ModelThroughput calibration). `generateSyntheticChunk` and
+ * `generateSyntheticBatch` are unchanged wrappers for pre-1.7 callers.
+ * Deleting a batch now also cancels/deletes its GenerationJob rows
+ * (SPEC-1.7 §7).
  */
 import crypto from "node:crypto";
 import type { AdminApiContext as BaseAdminApiContext } from "@shopify/shopify-app-remix/server";
@@ -44,7 +53,6 @@ import {
 } from "~/types/cellexia";
 import type { ShopLocale } from "~/types/cellexia";
 import { recomputeProduct } from "./aggregates.server";
-import { callClaude } from "./ai.server";
 import { createReview } from "./reviews.server";
 import { getSettings } from "./settings.server";
 import {
@@ -62,10 +70,22 @@ import type { LengthBand } from "./synthetic-prompts.server";
  */
 export type AdminClient = Pick<BaseAdminApiContext, "graphql">;
 
-/** Reviews per Messages API call (SPEC-1.4 §C). */
+/** Reviews per Messages API call (SPEC-1.4 §C, unchanged by SPEC-1.7 §2). */
 export const SYNTHETIC_CHUNK_SIZE = 8;
-/** Hard cap per batch (SPEC-1.4 §C). */
+/**
+ * @deprecated v1.7 removed the per-batch cap (SPEC-1.7 §2) — this constant is
+ * no longer enforced anywhere and is kept only so pre-1.7 importers still
+ * compile. The only remaining bound is MAX_SYNTHETIC_REVIEWS below.
+ */
 export const MAX_SYNTHETIC_PER_BATCH = 200;
+/**
+ * Defensive ceiling on `count` (SPEC-1.7 §2 removes the product cap; the UI
+ * warns via the live estimate instead). This is NOT a product limit — it only
+ * stops a malformed/hostile request from making buildBatchPlan allocate an
+ * absurd plan (each spec is a few hundred bytes; 100k ≈ tens of MB, fine —
+ * 1e9 would OOM the process).
+ */
+export const MAX_SYNTHETIC_REVIEWS = 100000;
 /** Concurrent AI calls inside generateSyntheticBatch. */
 const AI_PARALLELISM = 2;
 /** Cap on collected error strings so a pathological run can't bloat responses. */
@@ -90,7 +110,7 @@ export interface SyntheticConfig {
   productTags: string[];
   /** Real variant titles of the product (may be empty). */
   productVariants: string[];
-  /** Number of reviews (default 20, 1–200). */
+  /** Number of reviews (default 20, min 1; uncapped since v1.7 — SPEC-1.7 §2). */
   count: number;
   /** Target average star rating (default 4.5, 1.0–5.0 step 0.1). */
   targetAverage: number;
@@ -223,7 +243,7 @@ export function parseSyntheticConfig(
     productType: cleanString(v.productType, 120) || null,
     productTags: tags,
     productVariants: variants,
-    count: clampInt(v.count, 1, MAX_SYNTHETIC_PER_BATCH, 20),
+    count: clampInt(v.count, 1, MAX_SYNTHETIC_REVIEWS, 20),
     targetAverage,
     verifiedPercent: clampInt(v.verifiedPercent, 0, 100, 80),
     languages: languages.length ? languages : (["en"] as ShopLocale[]),
@@ -266,7 +286,7 @@ const DISTRIBUTION_ANCHORS: ReadonlyArray<readonly [number, readonly number[]]> 
  * outliers — when the target is ≥ 4, per SPEC-1.4 §C.
  */
 export function deriveStarDistribution(count: number, targetAverage: number): number[] {
-  const n = Math.max(1, Math.min(MAX_SYNTHETIC_PER_BATCH, Math.round(count)));
+  const n = Math.max(1, Math.min(MAX_SYNTHETIC_REVIEWS, Math.round(count)));
   const avg = Math.min(5, Math.max(1, targetAverage));
 
   // 1. Interpolate a shape (percentages) between the neighboring anchors.
@@ -709,6 +729,36 @@ export function buildBatchPlan(config: SyntheticConfig, batchId: string): Synthe
 }
 
 /* ------------------------------------------------------------------------- *
+ * Plan cache (v1.7)
+ *
+ * generateChunk rebuilds the batch plan on every call so it can stay
+ * stateless across requests/restarts. That was fine at 200 reviews; an
+ * uncapped 10,000-review job would rebuild a 10,000-spec plan for each of its
+ * 1,250 chunks. The plan is a pure function of (config, batchId) and both
+ * driving flows (the pre-1.7 sequential-fetch page and the v1.7 job runner)
+ * always pass the identical stored config for a given batchId, so a tiny
+ * keyed cache is safe. Bounded to a handful of entries — at most 2 jobs run
+ * per shop and the app is single-instance.
+ * ------------------------------------------------------------------------- */
+
+const PLAN_CACHE_LIMIT = 4;
+const planCache = new Map<string, SyntheticReviewSpec[]>();
+
+function planFor(config: SyntheticConfig, batchId: string): SyntheticReviewSpec[] {
+  const key = `${batchId}|${config.productId}|${config.count}`;
+  const hit = planCache.get(key);
+  if (hit) return hit;
+  const plan = buildBatchPlan(config, batchId);
+  planCache.set(key, plan);
+  while (planCache.size > PLAN_CACHE_LIMIT) {
+    const oldest = planCache.keys().next().value;
+    if (oldest === undefined) break;
+    planCache.delete(oldest);
+  }
+  return plan;
+}
+
+/* ------------------------------------------------------------------------- *
  * AI text generation (title / body / reply only)
  * ------------------------------------------------------------------------- */
 
@@ -731,7 +781,12 @@ const RESULTS_PROMPT: Record<string, string> = {
   too_early: "too early to tell",
 };
 
-function buildSystemPrompt(brandDisplayName: string): string {
+/**
+ * The generator's system prompt. Exported (v1.7) so estimate.server.ts can
+ * token-count ONE real chunk prompt with the exact builders the generator
+ * uses (SPEC-1.7 §4 "counted baseline").
+ */
+export function buildSystemPrompt(brandDisplayName: string): string {
   return `You write realistic customer product reviews used as internal QA/test data for a premium anti-aging skincare storefront. Each request supplies real product context and a list of review specifications. For every spec you write ONLY the free-text parts: a natural title, the review body, and (when reply_needed is true) the merchant's public reply. Every structured fact (rating, language, verified, variant, usage time, results) is already fixed — your text must agree with it.
 
 Respond with a single JSON array and NOTHING else — no markdown fences, no commentary before or after:
@@ -750,7 +805,11 @@ Hard rules:
 - These are fictional reviews by fictional customers. Do not mention AI, QA, testing, or that anything is synthetic.`;
 }
 
-function buildUserContent(config: SyntheticConfig, specs: SyntheticReviewSpec[]): string {
+/**
+ * The generator's per-chunk user message (product context + spec list).
+ * Exported (v1.7) for the same token-counting purpose as buildSystemPrompt.
+ */
+export function buildUserContent(config: SyntheticConfig, specs: SyntheticReviewSpec[]): string {
   const lines: string[] = [];
   lines.push("PRODUCT CONTEXT");
   lines.push(`Title: ${config.productTitle}`);
@@ -832,10 +891,142 @@ interface GeneratedText {
   reply: string | null;
 }
 
+/* ------------------------------------------------------------------------- *
+ * Low-level Claude call WITH usage capture (v1.7)
+ * ------------------------------------------------------------------------- */
+
+const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
+const ANTHROPIC_VERSION = "2023-06-01";
+
+/** Outcome of one usage-aware Claude Messages call. */
+interface ClaudeUsageOutcome {
+  /** Concatenated text blocks; null on any failure or refusal. */
+  text: string | null;
+  /** Anthropic-reported usage summed over every billed HTTP attempt. */
+  inputTokens: number;
+  outputTokens: number;
+  /** True when the API rejected the key itself (401/403) — fatal for a job. */
+  authFailed: boolean;
+}
+
+/**
+ * Mirror of ai.server.ts `callClaude` (same URL, headers, one retry on
+ * 429/5xx/network, refusal → null) that ADDITIONALLY captures the `usage`
+ * block of the response and flags key-rejection (401/403).
+ *
+ * WHY A LOCAL MIRROR INSTEAD OF THE SHARED HELPER: SPEC-1.7 §1 requires
+ * GenerationJob.inputTokens / outputTokens (and the ModelThroughput
+ * calibration of §4) to hold ACTUAL token usage, but `callClaude` returns
+ * only the text and discards `usage`. ai.server.ts is owned by the estimates
+ * workstream in this release (it gains `countTokens` there), so the raw-fetch
+ * client is mirrored here rather than edited concurrently. Keep the request /
+ * retry semantics of the two functions in sync.
+ */
+async function callClaudeWithUsage(
+  apiKey: string,
+  model: string,
+  system: string,
+  userContent: string,
+  maxTokens = 6000,
+): Promise<ClaudeUsageOutcome> {
+  const body = JSON.stringify({
+    model,
+    max_tokens: maxTokens,
+    system,
+    messages: [{ role: "user", content: userContent }],
+  });
+  const outcome: ClaudeUsageOutcome = {
+    text: null,
+    inputTokens: 0,
+    outputTokens: 0,
+    authFailed: false,
+  };
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const response = await fetch(ANTHROPIC_MESSAGES_URL, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": ANTHROPIC_VERSION,
+        },
+        body,
+      });
+
+      if (response.status === 429 || response.status >= 500) {
+        // Transient — back off briefly and retry once.
+        if (attempt === 0) {
+          await sleepMs(1500);
+          continue;
+        }
+        console.error(`[cellexia] Claude API transient error ${response.status}`);
+        return outcome;
+      }
+
+      if (!response.ok) {
+        const detail = await response.text().catch(() => "");
+        console.error(
+          `[cellexia] Claude API error ${response.status}: ${detail.slice(0, 300)}`,
+        );
+        outcome.authFailed = response.status === 401 || response.status === 403;
+        return outcome;
+      }
+
+      const data = (await response.json()) as {
+        content?: Array<{ type?: string; text?: string }>;
+        stop_reason?: string;
+        usage?: { input_tokens?: number; output_tokens?: number };
+      };
+      // A 200 was billed — count its usage whatever happens next.
+      outcome.inputTokens += toTokenCount(data.usage?.input_tokens);
+      outcome.outputTokens += toTokenCount(data.usage?.output_tokens);
+      if (data.stop_reason === "refusal") return outcome;
+      const text = Array.isArray(data.content)
+        ? data.content
+            .filter((block) => block && block.type === "text" && typeof block.text === "string")
+            .map((block) => block.text as string)
+            .join("\n")
+        : "";
+      outcome.text = text.length > 0 ? text : null;
+      return outcome;
+    } catch (error) {
+      if (attempt === 0) {
+        await sleepMs(1000);
+        continue;
+      }
+      console.error("[cellexia] Claude API request failed", error);
+      return outcome;
+    }
+  }
+  return outcome;
+}
+
+function toTokenCount(value: unknown): number {
+  const n = Number(value);
+  return Number.isFinite(n) && n > 0 ? Math.round(n) : 0;
+}
+
+function sleepMs(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+/** Texts + usage produced for one chunk (usage covers ALL attempts made). */
+interface ChunkTextsOutcome {
+  /** Per-spec texts keyed by position in `specs`; null when every attempt failed. */
+  texts: Map<number, GeneratedText> | null;
+  inputTokens: number;
+  outputTokens: number;
+  authFailed: boolean;
+}
+
 /**
  * One Messages API call for ≤ 8 review specs (retried once on any failure —
- * network, refusal, unparseable output). Returns per-spec texts keyed by the
- * spec's position in `specs`, or null when both attempts failed.
+ * network, refusal, unparseable output). Token usage is accumulated across
+ * every billed attempt — a chunk whose first response could not be parsed
+ * still cost real money and must show up in the job's actuals.
  */
 async function generateChunkTexts(
   apiKey: string,
@@ -843,12 +1034,21 @@ async function generateChunkTexts(
   brandDisplayName: string,
   config: SyntheticConfig,
   specs: SyntheticReviewSpec[],
-): Promise<Map<number, GeneratedText> | null> {
+): Promise<ChunkTextsOutcome> {
   const system = buildSystemPrompt(brandDisplayName);
   const userContent = buildUserContent(config, specs);
+  let inputTokens = 0;
+  let outputTokens = 0;
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
-    const raw = await callClaude(apiKey, model, system, userContent, 6000);
+    const call = await callClaudeWithUsage(apiKey, model, system, userContent, 6000);
+    inputTokens += call.inputTokens;
+    outputTokens += call.outputTokens;
+    if (call.authFailed) {
+      // Retrying a rejected key is pointless — bail out immediately.
+      return { texts: null, inputTokens, outputTokens, authFailed: true };
+    }
+    const raw = call.text;
     if (!raw) continue; // network error / refusal / empty — retry once
 
     const items = extractJsonArray(raw);
@@ -878,10 +1078,10 @@ async function generateChunkTexts(
       byIndex.set(index, { title, body, reply });
     });
 
-    if (byIndex.size > 0) return byIndex;
+    if (byIndex.size > 0) return { texts: byIndex, inputTokens, outputTokens, authFailed: false };
     console.error("[cellexia] synthetic: AI output contained no usable reviews");
   }
-  return null;
+  return { texts: null, inputTokens, outputTokens, authFailed: false };
 }
 
 /* ------------------------------------------------------------------------- *
@@ -917,11 +1117,56 @@ export function isValidBatchId(value: unknown): value is string {
 }
 
 /**
- * Generates one chunk of ≤ SYNTHETIC_CHUNK_SIZE reviews. The first call
- * passes `batchId: null` (a fresh UUID is minted); subsequent calls pass the
- * returned batchId so the identical deterministic plan is rebuilt and the
- * next slice processed. All AI failure modes downgrade to `failed` counts +
- * `errors` entries — this function does not throw for them.
+ * `SyntheticChunkResult` extended with what the v1.7 background job runner
+ * needs for cost actuals, calibration and fatal-error detection (SPEC-1.7
+ * §1/§3/§4).
+ */
+export interface GenerateChunkResult extends SyntheticChunkResult {
+  /** ACTUAL Anthropic-reported token usage for this chunk (all attempts). */
+  inputTokens: number;
+  outputTokens: number;
+  /** Wall-clock seconds spent on this chunk (AI calls + row persistence). */
+  seconds: number;
+  /** Settings.aiModel that served the chunk; null when settings failed. */
+  model: string | null;
+  /** True when the API rejected the key (401/403) — fatal for a job. */
+  authFailed: boolean;
+}
+
+/**
+ * The per-chunk unit of work (SPEC-1.7 §3) — extracted from the SPEC-1.4
+ * chunk logic so the background job runner can drive it directly. Generates
+ * one chunk of ≤ SYNTHETIC_CHUNK_SIZE reviews from the deterministic batch
+ * plan and persists them immediately (rows are never accumulated in memory —
+ * SPEC-1.7 §2). The first call may pass `batchId: null` (a fresh UUID is
+ * minted); subsequent calls pass the returned batchId so the identical plan
+ * is rebuilt and the next slice processed. All AI failure modes downgrade to
+ * `failed` counts + `errors` entries — this function does not throw for them.
+ *
+ * `indices` (optional, v1.7.x): an explicit list of plan indices (≤ chunk
+ * size) to process instead of the contiguous `[start, start+8)` slice. The
+ * job runner uses it to resume by exclusion — regenerating exactly the specs
+ * whose rows are missing after an out-of-order crash/cancel, which a
+ * contiguous slice cannot express. Omitted by all pre-1.7 callers, whose
+ * behavior is unchanged.
+ */
+export async function generateChunk(
+  shop: string,
+  config: SyntheticConfig,
+  batchId: string | null,
+  start: number,
+  indices?: readonly number[],
+): Promise<GenerateChunkResult> {
+  const startedAtMs = Date.now();
+  const result = await generateChunkInner(shop, config, batchId, start, indices);
+  return { ...result, seconds: (Date.now() - startedAtMs) / 1000 };
+}
+
+/**
+ * Pre-1.7 signature kept byte-compatible for existing callers (the
+ * qa-generator route's sequential-fetch flow and generateSyntheticBatch):
+ * same inputs, same result shape, same behavior — v1.7's extra usage/timing
+ * fields are simply not exposed here.
  */
 export async function generateSyntheticChunk(
   shop: string,
@@ -929,12 +1174,38 @@ export async function generateSyntheticChunk(
   batchId: string | null,
   start: number,
 ): Promise<SyntheticChunkResult> {
+  const result = await generateChunk(shop, config, batchId, start);
+  return {
+    batchId: result.batchId,
+    start: result.start,
+    processed: result.processed,
+    created: result.created,
+    failed: result.failed,
+    errors: result.errors,
+    done: result.done,
+    total: result.total,
+    ...(result.code ? { code: result.code } : {}),
+  };
+}
+
+async function generateChunkInner(
+  shop: string,
+  config: SyntheticConfig,
+  batchId: string | null,
+  start: number,
+  indices?: readonly number[],
+): Promise<Omit<GenerateChunkResult, "seconds">> {
   const total = config.count;
   const id = batchId && isValidBatchId(batchId) ? batchId : crypto.randomUUID();
   const from = Math.min(Math.max(0, Math.floor(start)), Math.max(0, total - 1));
   const errors: string[] = [];
+  // Specs this chunk is expected to process — used by the failure paths that
+  // run before (or instead of) the plan slice being available.
+  const expected = indices
+    ? Math.min(indices.length, SYNTHETIC_CHUNK_SIZE)
+    : Math.min(SYNTHETIC_CHUNK_SIZE, total - from);
 
-  const base: SyntheticChunkResult = {
+  const base: Omit<GenerateChunkResult, "seconds"> = {
     batchId: id,
     start: from,
     processed: 0,
@@ -943,6 +1214,10 @@ export async function generateSyntheticChunk(
     errors,
     done: false,
     total,
+    inputTokens: 0,
+    outputTokens: 0,
+    model: null,
+    authFailed: false,
   };
 
   let settings: Setting;
@@ -951,14 +1226,16 @@ export async function generateSyntheticChunk(
   } catch (error) {
     console.error("[cellexia] synthetic: settings lookup failed", error);
     pushError(errors, "Settings could not be loaded — please try again.");
-    return { ...base, failed: Math.min(SYNTHETIC_CHUNK_SIZE, total - from), errors };
+    return { ...base, failed: expected, errors };
   }
+  const model = settings.aiModel;
   const apiKey = settings.aiProvider === "anthropic" ? settings.anthropicApiKey : null;
   if (!apiKey) {
     pushError(errors, NO_AI_KEY_MESSAGE);
     return {
       ...base,
-      failed: Math.min(SYNTHETIC_CHUNK_SIZE, total - from),
+      model,
+      failed: expected,
       errors,
       code: "no_ai_key",
     };
@@ -966,20 +1243,33 @@ export async function generateSyntheticChunk(
 
   let specs: SyntheticReviewSpec[];
   try {
-    specs = buildBatchPlan(config, id).slice(from, from + SYNTHETIC_CHUNK_SIZE);
+    const plan = planFor(config, id);
+    // v1.7.x: an explicit index list resumes by exclusion (only the specs
+    // whose rows are missing); otherwise the classic contiguous slice at
+    // `start` is processed — byte-identical to pre-1.7 behavior.
+    specs = indices
+      ? indices
+          .filter((i) => Number.isInteger(i) && i >= 0 && i < plan.length)
+          .slice(0, SYNTHETIC_CHUNK_SIZE)
+          .map((i) => plan[i])
+      : plan.slice(from, from + SYNTHETIC_CHUNK_SIZE);
   } catch (error) {
     console.error("[cellexia] synthetic: batch plan failed", error);
     pushError(errors, "The batch plan could not be built — please try again.");
-    return { ...base, failed: Math.min(SYNTHETIC_CHUNK_SIZE, total - from), errors };
+    return { ...base, model, failed: expected, errors };
   }
   if (specs.length === 0) {
-    return { ...base, done: from + SYNTHETIC_CHUNK_SIZE >= total };
+    return { ...base, model, done: indices ? true : from + SYNTHETIC_CHUNK_SIZE >= total };
   }
+  // Whether this chunk reaches the end of the plan. For a contiguous slice
+  // this equals the old `from + specs.length >= total`; for an index list it
+  // keys off the highest plan index processed (the runner ignores `done`).
+  const chunkDone = specs[specs.length - 1].index + 1 >= total;
 
   const generatedAt = new Date();
-  let texts: Map<number, GeneratedText> | null = null;
+  let outcome: ChunkTextsOutcome;
   try {
-    texts = await generateChunkTexts(
+    outcome = await generateChunkTexts(
       apiKey,
       settings.aiModel,
       settings.brandDisplayName,
@@ -987,22 +1277,43 @@ export async function generateSyntheticChunk(
       specs,
     );
   } catch (error) {
-    // callClaude never throws, but stay defensive around the whole AI path.
+    // The AI path never throws by design, but stay defensive around it.
     console.error("[cellexia] synthetic: text generation crashed", error);
-    texts = null;
+    outcome = { texts: null, inputTokens: 0, outputTokens: 0, authFailed: false };
   }
+  const usage = { inputTokens: outcome.inputTokens, outputTokens: outcome.outputTokens };
 
-  if (!texts) {
+  if (outcome.authFailed) {
     pushError(
       errors,
-      `Reviews ${from + 1}–${from + specs.length}: the AI did not return usable review text (after one retry).`,
+      "The Anthropic API rejected the configured key — update it under Settings → AI Summary.",
     );
     return {
       ...base,
+      ...usage,
+      model,
+      authFailed: true,
       processed: specs.length,
       failed: specs.length,
       errors,
-      done: from + specs.length >= total,
+      done: chunkDone,
+    };
+  }
+
+  const texts = outcome.texts;
+  if (!texts) {
+    pushError(
+      errors,
+      `Reviews ${specs[0].index + 1}–${specs[specs.length - 1].index + 1}: the AI did not return usable review text (after one retry).`,
+    );
+    return {
+      ...base,
+      ...usage,
+      model,
+      processed: specs.length,
+      failed: specs.length,
+      errors,
+      done: chunkDone,
     };
   }
 
@@ -1013,7 +1324,9 @@ export async function generateSyntheticChunk(
     const text = texts.get(i);
     if (!text) {
       failed += 1;
-      pushError(errors, `Review ${from + i + 1}: missing from the AI response.`);
+      // spec.index is the plan index — identical to `from + i` for the
+      // contiguous slice, and the honest position for an index list.
+      pushError(errors, `Review ${spec.index + 1}: missing from the AI response.`);
       continue;
     }
     try {
@@ -1048,18 +1361,20 @@ export async function generateSyntheticChunk(
       created += 1;
     } catch (error) {
       failed += 1;
-      console.error(`[cellexia] synthetic: review ${from + i + 1} could not be saved`, error);
-      pushError(errors, `Review ${from + i + 1}: could not be saved to the database.`);
+      console.error(`[cellexia] synthetic: review ${spec.index + 1} could not be saved`, error);
+      pushError(errors, `Review ${spec.index + 1}: could not be saved to the database.`);
     }
   }
 
   return {
     ...base,
+    ...usage,
+    model,
     processed: specs.length,
     created,
     failed,
     errors,
-    done: from + specs.length >= total,
+    done: chunkDone,
   };
 }
 
@@ -1152,14 +1467,47 @@ async function deleteReviewRows(shop: string, ids: string[]): Promise<number> {
 }
 
 /**
+ * v1.7 (SPEC-1.7 §7): deleting a batch must also delete/cancel its
+ * GenerationJob rows. QUEUED jobs are cancelled outright, RUNNING jobs get a
+ * cooperative cancel request (the runner stops after the in-flight chunk —
+ * if that chunk lands a handful of rows after the deletion, they show up as
+ * a small remnant batch the merchant can delete again), and terminal rows
+ * (including the just-cancelled QUEUED ones) are removed so the jobs table
+ * never points at a batch that no longer exists. Best-effort by design — a
+ * job-table hiccup must never block the review deletion itself.
+ */
+async function cancelAndDeleteJobs(shop: string, batchId?: string): Promise<void> {
+  const scope = batchId ? { shop, batchId } : { shop };
+  try {
+    await prisma.generationJob.updateMany({
+      where: { ...scope, status: "QUEUED" },
+      data: { status: "CANCELLED", cancelRequested: true, finishedAt: new Date() },
+    });
+    await prisma.generationJob.updateMany({
+      where: { ...scope, status: "RUNNING" },
+      data: { cancelRequested: true },
+    });
+    await prisma.generationJob.deleteMany({
+      where: { ...scope, status: { in: ["COMPLETED", "FAILED", "CANCELLED"] } },
+    });
+  } catch (error) {
+    console.error("[cellexia] synthetic: job cleanup for batch deletion failed", error);
+  }
+}
+
+/**
  * Deletes every review of one synthetic batch (translations included; media
- * and votes cascade). Returns the number of deleted reviews. Aggregate
- * re-sync is the caller's job (the route holds the admin client) — use
+ * and votes cascade), and cancels/deletes the batch's GenerationJob rows
+ * (SPEC-1.7 §7). Returns the number of deleted reviews. Aggregate re-sync is
+ * the caller's job (the route holds the admin client) — use
  * `syntheticProductIds` BEFORE deleting to know which products to re-sync.
  */
 export async function deleteSyntheticBatch(shop: string, batchId: string): Promise<number> {
   const id = typeof batchId === "string" ? batchId.trim() : "";
   if (!id) return 0;
+  // Before the early return: a QUEUED job may not have written any rows yet
+  // and still must be cancelled when its batch is deleted.
+  await cancelAndDeleteJobs(shop, id);
   const rows = await prisma.review.findMany({
     where: { shop, isSynthetic: true, syntheticBatchId: id },
     select: { id: true },
@@ -1171,8 +1519,12 @@ export async function deleteSyntheticBatch(shop: string, batchId: string): Promi
   );
 }
 
-/** Deletes ALL synthetic reviews for the shop. Returns the deleted count. */
+/**
+ * Deletes ALL synthetic reviews for the shop (and cancels/deletes every
+ * generation job — SPEC-1.7 §7). Returns the deleted count.
+ */
 export async function deleteAllSynthetic(shop: string): Promise<number> {
+  await cancelAndDeleteJobs(shop);
   const rows = await prisma.review.findMany({
     where: { shop, isSynthetic: true },
     select: { id: true },

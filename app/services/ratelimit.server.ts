@@ -3,8 +3,8 @@
  *
  * Buckets are keyed `shop:ip:action` with per-action hourly limits:
  * submit 5/h, vote 60/h, report 20/h, translate 120/h, badges 300/h
- * (SPEC-1.5 §2). Routes that receive `false` respond
- * `429 {ok:false, errors:{_:"rate_limited"}}`.
+ * (SPEC-1.5 §2), brand 120/h (SPEC-1.9 §1). Routes that receive `false`
+ * respond `429 {ok:false, errors:{_:"rate_limited"}}`.
  *
  * MULTI-INSTANCE CAVEAT: this limiter is per Node.js process. When the app
  * runs on more than one instance (horizontal scaling, serverless with many
@@ -22,6 +22,7 @@ export const RATE_LIMITS = {
   report: { max: 20, windowMs: HOUR_MS },
   translate: { max: 120, windowMs: HOUR_MS },
   badges: { max: 300, windowMs: HOUR_MS },
+  brand: { max: 120, windowMs: HOUR_MS },
 } as const;
 
 export type RateLimitAction = keyof typeof RATE_LIMITS;

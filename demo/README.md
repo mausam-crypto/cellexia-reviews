@@ -8,8 +8,8 @@ backend, no network requests of any kind.
 
 | File | Role |
 | --- | --- |
-| `demo/index.html` | Product-page stand-in. Contains the inline `#cx-i18n` dictionary (English strings from `extensions/cellexia-reviews/locales/en.default.json`, flattened exactly as `snippets/cx-i18n.liquid` does), the `#cx-embed-config` JSON the v1.5 app embed renders (here it switches on the site-wide badge injector), the widget root `<div id="cellexia-reviews" class="cx" … data-demo="true">` with the same data attributes the Liquid block renders, and a six-card **product card grid** under the widget for the v1.5 star badges. |
-| `demo/mock-data.js` | Defines `window.CellexiaDemoData` — product stats, AI summary + 8 topic chips, 28 multilingual reviews (en/fr/de/es/ja/ar), media gallery, canned translations, and the v1.5 `badges` map (per-handle average + count) for the card grid. Shapes match the storefront JSON API exactly (see the DTOs in `app/types/cellexia.ts` and `app/routes/proxy.api.reviews.tsx`). |
+| `demo/index.html` | Product-page stand-in. Contains the inline `#cx-i18n` dictionary (English strings from `extensions/cellexia-reviews/locales/en.default.json`, flattened exactly as `snippets/cx-i18n.liquid` does), the `#cx-embed-config` JSON the v1.5 app embed renders (here it switches on the site-wide badge injector), the widget root `<div id="cellexia-reviews" class="cx" … data-demo="true">` with the same data attributes the Liquid block renders, the v1.9 **Overall reviews** showcase (the brand-wide block's server-rendered markup, in both Grid and Carousel layout), and a six-card **product card grid** for the v1.5 star badges. |
+| `demo/mock-data.js` | Defines `window.CellexiaDemoData` — product stats, AI summary + 8 topic chips, 28 multilingual reviews (en/fr/de/es/ja/ar), media gallery, canned translations, the v1.5 `badges` map (per-handle average + count) for the card grid, and the v1.9 `brand` payload (shop-wide stats + top reviews across products) for the Overall reviews showcase. Shapes match the storefront JSON API exactly (see the DTOs in `app/types/cellexia.ts` and `app/routes/proxy.api.reviews.tsx`). |
 | `../extensions/cellexia-reviews/assets/cellexia-reviews.css` | The real widget stylesheet (loaded via relative path). |
 | `../extensions/cellexia-reviews/assets/cellexia-reviews.js` | The real widget script. Because the root carries `data-demo="true"`, it reads `window.CellexiaDemoData` instead of fetching `/apps/cellexia/api/*`. |
 
@@ -53,6 +53,38 @@ The switch is CSS-only: the `.cx[data-cx-skin="cellexia"]` and `.cx[data-cx-skin
 override sections at the end of `cellexia-reviews.css` do all the theming — no content, strings
 or behavior change.
 
+## The Overall reviews showcase (v1.9 brand-wide block)
+
+Right below the widget, an "Overall reviews — the brand-wide block" section shows the v1.9
+**Cellexia Overall Reviews** theme block the way a merchant would place it on the home page —
+twice, once per layout:
+
+- **Grid layout (default)**: the full block — centered header with a large 4.8-star row,
+  "4.8 out of 5", "Based on 12,438 reviews across our products" and the trust line
+  "93% from verified purchases" (the block only shows it when the verified share is ≥ 60%);
+  clickable **distribution bars** (89 / 7 / 2 / 1 / 1%); six condensed top-review cards across
+  four products — never more than two per product, the auto ranking's diversity rule — each
+  with stars, bold title, a clamped excerpt with **Read more**, author, date,
+  **Verified Purchase** badge, a media indicator on reviews with photos, the product name and
+  a "Read 6,214 reviews" link to that product's review section; and the optional CTA button
+  ("Shop bestsellers").
+- **Carousel layout**: the same header and cards as one swipe/scroll row — the script adds
+  the previous/next arrows on hydrate, and the row scrolls natively even without them (that
+  is the block's no-JS behavior too).
+
+Everything resolves locally: the section's roots carry `data-demo="true"`, so the
+distribution-bar filter reads `CellexiaDemoData.brand` instead of calling
+`GET /apps/cellexia/api/brand-reviews`. Click a bar to re-render the cards with only that
+star level (the mock pool contains reviews at every star level, including a 2-star and a
+1-star with brand replies), and use the **All stars** chip to return to the featured set.
+The **Design** switcher restyles both layouts along with the widget — the Cellexia skin's
+uppercase heading, Luxe's serif heading and champagne stars. Product links are inert on this
+page, like the card grid's.
+
+Like every showcase on this page, the section runs on its own sample payload: the product
+widget's header (50,506 ratings for one product), the badges map and the brand payload
+(12,438 reviews shop-wide) are three independent mock datasets, not one consistent store.
+
 ## The product card grid (v1.5 site-wide star badges)
 
 Below the widget, a "More from Cellexia" grid of six fake product cards mimics a theme's
@@ -94,6 +126,12 @@ real product-URL paths because that is how the injector derives each card's hand
   **Translate all reviews** work offline.
 - A `badges` map (product handle → `{ average, count }`) for four of the six card-grid
   products — the inner `badges` object of the `GET /apps/cellexia/api/badges` response.
+- A v1.9 `brand` payload — the `GET /apps/cellexia/api/brand-reviews` response shape:
+  `stats` (4.8 average, 12,438 reviews, 93% verified, a largest-remainder distribution) and a
+  `reviews` pool of ten brand-wide reviews across the four demo products (the six featured
+  cards, rating ≥ 4 with at most two per product, plus a 4/3/2/1-star tail so every
+  distribution bar has content), each carrying its `product` (title, handle, url) and its
+  `productReviewCount` for the "Read N reviews" card link.
 
 ## What is interactive
 
@@ -110,15 +148,23 @@ Everything the real widget does, resolved locally:
   "Previewing the three design versions" above.
 - The card grid's **star badges** inject themselves from the mock badges payload — see
   "The product card grid" above.
+- The **Overall reviews** showcase: **Read more** on the longer cards, the carousel's
+  previous/next arrows and snap scrolling, and the clickable **distribution bars** with their
+  **All stars** reset chip — all resolved from the mock brand payload, see "The Overall
+  reviews showcase" above.
 
 ## Editing the mock data
 
 Open `demo/mock-data.js` and edit `window.CellexiaDemoData`. Keep the shapes identical to the
 storefront API contract (`app/types/cellexia.ts` `ListResponse`): `product`, `summary`, `reviews`, `media_gallery`, `page`,
 `per_page`, `total`, `total_pages`, plus `translations["<reviewId>"]["<target>"]` for the offline
-translate flow and `badges["<handle>"] = { average, count }` for the card grid (add the same
+translate flow, `badges["<handle>"] = { average, count }` for the card grid (add the same
 handle to a card in `index.html` to see it badged; leave a handle out to see its card stay
-clean). Option keys (`ageRange`, `skinConcerns`, `timeUsing`, `resultsSeen`) must come
+clean), and `brand = { stats, reviews }` for the Overall reviews showcase (keep each entry a
+full ReviewDTO plus its `product` and a top-level `productReviewCount`; note the six
+server-rendered cards in `index.html` are static markup — if you change the first six pool
+entries, update those cards to match).
+Option keys (`ageRange`, `skinConcerns`, `timeUsing`, `resultsSeen`) must come
 from the canonical lists in `app/types/cellexia.ts`.
 
 ## What this page is for

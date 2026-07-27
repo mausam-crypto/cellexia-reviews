@@ -66,8 +66,41 @@
         }
       }
     },
+    "overall_block": {
+      "name": "Cellexia Recenzii generale",
+      "settings": {
+        "heading": {
+          "label": "Titlu"
+        },
+        "max_reviews": {
+          "label": "Numărul de recenzii afișate"
+        },
+        "layout": {
+          "label": "Aspect",
+          "options__1": {
+            "label": "Grilă"
+          },
+          "options__2": {
+            "label": "Carusel"
+          }
+        },
+        "show_distribution": {
+          "label": "Afișează barele de distribuție a evaluărilor"
+        },
+        "show_product_links": {
+          "label": "Leagă fiecare recenzie de produsul său"
+        },
+        "cta_label": {
+          "label": "Eticheta butonului (opțional)"
+        },
+        "cta_url": {
+          "label": "Linkul butonului"
+        }
+      }
+    },
     "defaults": {
-      "heading": "Recenziile clienților"
+      "heading": "Recenziile clienților",
+      "overall_heading": "Ce spun clienții noștri"
     }
   }
 }

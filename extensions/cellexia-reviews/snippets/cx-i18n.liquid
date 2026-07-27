@@ -80,6 +80,7 @@
   "review.translate": {{ 'cellexia.review.translate' | t | json }},
   "review.translating": {{ 'cellexia.review.translating' | t | json }},
   "review.see_original": {{ 'cellexia.review.see_original' | t | json }},
+  "review.see_translation": {{ 'cellexia.review.see_translation' | t | json }},
   "review.translated_from": {{ 'cellexia.review.translated_from' | t: language: '[[language]]' | json }},
   "review.reply_from": {{ 'cellexia.review.reply_from' | t: brand: '[[brand]]' | json }},
   "review.read_more": {{ 'cellexia.review.read_more' | t | json }},
@@ -131,6 +132,13 @@
   "preview.badge": {{ 'cellexia.preview.badge' | t | json }},
   "preview.note": {{ 'cellexia.preview.note' | t | json }},
   "preview.exit": {{ 'cellexia.preview.exit' | t | json }},
+  {%- comment -%}
+    v1.9 (SPEC-1.9 §5) — brand-wide "Overall reviews" block strings. Position
+    mirrors locales/en.default.json (after preview, before notice).
+  {%- endcomment %}
+  "overall.based_on": {{ 'cellexia.overall.based_on' | t: count: '[[count]]' | json }},
+  "overall.verified_share": {{ 'cellexia.overall.verified_share' | t: percent: '[[percent]]' | json }},
+  "overall.read_reviews": {{ 'cellexia.overall.read_reviews' | t: count: '[[count]]' | json }},
   {%- comment -%}
     v1.6 (SPEC-1.6 §4/§6) merchant notices. These MUST be emitted here: the JS
     only carries an English NOTICE_FALLBACK, so without these keys every notice

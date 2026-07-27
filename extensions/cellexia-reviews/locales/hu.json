@@ -71,6 +71,7 @@
       "translate": "Fordítás",
       "translating": "Fordítás folyamatban…",
       "see_original": "Eredeti megtekintése",
+      "see_translation": "Fordítás megtekintése",
       "translated_from": "Fordítás a következő nyelvről: [[language]]",
       "reply_from": "[[brand]] válasza",
       "read_more": "Tovább",
@@ -136,6 +137,11 @@
       "badge": "Előnézet mód",
       "note": "Ezt csak Ön látja – a widget nem látható a látogatók számára.",
       "exit": "Kilépés az előnézetből"
+    },
+    "overall": {
+      "based_on": "Összes termékünk [[count]] értékelése alapján",
+      "verified_share": "[[percent]]% hitelesített vásárlásból",
+      "read_reviews": "[[count]] értékelés elolvasása"
     },
     "notice": {
       "expired_title": "Az előnézeti munkamenet lejárt",

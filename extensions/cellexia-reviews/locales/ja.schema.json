@@ -66,8 +66,41 @@
         }
       }
     },
+    "overall_block": {
+      "name": "Cellexia 総合レビュー",
+      "settings": {
+        "heading": {
+          "label": "見出し"
+        },
+        "max_reviews": {
+          "label": "表示するレビュー数"
+        },
+        "layout": {
+          "label": "レイアウト",
+          "options__1": {
+            "label": "グリッド"
+          },
+          "options__2": {
+            "label": "カルーセル"
+          }
+        },
+        "show_distribution": {
+          "label": "評価分布バーを表示"
+        },
+        "show_product_links": {
+          "label": "各レビューを商品にリンク"
+        },
+        "cta_label": {
+          "label": "ボタンのラベル（任意）"
+        },
+        "cta_url": {
+          "label": "ボタンのリンク"
+        }
+      }
+    },
     "defaults": {
-      "heading": "カスタマーレビュー"
+      "heading": "カスタマーレビュー",
+      "overall_heading": "お客様の声"
     }
   }
 }

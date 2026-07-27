@@ -45,11 +45,11 @@ Three ways to get reviews into the app:
 
 - **Import / Export** — bring your existing reviews over from a CSV export of your old app
   (Judge.me, Loox and Yotpo files are recognized automatically). See
-  `docs/CONFIGURATION.md` §8.
+  `docs/CONFIGURATION.md` §9.
 - **Bulk add** — type in reviews you have on paper or in email, one product at a time
-  (`docs/CONFIGURATION.md` §9).
+  (`docs/CONFIGURATION.md` §10).
 - **QA data** — generate realistic test reviews to judge the layout before real ones arrive
-  (`docs/CONFIGURATION.md` §10). Delete every batch before going live to real customers.
+  (`docs/CONFIGURATION.md` §11). Delete every batch before going live to real customers.
 
 You never have to guess: the **Storefront connection** card at the top of the Dashboard has a
 **Review data** check that states exactly how many published reviews the app holds, and warns
@@ -90,11 +90,20 @@ block was added to the product template — or, if you use the app embed instead
 "Show stars under the product title" setting is on (`docs/INSTALL.md` §8).
 
 **Why don't my product cards show star badges on collections or the home page?**
-Card badges come from the **app embed**, not from the blocks: enable it in the theme editor
-and keep "Show star badges on product cards site-wide" on. Then the same two rules as always
-apply — the store must be **live**, and only products with at least one **published** review
-get a badge (cards of unreviewed products deliberately stay untouched). All the details:
-`docs/CONFIGURATION.md`, "App embed & star badges".
+First, make sure you are on version **1.8.0 or newer**. Versions 1.5.0 through 1.7.0 carried
+a real bug that kept the card badges from ever appearing, however correct your setup was:
+when Shopify builds a storefront page, it wraps the small piece of app code that carries the
+app's internal address in invisible HTML comments — and those comments corrupted the address
+the badge script calls, so its requests never reached the app. The main review widget masked
+the same problem by quietly detecting the bad address and retrying (which cost every product
+page one wasted request); the badge script had no such rescue, so badges failed everywhere.
+Version 1.8.0 fixes both: the address is cleaned everywhere it is used, and the badge script
+now recovers exactly like the widget. From there, the usual rules apply: card badges come
+from the **app embed**, not from the blocks — enable it in the theme editor and keep
+"Show star badges on product cards site-wide" on; the store must be **live**; and only
+products with at least one **published** review get a badge (cards of unreviewed products
+deliberately stay untouched). All the details: `docs/CONFIGURATION.md`, "App embed & star
+badges" and §12.
 
 ## Reviews & moderation
 
@@ -116,7 +125,17 @@ a new one.
 
 **Can I answer a review?**
 Yes — that's the Reply field on the review's page. It appears publicly as "Response from
-Cellexia". See `docs/CONFIGURATION.md` §7.
+Cellexia". See `docs/CONFIGURATION.md` §8.
+
+**Can I choose which reviews shoppers see first?**
+Yes — the **Display order** page (in the app's navigation). Pick a store-wide default from
+six ranking systems (the Amazon-style helpfulness ranking is the default and is exactly how
+the widget has always behaved), override the system per product, and hand-pick up to **10
+featured reviews** per product that always lead the list in your exact order — there is even
+a one-click **Feature on product page** action right on each review's page while you
+moderate. Featured reviews apply under the default "Top reviews" sort; a shopper who
+re-sorts, searches or filters sees their own choice — the app never overrides an explicit
+filter. Changes reach the storefront within a minute. Details: `docs/CONFIGURATION.md` §6.
 
 **How does the app fight fake/spam reviews?**
 Several layers: a hidden trap field that bots fill in, a minimum time-to-fill check on the
@@ -132,7 +151,7 @@ filter, batch tracking) — the storefront never marks them, and shoppers cannot
 apart. That's why the app watches this for you: the Dashboard shows a warning banner whenever
 published synthetic reviews exist, and it turns **critical** the moment the store is live.
 Delete every batch on the QA data page before going live to real customers — each batch has a
-one-click delete, and ratings recalculate automatically. See `docs/CONFIGURATION.md` §10.
+one-click delete, and ratings recalculate automatically. See `docs/CONFIGURATION.md` §11.
 
 ## Photos & videos
 
@@ -155,8 +174,16 @@ Norwegian, Romanian, Hungarian, Greek. The widget follows your storefront's publ
 languages automatically.
 
 **And reviews written in another language?**
-Shoppers get a "Translate" link per review (and "Translate all reviews") when a translation
-provider is configured in Settings → Translation. Details in `docs/TRANSLATIONS.md`.
+You choose how they appear, with the "Reviews written in other languages" setting in
+Settings → Translation. By default they show in their original language and shoppers get a
+"Translate" link per review (plus "Translate all reviews"). Or switch to automatic: reviews
+then appear already translated into the shopper's language, marked "Translated from …" with a
+"See original" link (and "See translation" to switch back). Both modes need a translation
+provider configured in Settings → Translation — without one, reviews simply show in their
+original language. Fair warning on the automatic mode: the first visitor to load reviews in a
+language they haven't been translated into yet may wait a few seconds while the translations
+are created; after that they are stored and instant for everyone. Details in
+`docs/TRANSLATIONS.md` and `docs/CONFIGURATION.md` §3.
 
 ## AI features
 
@@ -173,6 +200,28 @@ Either no Anthropic key is set, or the product hasn't reached enough published r
 
 **Is the AI content labeled?**
 Yes — the storefront shows "AI-generated from the text of customer reviews." under the summary.
+
+**How much does generating reviews cost?**
+Whatever Anthropic charges you for the tokens used — **the app itself never bills anything**:
+the QA generator (like every AI feature) runs on the Anthropic API key you added in
+Settings → AI summary, so all usage lands on your own Anthropic account, at Anthropic's own
+pay-per-use rates, with no markup and no app fee.
+
+Before starting a run, press **Estimate cost** on the QA data page: it shows the expected
+token counts, price in USD and duration for exactly the number of reviews you typed in
+(`docs/CONFIGURATION.md` §11). The rates behind that estimate, per million tokens, follow the
+model selected in Settings → AI summary:
+
+- **claude-sonnet-5** — $3.00 input / $15.00 output. Anthropic's introductory pricing of
+  $2.00 input / $10.00 output applies through August 31, 2026; the estimate uses the
+  introductory rate while it lasts and says so.
+- **claude-haiku-4-5** — $1.00 input / $5.00 output.
+
+In practice this is inexpensive: a review costs a fraction of a cent to generate, so even a
+run of several hundred reviews typically stays in the range of a dollar or two on
+claude-sonnet-5 (less on claude-haiku-4-5). Estimates are approximate — the **actual** cost of
+each job, computed from real token usage, is shown in the jobs table on the QA data page once
+the job finishes.
 
 ## Rate limits
 

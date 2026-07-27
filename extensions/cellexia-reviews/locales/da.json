@@ -71,6 +71,7 @@
       "translate": "Oversæt",
       "translating": "Oversætter…",
       "see_original": "Se original",
+      "see_translation": "Se oversættelse",
       "translated_from": "Oversat fra [[language]]",
       "reply_from": "Svar fra [[brand]]",
       "read_more": "Læs mere",
@@ -136,6 +137,11 @@
       "badge": "Forhåndsvisningstilstand",
       "note": "Kun du kan se dette — widgetten er ikke synlig for besøgende.",
       "exit": "Afslut forhåndsvisning"
+    },
+    "overall": {
+      "based_on": "Baseret på [[count]] anmeldelser på tværs af vores produkter",
+      "verified_share": "[[percent]]% fra verificerede køb",
+      "read_reviews": "Læs [[count]] anmeldelser"
     },
     "notice": {
       "expired_title": "Forhåndsvisningssessionen er udløbet",

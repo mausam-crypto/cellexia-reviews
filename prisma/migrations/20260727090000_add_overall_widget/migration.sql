@@ -1,0 +1,13 @@
+-- AlterTable
+-- v1.9 "Overall reviews" brand-wide theme block (SPEC-1.9 §1).
+--
+-- "overallWidget" configures which reviews the homepage block features. JSON:
+-- { mode?: "auto"|"picked", pickedIds?: string[] } — "auto" (the default)
+-- lets the scoring in app/services/brand.server.ts pick the strongest recent
+-- reviews across all products (max 2 per product); "picked" shows the
+-- merchant's hand-picked review ids in their stored order, auto-backfilled
+-- when fewer than the block displays. The value is validated on read:
+-- malformed JSON or an unknown mode degrades to auto, so no backfill is
+-- needed — the '{}' default reproduces auto mode and existing stores upgrade
+-- with zero shopper-visible change until the merchant adds the new block.
+ALTER TABLE "Setting" ADD COLUMN "overallWidget" TEXT NOT NULL DEFAULT '{}';

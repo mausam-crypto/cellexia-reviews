@@ -87,6 +87,7 @@
       "translate": "ترجمة",
       "translating": "جارٍ الترجمة…",
       "see_original": "عرض النص الأصلي",
+      "see_translation": "عرض الترجمة",
       "translated_from": "مترجم من [[language]]",
       "reply_from": "رد من [[brand]]",
       "read_more": "قراءة المزيد",
@@ -152,6 +153,11 @@
       "badge": "وضع المعاينة",
       "note": "أنت وحدك من يمكنه رؤية هذا — الأداة غير ظاهرة للزوار.",
       "exit": "الخروج من المعاينة"
+    },
+    "overall": {
+      "based_on": "استنادًا إلى [[count]] مراجعة عبر جميع منتجاتنا",
+      "verified_share": "[[percent]]% من عمليات شراء مؤكدة",
+      "read_reviews": "قراءة [[count]] مراجعة"
     },
     "notice": {
       "expired_title": "انتهت صلاحية جلسة المعاينة",

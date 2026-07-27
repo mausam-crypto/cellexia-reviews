@@ -51,12 +51,42 @@ extension — no theme code edits, uninstall-safe.
   per page, automatic card detection with an advanced selector override, all three design
   versions applied. Same Not-live/preview gating as everything else; the blocks stay preferred
   where the theme supports them and never double-render alongside the embed.
+- **Overall reviews block (brand-wide)**: an optional **Cellexia Overall Reviews** theme block
+  for the home page (or any sections-enabled page) showing the brand's combined rating across
+  **all** products — large star row, "Based on N reviews across our products", a "% from
+  verified purchases" trust line (shown when the verified share is at least 60%), optional
+  clickable distribution bars (filter to one star level, **All stars** chip to reset), and top
+  reviews across products as condensed cards — grid or swipeable carousel — each linking to its
+  product's review section, plus an optional CTA button. Rendered fully server-side from two
+  shop metafields (zero API calls on first paint, cheap debounced re-sync as reviews change),
+  with review selection controlled from the admin: an **Auto** ranking (strongest recent
+  reviews, max 2 per product for diversity) or up to 12 **hand-picked** reviews in an explicit
+  order with auto backfill, a **Refresh homepage data** button, and a one-click **Feature on
+  homepage** action on each review's page. Deliberately emits **no JSON-LD** (Google ignores
+  self-serving organization ratings — see `docs/SEO.md`); same not-live/preview gating as
+  everything else, and a shop with zero published reviews renders nothing at all.
+- **Review display order** (new **Display order** page in the admin navigation): control which
+  reviews shoppers see first. A store-wide default ranking chosen from six systems — the
+  Amazon-style helpfulness ranking (still the default, and exactly the previous behavior),
+  top positive first, most recent first, Verified Purchases first, photos & videos first, or a
+  balanced mix that alternates three positive reviews with one critical — plus optional boosts
+  (**Show Verified Purchase reviews first** / **Show reviews with photos first**), per-product
+  overrides, and up to **10 hand-picked featured reviews per product** shown first in an explicit
+  order, with a one-click **Feature on product page** action right on each review's moderation
+  page. Featured reviews and the chosen system also drive the server-rendered top reviews and
+  the Google structured data; shoppers can still re-sort and filter, and display changes reach
+  the storefront within a minute.
 - **17 storefront languages** shipped: en, fr, de, da, sv, fi, nl, it, es, ar, pl, pt-PT, ja, nb,
   ro, hu, el — including full RTL support for Arabic.
 - **AI summary & topics**: Claude (Messages API, default model `claude-sonnet-5`) condenses up to
   200 published reviews into a summary plus up to 8 sentiment-scored topic chips.
-- **On-demand review translation** for shoppers: Anthropic (default), DeepL, or Google — or off.
-  All AI features degrade gracefully when no key is configured.
+- **Review translation** for shoppers: Anthropic (default), DeepL, or Google — or off. A
+  translation display mode (Settings → Translation) chooses how reviews written in another
+  language appear: in their original language with a per-review Translate button (the default),
+  or automatically translated into the shopper's language with a "Translated from …" note and
+  **See original** / **See translation** toggles. Translations are created once per language,
+  cached, and shared by every later visitor. All AI features degrade gracefully when no key is
+  configured — automatic mode simply falls back to the original language, never an error.
 - **Moderation**: pending/published/rejected/spam workflow, bulk actions, report auto-remoderation,
   brand replies, per-review translation preview for the merchant.
 - **Verified purchase detection** via logged-in customer id or order lookup by email.
@@ -73,12 +103,20 @@ extension — no theme code edits, uninstall-safe.
   answers, replies and media (file uploads to Shopify Files or external URLs) — staged in an
   editable list and saved in chunks with per-row error reporting.
 - **Synthetic QA review generator**: AI-generated realistic test reviews for QA of the widget
-  and the design versions — fully parameterized (count, target average rating with a derived
-  star distribution, verified %, languages, merchant-reply %, helpful votes, backdated date
-  range, variants, structured attributes). Internally flagged and batch-tracked: a **Synthetic**
-  badge and Source filter in the admin, a Dashboard warning while any are published (critical
-  once the store is live), and one-click batch deletion. Synthetic reviews are **never** labeled
-  on the storefront — delete every batch before going live.
+  and the design versions — fully parameterized (count — uncapped since 1.7.0 — target average
+  rating with a derived star distribution, verified %, languages, merchant-reply %, helpful
+  votes, backdated date range, variants, structured attributes). Generation runs as
+  **server-side background jobs**: leave the page or close the tab, run several jobs at once,
+  and follow progress from any admin page via a global activity banner. An optional
+  **Estimate cost** button predicts token usage, USD cost and duration before a run (durations
+  calibrated from the store's own measured throughput, Anthropic pricing incl. the Sonnet 5
+  introductory rate while it applies), and each job reports its actual cost from real token
+  usage once finished; jobs can be cancelled (keeping what they made) or retried for the
+  remainder, and they survive an app restart without overshooting. Internally flagged and
+  batch-tracked: a **Synthetic** badge and Source filter in the admin, a Dashboard warning
+  while any are published (critical once the store is live), and one-click batch deletion.
+  Synthetic reviews are **never** labeled on the storefront — delete every batch before going
+  live.
 - **Anti-abuse**: app-proxy HMAC verification, honeypot + minimum fill time on the form,
   per-IP rate limits, server-side media re-validation.
 
@@ -94,6 +132,8 @@ extension — no theme code edits, uninstall-safe.
         │   • star-rating.liquid (badge) │
         │   • embed.liquid (app embed:   │
         │     auto-widget + card badges) │
+        │   • overall-reviews.liquid     │
+        │     (brand-wide, home page)    │
         │  SSR from product metafields   │
         │  + cellexia-reviews.js/css     │
         └───────┬────────────────────────┘
@@ -146,7 +186,8 @@ app/
   components/admin/  Polaris components used by the admin routes
   types/cellexia.ts  Shared constants (option keys, statuses, locales) and DTO types
 extensions/
-  cellexia-reviews/  Theme app extension: blocks (reviews, star-rating, app embed), snippets
+  cellexia-reviews/  Theme app extension: blocks (reviews, star-rating, app embed,
+                     overall reviews), snippets
                      (stars, i18n bridge, JSON-LD), assets (1 CSS + 1 JS file),
                      locales (17 languages, storefront + schema files)
 prisma/              schema.prisma (Session, Review, ReviewMedia, Vote, Summary,
@@ -203,7 +244,7 @@ Full production installation, hosting and store setup: **[docs/INSTALL.md](docs/
 | [docs/INSTALL.md](docs/INSTALL.md) | Developer | Full install: app creation, hosting (Render / Fly.io / Railway), env vars, app proxy, theme editor, verification checklist |
 | [docs/UPDATE.md](docs/UPDATE.md) | Developer | How to apply a new release ZIP safely |
 | [docs/HANDOVER.md](docs/HANDOVER.md) | Developer | One-page brief: what you are receiving and what to provision |
-| [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Merchant | Every admin setting, going live & previewing, app embed & star badges, moderation, replies, CSV import, bulk add, QA data (synthetic reviews), API keys |
+| [docs/CONFIGURATION.md](docs/CONFIGURATION.md) | Merchant | Every admin setting, going live & previewing, app embed & star badges, overall reviews widget (brand-wide block), review display order & featured reviews, moderation, replies, CSV import, bulk add, QA data (synthetic reviews), API keys |
 | [docs/TRANSLATIONS.md](docs/TRANSLATIONS.md) | Both | The 17 locales, editing strings, Translate & Adapt, review translation, RTL |
 | [docs/SEO.md](docs/SEO.md) | Both | Star rich snippets: how they work, validation, duplicate JSON-LD note |
 | [docs/FAQ.md](docs/FAQ.md) | Merchant | Theme safety, why no stars appear on a fresh install, preview-only messages, uninstall, GDPR, media limits, rate limits |
@@ -212,4 +253,4 @@ Full production installation, hosting and store setup: **[docs/INSTALL.md](docs/
 
 ## Version
 
-Current version: **1.6.0** — see [CHANGELOG.md](CHANGELOG.md).
+Current version: **1.9.0** — see [CHANGELOG.md](CHANGELOG.md).

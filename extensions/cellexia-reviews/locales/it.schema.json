@@ -66,8 +66,41 @@
         }
       }
     },
+    "overall_block": {
+      "name": "Cellexia Recensioni complessive",
+      "settings": {
+        "heading": {
+          "label": "Titolo"
+        },
+        "max_reviews": {
+          "label": "Numero di recensioni da mostrare"
+        },
+        "layout": {
+          "label": "Layout",
+          "options__1": {
+            "label": "Griglia"
+          },
+          "options__2": {
+            "label": "Carosello"
+          }
+        },
+        "show_distribution": {
+          "label": "Mostra le barre di distribuzione delle valutazioni"
+        },
+        "show_product_links": {
+          "label": "Collega ogni recensione al suo prodotto"
+        },
+        "cta_label": {
+          "label": "Etichetta del pulsante (facoltativo)"
+        },
+        "cta_url": {
+          "label": "Link del pulsante"
+        }
+      }
+    },
     "defaults": {
-      "heading": "Recensioni dei clienti"
+      "heading": "Recensioni dei clienti",
+      "overall_heading": "Cosa dicono i nostri clienti"
     }
   }
 }

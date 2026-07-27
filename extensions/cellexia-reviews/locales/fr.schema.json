@@ -66,8 +66,41 @@
         }
       }
     },
+    "overall_block": {
+      "name": "Avis globaux Cellexia",
+      "settings": {
+        "heading": {
+          "label": "Titre"
+        },
+        "max_reviews": {
+          "label": "Nombre d'avis à afficher"
+        },
+        "layout": {
+          "label": "Mise en page",
+          "options__1": {
+            "label": "Grille"
+          },
+          "options__2": {
+            "label": "Carrousel"
+          }
+        },
+        "show_distribution": {
+          "label": "Afficher les barres de répartition des notes"
+        },
+        "show_product_links": {
+          "label": "Lier chaque avis à son produit"
+        },
+        "cta_label": {
+          "label": "Libellé du bouton (facultatif)"
+        },
+        "cta_url": {
+          "label": "Lien du bouton"
+        }
+      }
+    },
     "defaults": {
-      "heading": "Avis clients"
+      "heading": "Avis clients",
+      "overall_heading": "Ce que disent nos clients"
     }
   }
 }

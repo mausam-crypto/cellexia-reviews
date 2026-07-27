@@ -11,6 +11,7 @@ import {
   ensureMetafieldDefinitions,
   syncShopSettingsMetafields,
 } from "~/services/metafields.server";
+import { kickRunner, recoverStaleJobs } from "~/services/jobs.server";
 import { probeProxySubpath } from "~/services/proxyhealth.server";
 import { getSettings } from "~/services/settings.server";
 
@@ -57,6 +58,18 @@ const shopify = shopifyApp({
         // Metafield definitions/sync are re-attempted on the next auth; never
         // block the OAuth callback on this.
         console.error("ensureMetafieldDefinitions failed:", error);
+      }
+
+      // SPEC-1.7 §3: re-queue generation jobs orphaned by a crash/restart
+      // (heartbeat older than 3 minutes) and wake the background runner.
+      // afterAuth doubles as the app's "boot" hook — it is the first code
+      // that reliably runs after a redeploy. Wrapped separately so a job
+      // table hiccup can never break OAuth or the metafield setup above.
+      try {
+        await recoverStaleJobs();
+        kickRunner();
+      } catch (error) {
+        console.error("[cellexia] afterAuth job recovery failed", error);
       }
     },
   },

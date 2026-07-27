@@ -71,6 +71,7 @@
       "translate": "Traduci",
       "translating": "Traduzione in corso…",
       "see_original": "Vedi l'originale",
+      "see_translation": "Vedi la traduzione",
       "translated_from": "Tradotto da [[language]]",
       "reply_from": "Risposta di [[brand]]",
       "read_more": "Leggi di più",
@@ -136,6 +137,11 @@
       "badge": "Modalità anteprima",
       "note": "Solo Lei può vedere questa anteprima — il widget non è visibile ai visitatori.",
       "exit": "Esci dall'anteprima"
+    },
+    "overall": {
+      "based_on": "Basato su [[count]] recensioni di tutti i nostri prodotti",
+      "verified_share": "[[percent]]% da acquisti verificati",
+      "read_reviews": "Leggi [[count]] recensioni"
     },
     "notice": {
       "expired_title": "Sessione di anteprima scaduta",

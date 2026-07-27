@@ -71,6 +71,7 @@
       "translate": "Traduire",
       "translating": "Traduction en cours…",
       "see_original": "Voir l'original",
+      "see_translation": "Voir la traduction",
       "translated_from": "Traduit de : [[language]]",
       "reply_from": "Réponse de [[brand]]",
       "read_more": "Lire la suite",
@@ -136,6 +137,11 @@
       "badge": "Mode aperçu",
       "note": "Vous seul pouvez voir ceci — le widget n'est pas en ligne pour les visiteurs.",
       "exit": "Quitter l'aperçu"
+    },
+    "overall": {
+      "based_on": "Basé sur [[count]] avis sur l'ensemble de nos produits",
+      "verified_share": "[[percent]] % issus d'achats vérifiés",
+      "read_reviews": "Lire les [[count]] avis"
     },
     "notice": {
       "expired_title": "Session d'aperçu expirée",

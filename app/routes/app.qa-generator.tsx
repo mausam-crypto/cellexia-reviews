@@ -1,21 +1,32 @@
 /**
- * Cellexia Reviews — QA data page (SPEC-1.4 §C): synthetic review generator.
+ * Cellexia Reviews — QA data page (SPEC-1.4 §C, reworked by SPEC-1.7 §5):
+ * synthetic review generator with background jobs and cost/time estimates.
  *
  * Layout:
  *   1. Permanent warning banner (synthetic reviews look completely real).
  *   2. Fail-fast banner when the AI provider is off / the key is missing.
  *   3. Config card — every knob: product (resourcePicker with a Select
- *      fallback), number of reviews, target average rating (with a live
- *      distribution preview), verified %, languages, replies %, max helpful
- *      votes, date range, variants toggle, structured-attributes toggle,
- *      status at creation.
- *   4. Generation runs as sequential fetcher chunks of 8 reviews with a
- *      progress readout ("Generating 17 of 40…"); the first chunk mints the
- *      batchId and later chunks thread it back as a hidden form field. A
- *      finalize step re-syncs the product's aggregates + metafields once.
- *      Partial failures are reported honestly in the summary banner.
- *   5. "Existing synthetic data" card: per-batch stats with View in Reviews /
+ *      fallback), number of reviews (uncapped since v1.7), target average
+ *      rating (with a live distribution preview), verified %, languages,
+ *      replies %, max helpful votes, date range, variants toggle,
+ *      structured-attributes toggle, status at creation. Next to Generate sits
+ *      an optional "Estimate cost" button that renders an inline banner with
+ *      token counts, USD and an "about X minutes" duration (auto-refreshed,
+ *      debounced 600 ms, when the review count changes while an estimate is
+ *      showing). Counts above 500 show an inline warning; counts above 5000
+ *      require a typed re-confirmation in a submit modal.
+ *   4. Generate enqueues a background job and returns immediately ("Generation
+ *      started — you can leave this page"); the form stays filled so a second,
+ *      different job can be launched right away. The job runner lives in
+ *      app/services/jobs.server.ts (SPEC-1.7 §3).
+ *   5. "Generation jobs" card — IndexTable of the 50 newest jobs with status
+ *      badge, progress, live ETA / elapsed time, actual cost, and Cancel /
+ *      Retry remaining / View reviews / Delete batch row actions. Polls
+ *      /app/jobs/status every 3 s while a job is active, 30 s otherwise.
+ *   6. "Existing synthetic data" card: per-batch stats with View in Reviews /
  *      Delete batch, plus Delete ALL with a typed "DELETE" confirmation.
+ *      Deleting a batch also cancels + deletes its generation job row
+ *      (SPEC-1.7 §7).
  *
  * All structured review fields are assigned by code in synthetic.server.ts;
  * the AI writes only title/body/reply. Rows carry isSynthetic / source /
@@ -25,8 +36,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs } from "@remix-run/node";
 import { json } from "@remix-run/node";
-import { useFetcher, useLoaderData, useNavigate } from "@remix-run/react";
+import { useFetcher, useLoaderData, useNavigate, useRevalidator } from "@remix-run/react";
 import {
+  Badge,
   Banner,
   BlockStack,
   Box,
@@ -37,6 +49,7 @@ import {
   DataTable,
   Divider,
   FormLayout,
+  IndexTable,
   InlineError,
   InlineStack,
   Layout,
@@ -52,32 +65,70 @@ import { TitleBar, useAppBridge } from "@shopify/app-bridge-react";
 
 import { authenticate } from "~/shopify.server";
 import { SHOP_LOCALES } from "~/types/cellexia";
+import type { EstimateDTO } from "~/types/cellexia";
+import prisma from "~/db.server";
 import { getSettings } from "~/services/settings.server";
 import {
+  MAX_SYNTHETIC_REVIEWS,
   deleteAllSynthetic,
   deleteSyntheticBatch,
-  generateSyntheticChunk,
-  isValidBatchId,
   parseSyntheticConfig,
   syntheticProductIds,
   syntheticStats,
 } from "~/services/synthetic.server";
 import type { SyntheticStats } from "~/services/synthetic.server";
+import {
+  enqueueGeneration,
+  kickRunner,
+  listJobs,
+  requestCancel,
+  retryJob,
+} from "~/services/jobs.server";
+import { estimateGeneration } from "~/services/estimate.server";
 import { syncProductData } from "~/components/admin/moderation.server";
 import { useResultToast } from "~/components/admin/useResultToast";
 import { ConfirmationModal } from "~/components/admin/ConfirmationModal";
-import { LOCALE_LABELS, formatDateTime, pluralize } from "~/components/admin/labels";
+import {
+  LOCALE_LABELS,
+  formatDate,
+  formatDateTime,
+  pluralize,
+} from "~/components/admin/labels";
+import {
+  formatCount,
+  formatEta,
+  formatUsd,
+  humanDuration,
+  isActiveJobStatus,
+  normalizeJobList,
+  useActiveJobsPoll,
+} from "~/components/admin/GenerationActivityBar";
+import type { JobView } from "~/components/admin/GenerationActivityBar";
 
 const NO_AI_KEY_MESSAGE =
   "The generator needs the Anthropic API key from Settings → AI Summary";
 
+/** Above this count the UI shows an inline cost/duration warning (SPEC-1.7 §2). */
+const LARGE_BATCH_WARNING_THRESHOLD = 500;
+/** Above this count the submit modal requires a typed re-confirmation (SPEC-1.7 §2). */
+const LARGE_BATCH_CONFIRM_THRESHOLD = 5000;
 /**
- * Batch size cap, shared by client-side validation and the preview. Kept as a
- * local constant because MAX_SYNTHETIC_PER_BATCH lives in a `.server` module
- * that must never reach the browser bundle (synthetic.server.ts clamps
- * server-side to the same value).
+ * Client-side MIRROR of MAX_SYNTHETIC_REVIEWS in synthetic.server.ts (a
+ * .server constant cannot be used in the browser bundle — keep in sync): the
+ * generator's defensive per-job ceiling. Counts above it are rejected with a
+ * validation error here and in the action, instead of being silently clamped
+ * by parseSyntheticConfig — the merchant must never confirm a number the job
+ * won't actually target (estimate honesty).
  */
-const MAX_PER_BATCH = 200;
+const MAX_REVIEWS_PER_JOB = 100_000;
+const MAX_REVIEWS_MESSAGE = "The generator supports up to 100,000 reviews per job";
+/**
+ * Purely a guard for the client-side distribution *preview* math (which walks
+ * counts one step at a time): the generator itself is uncapped since v1.7.
+ * Above this, the preview still shows correct proportions — just computed on
+ * a scaled-down sample.
+ */
+const PREVIEW_MAX_COUNT = 100_000;
 
 /* ------------------------------------------------------------------------- *
  * Server helpers
@@ -139,6 +190,32 @@ function htmlToText(html: unknown): string {
     .slice(0, 4000);
 }
 
+/**
+ * Loose structural check for a client-echoed EstimateDTO (the DTO the
+ * "Estimate cost" action returned earlier, threaded back on Generate so the
+ * job row can record what the merchant saw). Anything malformed is dropped —
+ * the estimate is informational and never drives generation.
+ */
+function parseEstimateInput(raw: string): EstimateDTO | null {
+  if (!raw) return null;
+  try {
+    const value: unknown = JSON.parse(raw);
+    if (typeof value !== "object" || value === null) return null;
+    const v = value as Record<string, unknown>;
+    if (
+      typeof v.inputTokens !== "number" ||
+      typeof v.outputTokens !== "number" ||
+      typeof v.costUsd !== "number" ||
+      typeof v.seconds !== "number"
+    ) {
+      return null;
+    }
+    return value as EstimateDTO;
+  } catch {
+    return null;
+  }
+}
+
 /* ------------------------------------------------------------------------- *
  * Loader
  * ------------------------------------------------------------------------- */
@@ -146,6 +223,14 @@ function htmlToText(html: unknown): string {
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const shop = session.shop;
+
+  // The jobs card is rendered here, so this loader also keeps the background
+  // runner alive (idempotent, SPEC-1.7 §3).
+  try {
+    kickRunner();
+  } catch (error) {
+    console.error("[cellexia] qa-generator kickRunner failed", error);
+  }
 
   // AI readiness drives the fail-fast banner; a settings hiccup must not
   // crash the page — it just reads as "not ready".
@@ -158,6 +243,13 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   }
 
   const stats = await syntheticStats(shop); // never throws
+
+  let jobs: Awaited<ReturnType<typeof listJobs>> = [];
+  try {
+    jobs = await listJobs(shop); // newest 50
+  } catch (error) {
+    console.error("[cellexia] qa-generator job list failed", error);
+  }
 
   // Fallback product list for when the resource picker is unavailable.
   let products: Array<{ id: string; title: string; handle: string | null }> = [];
@@ -189,7 +281,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     productListError = true;
   }
 
-  return json({ aiReady, stats, products, productListError });
+  return json({ aiReady, stats, jobs, products, productListError });
 };
 
 /* ------------------------------------------------------------------------- *
@@ -270,14 +362,57 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       });
     }
 
-    /* ---- One generation chunk of 8 reviews ------------------------------ */
-    if (intent === "generate-chunk") {
+    /* ---- Cost & time estimate (optional, pre-generation) ---------------- */
+    if (intent === "estimate") {
       let rawConfig: unknown = null;
       try {
         rawConfig = JSON.parse(String(form.get("config") ?? ""));
       } catch {
         return json(
           { ok: false, intent, message: "The generator configuration could not be parsed" },
+          { status: 400 },
+        );
+      }
+      const parsed = parseSyntheticConfig(rawConfig);
+      if (!parsed.config) {
+        return json({ ok: false, intent, message: parsed.error }, { status: 400 });
+      }
+      try {
+        const estimate = await estimateGeneration(shop, admin, parsed.config);
+        return json({ ok: true, intent, estimate });
+      } catch (error) {
+        console.error("[cellexia] qa-generator estimate failed", error);
+        return json(
+          { ok: false, intent, message: "The estimate could not be computed. Please try again." },
+          { status: 500 },
+        );
+      }
+    }
+
+    /* ---- Enqueue a background generation job (SPEC-1.7 §3/§5) ----------- */
+    if (intent === "generate") {
+      let rawConfig: unknown = null;
+      try {
+        rawConfig = JSON.parse(String(form.get("config") ?? ""));
+      } catch {
+        return json(
+          { ok: false, intent, message: "The generator configuration could not be parsed" },
+          { status: 400 },
+        );
+      }
+      // Estimate honesty: parseSyntheticConfig CLAMPS count to
+      // MAX_SYNTHETIC_REVIEWS as an OOM guard, so an over-limit request must
+      // be rejected here — otherwise the merchant confirms one number and the
+      // job silently targets a smaller one. (The form validates this too;
+      // this is the server-side backstop.)
+      const rawCount = Number((rawConfig as { count?: unknown } | null)?.count);
+      if (Number.isFinite(rawCount) && rawCount > MAX_SYNTHETIC_REVIEWS) {
+        return json(
+          {
+            ok: false,
+            intent,
+            message: `The generator supports up to ${MAX_SYNTHETIC_REVIEWS.toLocaleString("en-US")} reviews per job`,
+          },
           { status: 400 },
         );
       }
@@ -303,62 +438,100 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         );
       }
 
-      // The batchId travels as a hidden form field on every chunk after the
-      // first; an empty value tells the service to mint a fresh UUID.
-      const batchIdRaw = String(form.get("batchId") ?? "").trim();
-      if (batchIdRaw && !isValidBatchId(batchIdRaw)) {
-        return json({ ok: false, intent, message: "Invalid batch reference" }, { status: 400 });
-      }
-      const startRaw = Number(form.get("start"));
-      const start = Number.isFinite(startRaw)
-        ? Math.min(Math.max(0, Math.floor(startRaw)), MAX_PER_BATCH - 1)
-        : 0;
-
-      const result = await generateSyntheticChunk(
-        shop,
-        parsed.config,
-        batchIdRaw || null,
-        start,
-      );
-      if (result.code === "no_ai_key") {
-        return json(
-          { ok: false, intent, code: "no_ai_key", message: NO_AI_KEY_MESSAGE },
-          { status: 409 },
-        );
-      }
-      return json({ ok: true, intent, result });
+      // The estimate is optional (Generate never requires pressing Estimate);
+      // when the client had one on screen it is recorded on the job row.
+      const estimate = parseEstimateInput(String(form.get("estimate") ?? ""));
+      const job = await enqueueGeneration(shop, parsed.config, estimate);
+      kickRunner();
+      return json({
+        ok: true,
+        intent,
+        jobId: job.id,
+        batchId: job.batchId,
+        message: "Generation started — you can leave this page",
+      });
     }
 
-    /* ---- Finalize: aggregates + metafields re-sync once ----------------- */
-    if (intent === "finalize-batch") {
-      const productId = numericIdFromGid(String(form.get("productId") ?? ""));
-      if (!productId) {
-        return json({ ok: false, intent, message: "Invalid product reference" }, { status: 400 });
+    /* ---- Cancel a queued/running job (cooperative, SPEC-1.7 §3) ---------- */
+    if (intent === "cancel-job") {
+      const jobId = String(form.get("jobId") ?? "").trim();
+      if (!jobId) {
+        return json({ ok: false, intent, message: "Missing job reference" }, { status: 400 });
       }
-      try {
-        await syncProductData(shop, productId, admin);
-        return json({ ok: true, intent, synced: true });
-      } catch (error) {
-        // The reviews exist either way — report the sync failure honestly.
-        console.error(`[cellexia] qa-generator aggregate sync failed for ${productId}`, error);
-        return json({
-          ok: true,
-          intent,
-          synced: false,
-          syncMessage:
-            "Reviews were created, but the product rating sync failed — it will refresh on the next moderation action.",
-        });
-      }
+      await requestCancel(shop, jobId);
+      return json({
+        ok: true,
+        intent,
+        message: "Cancellation requested — the job stops after its current chunk",
+      });
     }
 
-    /* ---- Delete one batch ------------------------------------------------ */
+    /* ---- Retry the remaining reviews of a failed/cancelled job ----------- */
+    if (intent === "retry-job") {
+      const jobId = String(form.get("jobId") ?? "").trim();
+      if (!jobId) {
+        return json({ ok: false, intent, message: "Missing job reference" }, { status: 400 });
+      }
+      const job = await retryJob(shop, jobId);
+      kickRunner();
+      return json({
+        ok: true,
+        intent,
+        jobId: job.id,
+        message: "Retry queued — the remaining reviews will be generated",
+      });
+    }
+
+    /* ---- Delete one batch (also cancels + deletes its job, SPEC-1.7 §7) -- */
     if (intent === "delete-batch") {
       const batchId = String(form.get("batchId") ?? "").trim();
       if (!batchId) {
         return json({ ok: false, intent, message: "Missing batch reference" }, { status: 400 });
       }
+
+      // Cancel any active job writing this batch before deleting its rows.
+      // NOTE: a RUNNING job's in-flight chunk may still land a few reviews
+      // after the delete — the batch then reappears in the stats table and
+      // can simply be deleted again (cooperative cancellation, SPEC-1.7 §3).
+      let jobRows: Array<{ id: string; status: string }> = [];
+      try {
+        jobRows = await prisma.generationJob.findMany({
+          where: { shop, batchId },
+          select: { id: true, status: true },
+        });
+      } catch (error) {
+        console.error("[cellexia] qa-generator job lookup failed", error);
+      }
+      for (const jobRow of jobRows) {
+        if (jobRow.status === "QUEUED" || jobRow.status === "RUNNING") {
+          try {
+            await requestCancel(shop, jobRow.id);
+          } catch (error) {
+            console.error(`[cellexia] qa-generator cancel failed for job ${jobRow.id}`, error);
+          }
+        }
+      }
+
       const productIds = await syntheticProductIds(shop, batchId);
       const deleted = await deleteSyntheticBatch(shop, batchId);
+
+      // Prune this batch's FINISHED job rows only. CRITICAL: never delete a
+      // QUEUED/RUNNING row here — the worker observes `cancelRequested`
+      // through its per-chunk progress write on that SAME row
+      // (jobs.server.ts), so deleting it would let the job keep generating
+      // (and spending) through every remaining chunk into the just-deleted
+      // batch. The cancelled RUNNING row stays until the worker stops after
+      // its in-flight chunk (deleteSyntheticBatch already performs the same
+      // cancel-then-delete-terminal dance; this is a best-effort second pass
+      // for rows that turned terminal in the meantime).
+      try {
+        await prisma.generationJob.deleteMany({
+          where: { shop, batchId, status: { in: ["COMPLETED", "FAILED", "CANCELLED"] } },
+        });
+      } catch (error) {
+        console.error("[cellexia] qa-generator job row delete failed", error);
+      }
+
       let syncFailures = 0;
       for (const productId of productIds) {
         try {
@@ -370,7 +543,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
       const message =
         deleted === 0
-          ? "This batch no longer exists"
+          ? jobRows.length > 0
+            ? "The generation job was removed"
+            : "This batch no longer exists"
           : syncFailures > 0
             ? `Deleted ${pluralize(deleted, "synthetic review")} — the product rating sync failed for ${pluralize(syncFailures, "product")}`
             : `Deleted ${pluralize(deleted, "synthetic review")}`;
@@ -385,8 +560,41 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           { status: 400 },
         );
       }
+
+      // Every batch's job row goes with it (SPEC-1.7 §7 applied per batch):
+      // cancel the active jobs first, then remove the FINISHED job history for
+      // the shop (cancelled RUNNING rows stay until their workers observe the
+      // cancel and stop — see the delete-batch handler).
+      try {
+        const activeJobs = await prisma.generationJob.findMany({
+          where: { shop, status: { in: ["QUEUED", "RUNNING"] } },
+          select: { id: true },
+        });
+        for (const jobRow of activeJobs) {
+          try {
+            await requestCancel(shop, jobRow.id);
+          } catch (error) {
+            console.error(`[cellexia] qa-generator cancel failed for job ${jobRow.id}`, error);
+          }
+        }
+      } catch (error) {
+        console.error("[cellexia] qa-generator active job lookup failed", error);
+      }
+
       const productIds = await syntheticProductIds(shop);
       const deleted = await deleteAllSynthetic(shop);
+
+      // Terminal statuses only — deleting a RUNNING row would remove the very
+      // row that carries the cooperative-cancel flag and let its job keep
+      // generating (and spending) to completion (see the delete-batch handler).
+      try {
+        await prisma.generationJob.deleteMany({
+          where: { shop, status: { in: ["COMPLETED", "FAILED", "CANCELLED"] } },
+        });
+      } catch (error) {
+        console.error("[cellexia] qa-generator job rows delete failed", error);
+      }
+
       let syncFailures = 0;
       for (const productId of productIds) {
         try {
@@ -443,7 +651,7 @@ const PREVIEW_ANCHORS: ReadonlyArray<readonly [number, readonly number[]]> = [
 ];
 
 function previewStarDistribution(count: number, targetAverage: number): number[] {
-  const n = Math.max(1, Math.min(MAX_PER_BATCH, Math.round(count)));
+  const n = Math.max(1, Math.min(PREVIEW_MAX_COUNT, Math.round(count)));
   const avg = Math.min(5, Math.max(1, targetAverage));
 
   let lower = PREVIEW_ANCHORS[0];
@@ -548,42 +756,146 @@ function parsePickerSelection(raw: unknown): PickedProduct | null {
   };
 }
 
-interface GenRun {
-  /** "" until the first chunk response mints the batchId. */
-  batchId: string;
-  productId: string;
-  configJson: string;
-  total: number;
-  /** Reviews attempted so far (chunk starts are derived from this). */
-  completed: number;
-  created: number;
-  failed: number;
-  errors: string[];
-  phase: "chunks" | "finalize";
+/** Client-side view of the EstimateDTO returned by intent=estimate. */
+interface EstimateView {
+  reviews: number;
+  chunks: number;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+  seconds: number;
+  secondsHigh: number;
+  basis: "measured" | "baseline";
+  model: string;
+  pricing: { inPerMTok: number; outPerMTok: number; introUntil: string | null };
+  /** Server-provided basis detail line, when present. */
+  detail: string | null;
+  /** Server-provided caveat ("estimate only…"), when present. */
+  caveat: string | null;
 }
 
-interface GenSummary {
-  batchId: string;
-  created: number;
-  failed: number;
-  errors: string[];
-  syncMessage: string | null;
-  aborted: boolean;
+function normalizeEstimate(raw: unknown): EstimateView | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const v = raw as Record<string, unknown>;
+  const num = (x: unknown): number | null =>
+    typeof x === "number" && Number.isFinite(x) ? x : null;
+  const inputTokens = num(v.inputTokens);
+  const outputTokens = num(v.outputTokens);
+  const costUsd = num(v.costUsd);
+  const seconds = num(v.seconds);
+  if (inputTokens === null || outputTokens === null || costUsd === null || seconds === null) {
+    return null;
+  }
+  const pricingRaw =
+    typeof v.pricing === "object" && v.pricing !== null
+      ? (v.pricing as Record<string, unknown>)
+      : {};
+  return {
+    reviews: num(v.reviews) ?? 0,
+    chunks: num(v.chunks) ?? 0,
+    inputTokens,
+    outputTokens,
+    costUsd,
+    seconds,
+    secondsHigh: num(v.secondsHigh) ?? seconds,
+    basis: v.basis === "measured" ? "measured" : "baseline",
+    model: typeof v.model === "string" && v.model ? v.model : "unknown model",
+    pricing: {
+      inPerMTok: num(pricingRaw.inPerMTok) ?? 0,
+      outPerMTok: num(pricingRaw.outPerMTok) ?? 0,
+      introUntil: typeof pricingRaw.introUntil === "string" ? pricingRaw.introUntil : null,
+    },
+    detail: typeof v.detail === "string" && v.detail ? v.detail : null,
+    caveat: typeof v.caveat === "string" && v.caveat ? v.caveat : null,
+  };
 }
 
-const MAX_UI_ERRORS = 8;
+/** Whether the Sonnet 5 introductory pricing window still applies (§4). */
+function introPricingApplies(introUntil: string | null): boolean {
+  if (!introUntil) return false;
+  const iso = /^\d{4}-\d{2}-\d{2}$/.test(introUntil)
+    ? `${introUntil}T23:59:59.999Z`
+    : introUntil;
+  const until = new Date(iso).getTime();
+  return Number.isFinite(until) && Date.now() <= until;
+}
+
+/** Subdued second line of the estimate banner: basis · pricing · caveat. */
+function estimateSecondLine(view: EstimateView): string {
+  const parts: string[] = [];
+  parts.push(
+    view.detail ??
+      (view.basis === "measured"
+        ? "Based on this shop's measured generation history"
+        : "Based on a token count of one sample batch"),
+  );
+  let pricing = `${view.model}: $${view.pricing.inPerMTok}/MTok input · $${view.pricing.outPerMTok}/MTok output`;
+  if (introPricingApplies(view.pricing.introUntil)) {
+    pricing += ` (introductory pricing through ${formatDate(view.pricing.introUntil)})`;
+  }
+  parts.push(pricing);
+  parts.push(view.caveat ?? "Estimate only — actual usage may differ.");
+  return parts.join(" · ");
+}
+
+function truncateText(text: string, max: number): string {
+  return text.length <= max ? text : `${text.slice(0, max - 1)}…`;
+}
+
+/** Wall-clock duration of a finished job, in seconds (null when unknown). */
+function elapsedSeconds(job: JobView): number | null {
+  if (!job.startedAt || !job.finishedAt) return null;
+  const start = new Date(job.startedAt).getTime();
+  const end = new Date(job.finishedAt).getTime();
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) return null;
+  return (end - start) / 1000;
+}
+
+function jobTimeText(job: JobView): string {
+  if (job.status === "RUNNING") {
+    return job.etaSeconds !== null && job.etaSeconds > 0
+      ? `${formatEta(job.etaSeconds)} left`
+      : "Starting…";
+  }
+  if (job.status === "QUEUED") return "Queued";
+  const elapsed = elapsedSeconds(job);
+  return elapsed !== null ? `${humanDuration(elapsed)}` : "—";
+}
+
+function JobStatusBadge({ job }: { job: JobView }) {
+  if (isActiveJobStatus(job.status) && job.cancelRequested) {
+    return <Badge tone="warning">Cancelling</Badge>;
+  }
+  switch (job.status) {
+    case "QUEUED":
+      return <Badge tone="attention">Queued</Badge>;
+    case "RUNNING":
+      return <Badge tone="info">Running</Badge>;
+    case "COMPLETED":
+      return <Badge tone="success">Completed</Badge>;
+    case "FAILED":
+      return <Badge tone="critical">Failed</Badge>;
+    case "CANCELLED":
+      return <Badge>Cancelled</Badge>;
+    default:
+      return <Badge>{job.status}</Badge>;
+  }
+}
 
 /* ------------------------------------------------------------------------- *
  * Route component
  * ------------------------------------------------------------------------- */
 
 export default function QaGeneratorRoute() {
-  const { aiReady, stats, products, productListError } = useLoaderData<typeof loader>();
+  const { aiReady, stats, jobs, products, productListError } = useLoaderData<typeof loader>();
   const shopify = useAppBridge();
   const navigate = useNavigate();
+  const revalidator = useRevalidator();
 
   const contextFetcher = useFetcher<typeof action>();
+  const estimateFetcher = useFetcher<typeof action>();
   const genFetcher = useFetcher<typeof action>();
+  const jobFetcher = useFetcher<typeof action>();
   const deleteFetcher = useFetcher<typeof action>();
 
   /* ---- Config state ------------------------------------------------------ */
@@ -602,33 +914,54 @@ export default function QaGeneratorRoute() {
   const [status, setStatus] = useState<"PUBLISHED" | "PENDING">("PUBLISHED");
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
 
-  /* ---- Run / summary / modal state -------------------------------------- */
-  const [run, setRun] = useState<GenRun | null>(null);
-  const [summary, setSummary] = useState<GenSummary | null>(null);
+  /* ---- Estimate / confirm / modal state ---------------------------------- */
+  const [estimateView, setEstimateView] = useState<EstimateView | null>(null);
+  // The raw DTO exactly as the server returned it — threaded back on Generate
+  // so the job row records what the merchant saw.
+  const [estimateRaw, setEstimateRaw] = useState<unknown>(null);
+  const [confirmLarge, setConfirmLarge] = useState<{ configJson: string; total: number } | null>(
+    null,
+  );
+  const [confirmText, setConfirmText] = useState("");
+  const [pendingJobAction, setPendingJobAction] = useState<{
+    id: string;
+    kind: "cancel" | "retry";
+  } | null>(null);
   const [deleteBatchTarget, setDeleteBatchTarget] = useState<string | null>(null);
   const [deleteAllOpen, setDeleteAllOpen] = useState(false);
   const [deleteAllText, setDeleteAllText] = useState("");
 
-  const generating = run !== null;
+  const estimating = estimateFetcher.state !== "idle";
+  const enqueueing = genFetcher.state !== "idle";
+  const jobActionBusy = jobFetcher.state !== "idle";
   const deleting = deleteFetcher.state !== "idle";
 
+  /* ---- Job polling (3 s active / 30 s idle, paused when hidden) ---------- */
+  const { summary: liveSummary, refresh: refreshJobs } = useActiveJobsPoll();
+
   useResultToast(contextFetcher);
+  useResultToast(estimateFetcher); // errors only — a successful estimate has no message
+  useResultToast(genFetcher, () => {
+    // Enqueued: close the large-batch modal (if open), keep the form filled so
+    // a second, different job can be launched right away, and poll instantly.
+    setConfirmLarge(null);
+    setConfirmText("");
+    refreshJobs();
+  });
+  useResultToast(jobFetcher, () => {
+    refreshJobs();
+  });
   useResultToast(deleteFetcher, () => {
     setDeleteBatchTarget(null);
     setDeleteAllOpen(false);
     setDeleteAllText("");
+    refreshJobs();
   });
 
-  /* ---- Leaving-the-page guard while a run is active ---------------------- */
+  // Clear the per-row spinner as soon as the cancel/retry round-trip settles.
   useEffect(() => {
-    if (!generating) return undefined;
-    const handler = (event: BeforeUnloadEvent) => {
-      event.preventDefault();
-      event.returnValue = "";
-    };
-    window.addEventListener("beforeunload", handler);
-    return () => window.removeEventListener("beforeunload", handler);
-  }, [generating]);
+    if (jobFetcher.state === "idle") setPendingJobAction(null);
+  }, [jobFetcher.state]);
 
   /* ---- Product selection ------------------------------------------------- */
 
@@ -639,11 +972,12 @@ export default function QaGeneratorRoute() {
   const variantsTouched = useRef(false);
 
   const selectProduct = (picked: PickedProduct) => {
-    if (generating) return;
     setProduct(picked);
     variantsTouched.current = false;
     setAssignVariants(picked.variants.length > 1);
-    setSummary(null);
+    // A different product invalidates the on-screen estimate entirely.
+    setEstimateView(null);
+    setEstimateRaw(null);
     contextFetcher.submit(
       { intent: "product-context", productId: picked.id },
       { method: "post" },
@@ -751,18 +1085,30 @@ export default function QaGeneratorRoute() {
   const distributionPreview = useMemo(() => {
     const n =
       Number.isFinite(countNumber) && countNumber >= 1
-        ? Math.min(MAX_PER_BATCH, countNumber)
+        ? Math.min(PREVIEW_MAX_COUNT, countNumber)
         : 20;
     const counts = previewStarDistribution(n, targetAverage);
     const sum = counts.reduce((acc, c, i) => acc + c * (i + 1), 0);
     return { counts, total: n, achieved: sum / n };
   }, [countNumber, targetAverage]);
 
-  const validateForm = (): { configJson: string; total: number } | null => {
+  /**
+   * Validates the form and assembles the config JSON without touching any
+   * state (the debounced estimate auto-refresh must not flash error text).
+   */
+  const computeConfig = (): {
+    errors: Record<string, string>;
+    configJson: string | null;
+    total: number;
+  } => {
     const errors: Record<string, string> = {};
     if (!product) errors._ = "Pick a product before generating reviews";
-    if (!Number.isFinite(countNumber) || countNumber < 1 || countNumber > MAX_PER_BATCH) {
-      errors.count = `Enter a number of reviews between 1 and ${MAX_PER_BATCH}`;
+    // No product cap since v1.7 — a positive integer up to the per-job
+    // ceiling (which the server would otherwise clamp to silently).
+    if (!Number.isFinite(countNumber) || !Number.isSafeInteger(countNumber) || countNumber < 1) {
+      errors.count = "Enter a number of reviews (1 or more)";
+    } else if (countNumber > MAX_REVIEWS_PER_JOB) {
+      errors.count = MAX_REVIEWS_MESSAGE;
     }
     if (languages.length === 0) errors.languages = "Select at least one language";
     const maxVotes = Number.parseInt(maxVotesText, 10);
@@ -779,8 +1125,9 @@ export default function QaGeneratorRoute() {
     if (!errors.dateStart && !errors.dateEnd && dateStart > dateEnd) {
       errors.dateEnd = "The end date must be on or after the start date";
     }
-    setFormErrors(errors);
-    if (Object.keys(errors).length > 0 || !product) return null;
+    if (Object.keys(errors).length > 0 || !product) {
+      return { errors, configJson: null, total: 0 };
+    }
 
     const config = {
       productId: product.id,
@@ -802,152 +1149,165 @@ export default function QaGeneratorRoute() {
       structuredAttrs,
       status,
     };
-    return { configJson: JSON.stringify(config), total: countNumber };
+    return { errors, configJson: JSON.stringify(config), total: countNumber };
   };
 
-  /* ---- Generation run (sequential chunks of 8) --------------------------- */
+  const validateForm = (): { configJson: string; total: number } | null => {
+    const result = computeConfig();
+    setFormErrors(result.errors);
+    if (!result.configJson) return null;
+    return { configJson: result.configJson, total: result.total };
+  };
 
-  const submitChunk = (current: GenRun) => {
+  /* ---- Estimate (optional; SPEC-1.7 §4/§5) -------------------------------- */
+
+  // The review count the last estimate request was submitted for — drives the
+  // debounced auto-refresh (only re-estimate when the count actually moved).
+  const lastEstimateCount = useRef<number | null>(null);
+
+  const submitEstimate = (configJson: string, total: number) => {
+    lastEstimateCount.current = total;
+    estimateFetcher.submit({ intent: "estimate", config: configJson }, { method: "post" });
+  };
+
+  const requestEstimate = () => {
+    if (estimating) return;
+    const validated = validateForm();
+    if (!validated) return;
+    submitEstimate(validated.configJson, validated.total);
+  };
+
+  // Debounced (600 ms) auto-refresh: while an estimate is on screen and the
+  // review count changed (SPEC-1.7 §5) — and ALSO whenever the count sits
+  // above the large-batch warning threshold, so the >500 inline warning and
+  // the >5000 confirm modal always carry the estimated cost and duration
+  // (SPEC-1.7 §2 requires the figures, not a prompt to press a button). The
+  // lastEstimateCount guard keeps this from re-submitting for a count that
+  // was already estimated (or whose estimate request failed).
+  useEffect(() => {
+    const needsLargeBatchEstimate =
+      Number.isFinite(countNumber) &&
+      countNumber > LARGE_BATCH_WARNING_THRESHOLD &&
+      product !== null &&
+      contextFetcher.state === "idle"; // wait for the product context to settle
+    if (!estimateView && !needsLargeBatchEstimate) return undefined;
+    if (!Number.isFinite(countNumber) || countNumber < 1) return undefined;
+    if (lastEstimateCount.current === countNumber) return undefined;
+    const timer = setTimeout(() => {
+      const { errors, configJson, total } = computeConfig();
+      if (configJson && Object.keys(errors).length === 0) {
+        submitEstimate(configJson, total);
+      }
+    }, 600);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [countNumber, estimateView, product, contextFetcher.state]);
+
+  const lastEstimateData = useRef<unknown>(null);
+  useEffect(() => {
+    if (
+      estimateFetcher.state !== "idle" ||
+      !estimateFetcher.data ||
+      estimateFetcher.data === lastEstimateData.current
+    ) {
+      return;
+    }
+    lastEstimateData.current = estimateFetcher.data;
+    const data = estimateFetcher.data as { ok?: boolean; intent?: string; estimate?: unknown };
+    if (data.intent !== "estimate" || data.ok !== true) return;
+    const view = normalizeEstimate(data.estimate);
+    if (view) {
+      setEstimateRaw(data.estimate);
+      setEstimateView(view);
+    }
+  }, [estimateFetcher.state, estimateFetcher.data]);
+
+  /* ---- Generate (enqueue a background job) -------------------------------- */
+
+  const enqueueJob = (configJson: string, total: number) => {
+    if (enqueueing) return;
+    const estimateAttachment =
+      estimateRaw && estimateView && estimateView.reviews === total
+        ? JSON.stringify(estimateRaw)
+        : "";
     genFetcher.submit(
-      {
-        intent: "generate-chunk",
-        config: current.configJson,
-        // Hidden field threading the batchId to every chunk after the first.
-        batchId: current.batchId,
-        start: String(current.completed),
-      },
+      { intent: "generate", config: configJson, estimate: estimateAttachment },
       { method: "post" },
     );
   };
 
   const startGeneration = () => {
-    if (generating || !aiReady) return;
+    if (!aiReady || enqueueing) return;
     const validated = validateForm();
-    if (!validated || !product) return;
-    setSummary(null);
-    const initial: GenRun = {
-      batchId: "",
-      productId: product.id,
-      configJson: validated.configJson,
-      total: validated.total,
-      completed: 0,
-      created: 0,
-      failed: 0,
-      errors: [],
-      phase: "chunks",
-    };
-    setRun(initial);
-    submitChunk(initial);
+    if (!validated) return;
+    if (validated.total > LARGE_BATCH_CONFIRM_THRESHOLD) {
+      // Very large batch — re-confirm with a typed count (SPEC-1.7 §2). The
+      // modal must name the estimated cost and duration, so fetch the
+      // estimate right away when the one on screen doesn't match this count
+      // (e.g. Generate was clicked before the debounced auto-estimate fired).
+      if (!estimating && (!estimateView || estimateView.reviews !== validated.total)) {
+        submitEstimate(validated.configJson, validated.total);
+      }
+      setConfirmText("");
+      setConfirmLarge({ configJson: validated.configJson, total: validated.total });
+      return;
+    }
+    enqueueJob(validated.configJson, validated.total);
   };
 
-  const lastGenData = useRef<unknown>(null);
+  /* ---- Jobs table: merge loader data with the live poll ------------------- */
+
+  const loaderJobs = useMemo(() => normalizeJobList(jobs as unknown), [jobs]);
+
+  const mergedJobs = useMemo(() => {
+    if (!liveSummary) return loaderJobs;
+    const liveById = new Map(liveSummary.jobs.map((job) => [job.id, job] as const));
+    const merged = loaderJobs.map((job) => {
+      const live = liveById.get(job.id);
+      if (live) liveById.delete(job.id);
+      return live ?? job;
+    });
+    // Jobs enqueued since the last loader run (e.g. from another tab) appear
+    // at the top until the revalidation below refreshes the canonical list.
+    const fresh = [...liveById.values()];
+    return [...fresh, ...merged].slice(0, 50);
+  }, [loaderJobs, liveSummary]);
+
+  // When the set of active jobs changes between polls (a job started,
+  // finished, failed or got cancelled), re-run the loader so terminal rows
+  // show their final status/cost/duration.
+  const prevActiveIds = useRef<Set<string> | null>(null);
   useEffect(() => {
-    if (
-      genFetcher.state !== "idle" ||
-      !genFetcher.data ||
-      genFetcher.data === lastGenData.current ||
-      !run
-    ) {
-      return;
-    }
-    lastGenData.current = genFetcher.data;
-    const data = genFetcher.data as {
-      ok?: boolean;
-      intent?: string;
-      message?: string;
-      code?: string;
-      synced?: boolean;
-      syncMessage?: string;
-      result?: {
-        batchId?: string;
-        processed?: number;
-        created?: number;
-        failed?: number;
-        errors?: unknown;
-        done?: boolean;
-      };
-    };
-
-    if (data.intent === "generate-chunk" && run.phase === "chunks") {
-      if (data.ok !== true || !data.result) {
-        // Hard failure (no AI key / bad config / 500) — stop honestly.
-        setSummary({
-          batchId: run.batchId,
-          created: run.created,
-          failed: run.failed,
-          errors: [
-            ...(run.errors.length ? run.errors : []),
-            typeof data.message === "string" && data.message
-              ? data.message
-              : "The generation failed. Please try again.",
-          ].slice(0, MAX_UI_ERRORS),
-          syncMessage: null,
-          aborted: true,
-        });
-        setRun(null);
-        return;
+    if (!liveSummary) return;
+    const current = new Set(
+      liveSummary.jobs.filter((job) => isActiveJobStatus(job.status)).map((job) => job.id),
+    );
+    const previous = prevActiveIds.current;
+    prevActiveIds.current = current;
+    if (!previous) return;
+    let changed = current.size !== previous.size;
+    if (!changed) {
+      for (const id of current) {
+        if (!previous.has(id)) {
+          changed = true;
+          break;
+        }
       }
-
-      const result = data.result;
-      const processed = Number.isFinite(result.processed) ? Number(result.processed) : 0;
-      const chunkErrors = Array.isArray(result.errors)
-        ? result.errors.filter((e): e is string => typeof e === "string")
-        : [];
-      const next: GenRun = {
-        ...run,
-        batchId:
-          typeof result.batchId === "string" && result.batchId ? result.batchId : run.batchId,
-        completed: run.completed + processed,
-        created: run.created + (Number.isFinite(result.created) ? Number(result.created) : 0),
-        failed: run.failed + (Number.isFinite(result.failed) ? Number(result.failed) : 0),
-        errors: [...run.errors, ...chunkErrors].slice(0, MAX_UI_ERRORS),
-      };
-
-      const done = result.done === true || processed === 0 || next.completed >= next.total;
-      if (!done) {
-        setRun(next);
-        submitChunk(next);
-        return;
-      }
-      if (next.created > 0) {
-        setRun({ ...next, phase: "finalize" });
-        genFetcher.submit(
-          { intent: "finalize-batch", productId: next.productId, batchId: next.batchId },
-          { method: "post" },
-        );
-      } else {
-        // Nothing was created — no aggregates to sync.
-        setSummary({
-          batchId: next.batchId,
-          created: 0,
-          failed: next.failed,
-          errors: next.errors,
-          syncMessage: null,
-          aborted: false,
-        });
-        setRun(null);
-      }
-      return;
     }
+    if (changed && revalidator.state === "idle") revalidator.revalidate();
+  }, [liveSummary, revalidator]);
 
-    if (data.intent === "finalize-batch" && run.phase === "finalize") {
-      setSummary({
-        batchId: run.batchId,
-        created: run.created,
-        failed: run.failed,
-        errors: run.errors,
-        syncMessage:
-          data.ok !== true
-            ? "Reviews were created, but the product rating sync failed — it will refresh on the next moderation action."
-            : data.synced === false && typeof data.syncMessage === "string"
-              ? data.syncMessage
-              : null,
-        aborted: false,
-      });
-      setRun(null);
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [genFetcher.state, genFetcher.data, run]);
+  const cancelJob = (job: JobView) => {
+    if (jobActionBusy) return;
+    setPendingJobAction({ id: job.id, kind: "cancel" });
+    jobFetcher.submit({ intent: "cancel-job", jobId: job.id }, { method: "post" });
+  };
+
+  const retryJobRemaining = (job: JobView) => {
+    if (jobActionBusy) return;
+    setPendingJobAction({ id: job.id, kind: "retry" });
+    jobFetcher.submit({ intent: "retry-job", jobId: job.id }, { method: "post" });
+  };
 
   /* ---- Deletions --------------------------------------------------------- */
 
@@ -985,11 +1345,12 @@ export default function QaGeneratorRoute() {
   const targetBatch = deleteBatchTarget
     ? typedStats.batches.find((b) => b.batchId === deleteBatchTarget) ?? null
     : null;
-  const progressPercent = run
-    ? Math.min(100, Math.round((run.completed / Math.max(1, run.total)) * 100))
-    : 0;
   const contextLoading = contextFetcher.state !== "idle";
   const maxPreviewCount = Math.max(1, ...distributionPreview.counts);
+  const estimateMatchesCount =
+    estimateView !== null &&
+    Number.isFinite(countNumber) &&
+    estimateView.reviews === countNumber;
 
   const batchRows = typedStats.batches.map((batch) => [
     <Text as="span" variant="bodySm" key={`id-${batch.batchId}`}>
@@ -1008,13 +1369,105 @@ export default function QaGeneratorRoute() {
       <Button
         size="slim"
         tone="critical"
-        disabled={generating || deleting}
+        disabled={deleting}
         onClick={() => setDeleteBatchTarget(batch.batchId)}
       >
         Delete batch
       </Button>
     </InlineStack>,
   ]);
+
+  const jobRows = mergedJobs.map((job, index) => {
+    const active = isActiveJobStatus(job.status);
+    const canRetry =
+      (job.status === "FAILED" || job.status === "CANCELLED") && job.created < job.target;
+    const progress =
+      job.target > 0 ? Math.min(100, Math.round((job.created / job.target) * 100)) : 0;
+    return (
+      <IndexTable.Row id={job.id} key={job.id} position={index}>
+        <IndexTable.Cell>
+          <JobStatusBadge job={job} />
+        </IndexTable.Cell>
+        <IndexTable.Cell>
+          <BlockStack gap="050">
+            <Text as="span" variant="bodyMd">
+              {job.productTitle ?? `Product ${job.productId}`}
+            </Text>
+            {job.status === "FAILED" && job.error ? (
+              <Text as="span" variant="bodySm" tone="critical">
+                {truncateText(job.error, 140)}
+              </Text>
+            ) : null}
+          </BlockStack>
+        </IndexTable.Cell>
+        <IndexTable.Cell>
+          <BlockStack gap="100">
+            <Text as="span" variant="bodySm">
+              {formatCount(job.created)} / {formatCount(job.target)}
+              {job.failed > 0 ? ` · ${formatCount(job.failed)} failed` : ""}
+            </Text>
+            <div style={{ minWidth: 120 }}>
+              <ProgressBar progress={progress} size="small" />
+            </div>
+          </BlockStack>
+        </IndexTable.Cell>
+        <IndexTable.Cell>
+          <Text as="span" variant="bodySm">
+            {jobTimeText(job)}
+          </Text>
+        </IndexTable.Cell>
+        <IndexTable.Cell>
+          <Text as="span" variant="bodySm">
+            {job.costUsd > 0 ? formatUsd(job.costUsd) : "—"}
+          </Text>
+        </IndexTable.Cell>
+        <IndexTable.Cell>
+          <InlineStack gap="200" wrap>
+            {active ? (
+              <Button
+                size="slim"
+                disabled={job.cancelRequested || jobActionBusy}
+                loading={pendingJobAction?.id === job.id && pendingJobAction.kind === "cancel"}
+                onClick={() => cancelJob(job)}
+              >
+                Cancel
+              </Button>
+            ) : null}
+            {canRetry ? (
+              <Button
+                size="slim"
+                disabled={jobActionBusy}
+                loading={pendingJobAction?.id === job.id && pendingJobAction.kind === "retry"}
+                onClick={() => retryJobRemaining(job)}
+              >
+                Retry remaining
+              </Button>
+            ) : null}
+            {job.created > 0 && job.batchId ? (
+              <Button
+                size="slim"
+                onClick={() =>
+                  navigate(`/app/reviews?batch=${encodeURIComponent(job.batchId)}`)
+                }
+              >
+                View reviews
+              </Button>
+            ) : null}
+            {job.batchId ? (
+              <Button
+                size="slim"
+                tone="critical"
+                disabled={deleting}
+                onClick={() => setDeleteBatchTarget(job.batchId)}
+              >
+                Delete batch
+              </Button>
+            ) : null}
+          </InlineStack>
+        </IndexTable.Cell>
+      </IndexTable.Row>
+    );
+  });
 
   return (
     <Page title="QA data">
@@ -1040,56 +1493,6 @@ export default function QaGeneratorRoute() {
               </Banner>
             ) : null}
 
-            {summary ? (
-              <Banner
-                tone={
-                  summary.aborted
-                    ? "critical"
-                    : summary.failed > 0 || summary.syncMessage
-                      ? "warning"
-                      : "success"
-                }
-                title={
-                  summary.aborted
-                    ? `Generation stopped — ${pluralize(summary.created, "review")} created before the failure`
-                    : summary.failed > 0
-                      ? `Generated ${pluralize(summary.created, "review")} — ${summary.failed} failed`
-                      : `Generated ${pluralize(summary.created, "synthetic review")}`
-                }
-                onDismiss={() => setSummary(null)}
-                action={
-                  summary.created > 0 && summary.batchId
-                    ? {
-                        content: "View in Reviews",
-                        onAction: () =>
-                          navigate(
-                            `/app/reviews?batch=${encodeURIComponent(summary.batchId)}`,
-                          ),
-                      }
-                    : undefined
-                }
-              >
-                <BlockStack gap="100">
-                  {summary.errors.length > 0 ? (
-                    <BlockStack gap="050">
-                      {summary.errors.map((error, index) => (
-                        <Text as="p" variant="bodySm" key={index}>
-                          {error}
-                        </Text>
-                      ))}
-                    </BlockStack>
-                  ) : null}
-                  {summary.syncMessage ? <Text as="p">{summary.syncMessage}</Text> : null}
-                  {(summary.aborted || summary.failed > 0) && summary.created > 0 ? (
-                    <Text as="p" variant="bodySm">
-                      The partially generated batch is listed below — delete it if you don't
-                      want to keep it.
-                    </Text>
-                  ) : null}
-                </BlockStack>
-              </Banner>
-            ) : null}
-
             {/* ---- Config card ------------------------------------------- */}
             <Card>
               <BlockStack gap="400">
@@ -1112,15 +1515,13 @@ export default function QaGeneratorRoute() {
                           : "no variants"}
                         {contextLoading ? " · loading details…" : ""}
                       </Text>
-                      <Button size="slim" disabled={generating} onClick={openPicker}>
+                      <Button size="slim" onClick={openPicker}>
                         Change product
                       </Button>
                     </InlineStack>
                   ) : (
                     <InlineStack gap="200">
-                      <Button onClick={openPicker} disabled={generating}>
-                        Select product
-                      </Button>
+                      <Button onClick={openPicker}>Select product</Button>
                     </InlineStack>
                   )}
                   {pickerUnavailable ? (
@@ -1137,7 +1538,6 @@ export default function QaGeneratorRoute() {
                           label="Product (first 100 shown)"
                           options={productOptions}
                           value={product?.id ?? ""}
-                          disabled={generating}
                           onChange={(value) => {
                             const match = products.find((p) => p.id === value);
                             if (match) {
@@ -1170,13 +1570,11 @@ export default function QaGeneratorRoute() {
                       label="Number of reviews"
                       type="number"
                       min={1}
-                      max={MAX_PER_BATCH}
                       autoComplete="off"
                       value={countText}
                       onChange={setCountText}
-                      disabled={generating}
                       error={formErrors.count}
-                      helpText={`1–${MAX_PER_BATCH} per batch`}
+                      helpText="Up to 100,000 per job — large batches generate in the background"
                     />
                     <TextField
                       label="Max helpful votes per review"
@@ -1186,11 +1584,26 @@ export default function QaGeneratorRoute() {
                       autoComplete="off"
                       value={maxVotesText}
                       onChange={setMaxVotesText}
-                      disabled={generating}
                       error={formErrors.maxVotes}
                       helpText="Votes follow a long tail — most reviews get 0–1"
                     />
                   </FormLayout.Group>
+
+                  {Number.isFinite(countNumber) &&
+                  countNumber > LARGE_BATCH_WARNING_THRESHOLD ? (
+                    <Banner
+                      tone="warning"
+                      title={`Large batch: ${formatCount(countNumber)} reviews`}
+                    >
+                      <Text as="p">
+                        {estimateMatchesCount && estimateView
+                          ? `Estimated ${formatUsd(estimateView.costUsd)} in API usage and ${formatEta(estimateView.seconds, estimateView.secondsHigh)}.`
+                          : estimating
+                            ? "Estimating the API cost and duration…"
+                            : "Use “Estimate cost” to see the projected API spend and duration before generating."}
+                      </Text>
+                    </Banner>
+                  ) : null}
 
                   <RangeSlider
                     label={`Average star rating: ${targetAverage.toFixed(1)}`}
@@ -1198,7 +1611,6 @@ export default function QaGeneratorRoute() {
                     max={5}
                     step={0.1}
                     value={targetAverage}
-                    disabled={generating}
                     onChange={(value) =>
                       setTargetAverage(typeof value === "number" ? value : value[0])
                     }
@@ -1263,7 +1675,6 @@ export default function QaGeneratorRoute() {
                       max={100}
                       step={1}
                       value={verifiedPercent}
-                      disabled={generating}
                       onChange={(value) =>
                         setVerifiedPercent(typeof value === "number" ? value : value[0])
                       }
@@ -1275,7 +1686,6 @@ export default function QaGeneratorRoute() {
                       max={100}
                       step={1}
                       value={repliesPercent}
-                      disabled={generating}
                       onChange={(value) =>
                         setRepliesPercent(typeof value === "number" ? value : value[0])
                       }
@@ -1289,7 +1699,6 @@ export default function QaGeneratorRoute() {
                       title="Languages"
                       choices={languageChoices}
                       selected={languages}
-                      disabled={generating}
                       onChange={setLanguages}
                     />
                     {formErrors.languages ? (
@@ -1308,7 +1717,6 @@ export default function QaGeneratorRoute() {
                       autoComplete="off"
                       value={dateStart}
                       onChange={setDateStart}
-                      disabled={generating}
                       error={formErrors.dateStart}
                     />
                     <TextField
@@ -1317,7 +1725,6 @@ export default function QaGeneratorRoute() {
                       autoComplete="off"
                       value={dateEnd}
                       onChange={setDateEnd}
-                      disabled={generating}
                       error={formErrors.dateEnd}
                       helpText="Review dates spread across the range with a mild recency bias"
                     />
@@ -1327,7 +1734,7 @@ export default function QaGeneratorRoute() {
                     <Checkbox
                       label="Assign product variants"
                       checked={assignVariants}
-                      disabled={generating || (product?.variants.length ?? 0) === 0}
+                      disabled={(product?.variants.length ?? 0) === 0}
                       onChange={(checked) => {
                         variantsTouched.current = true;
                         setAssignVariants(checked);
@@ -1341,7 +1748,6 @@ export default function QaGeneratorRoute() {
                     <Checkbox
                       label="Fill structured attributes"
                       checked={structuredAttrs}
-                      disabled={generating}
                       onChange={setStructuredAttrs}
                       helpText="Age, skin concerns, time using and results seen — coherent with each rating"
                     />
@@ -1354,34 +1760,46 @@ export default function QaGeneratorRoute() {
                       { label: "Pending", value: "PENDING" },
                     ]}
                     value={status}
-                    disabled={generating}
                     onChange={(value) => setStatus(value === "PENDING" ? "PENDING" : "PUBLISHED")}
                   />
                 </FormLayout>
 
-                {run ? (
-                  <BlockStack gap="200">
-                    <div role="status">
-                      <Text as="p" fontWeight="semibold">
-                        {run.phase === "finalize"
-                          ? "Updating product rating and metafields…"
-                          : `Generating ${Math.min(run.completed + 1, run.total)} of ${run.total}…`}
-                      </Text>
-                    </div>
-                    <ProgressBar progress={progressPercent} size="small" />
-                  </BlockStack>
+                {/* ---- Inline cost & time estimate (SPEC-1.7 §5) ---------- */}
+                {estimateView ? (
+                  <Banner
+                    tone="info"
+                    title={`≈ ${formatCount(estimateView.inputTokens)} input + ${formatCount(estimateView.outputTokens)} output tokens · ≈ ${formatUsd(estimateView.costUsd)} · ${formatEta(estimateView.seconds, estimateView.secondsHigh)}`}
+                    onDismiss={() => {
+                      setEstimateView(null);
+                      setEstimateRaw(null);
+                    }}
+                  >
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      {estimateSecondLine(estimateView)}
+                      {estimating ? " · Updating…" : ""}
+                    </Text>
+                  </Banner>
                 ) : null}
 
                 <InlineStack gap="200" blockAlign="center">
                   <Button
                     variant="primary"
                     onClick={startGeneration}
-                    loading={generating}
-                    disabled={!aiReady || generating || !product || contextLoading}
+                    loading={enqueueing}
+                    disabled={!aiReady || enqueueing || !product || contextLoading}
                   >
                     {Number.isFinite(countNumber) && countNumber >= 1
-                      ? `Generate ${pluralize(Math.min(countNumber, MAX_PER_BATCH), "review")}`
+                      ? countNumber === 1
+                        ? "Generate 1 review"
+                        : `Generate ${formatCount(countNumber)} reviews`
                       : "Generate reviews"}
+                  </Button>
+                  <Button
+                    onClick={requestEstimate}
+                    loading={estimating}
+                    disabled={!product || contextLoading || estimating}
+                  >
+                    Estimate cost
                   </Button>
                   {!aiReady ? (
                     <Text as="span" variant="bodySm" tone="subdued">
@@ -1389,6 +1807,37 @@ export default function QaGeneratorRoute() {
                     </Text>
                   ) : null}
                 </InlineStack>
+              </BlockStack>
+            </Card>
+
+            {/* ---- Generation jobs (SPEC-1.7 §5) -------------------------- */}
+            <Card>
+              <BlockStack gap="300">
+                <Text as="h2" variant="headingMd">
+                  Generation jobs
+                </Text>
+                {mergedJobs.length === 0 ? (
+                  <Text as="p" tone="subdued">
+                    No generation jobs yet. Jobs run in the background — you can leave this
+                    page while they generate.
+                  </Text>
+                ) : (
+                  <IndexTable
+                    itemCount={mergedJobs.length}
+                    selectable={false}
+                    resourceName={{ singular: "job", plural: "jobs" }}
+                    headings={[
+                      { title: "Status" },
+                      { title: "Product" },
+                      { title: "Progress" },
+                      { title: "Time" },
+                      { title: "Cost" },
+                      { title: "Actions" },
+                    ]}
+                  >
+                    {jobRows}
+                  </IndexTable>
+                )}
               </BlockStack>
             </Card>
 
@@ -1401,7 +1850,7 @@ export default function QaGeneratorRoute() {
                   </Text>
                   <Button
                     tone="critical"
-                    disabled={typedStats.total === 0 || generating || deleting}
+                    disabled={typedStats.total === 0 || deleting}
                     onClick={() => {
                       setDeleteAllText("");
                       setDeleteAllOpen(true);
@@ -1428,14 +1877,71 @@ export default function QaGeneratorRoute() {
         </Layout.Section>
       </Layout>
 
+      {/* ---- Very large batch: typed re-confirmation (SPEC-1.7 §2) ------- */}
+      <Modal
+        open={confirmLarge !== null}
+        onClose={() => {
+          if (!enqueueing) {
+            setConfirmLarge(null);
+            setConfirmText("");
+          }
+        }}
+        title={
+          confirmLarge ? `Generate ${formatCount(confirmLarge.total)} reviews?` : "Generate?"
+        }
+        primaryAction={{
+          content: confirmLarge
+            ? `Generate ${formatCount(confirmLarge.total)} reviews`
+            : "Generate",
+          disabled: !confirmLarge || confirmText.trim() !== String(confirmLarge.total),
+          loading: enqueueing,
+          onAction: () => {
+            if (confirmLarge) enqueueJob(confirmLarge.configJson, confirmLarge.total);
+          },
+        }}
+        secondaryActions={[
+          {
+            content: "Cancel",
+            disabled: enqueueing,
+            onAction: () => {
+              setConfirmLarge(null);
+              setConfirmText("");
+            },
+          },
+        ]}
+      >
+        <Modal.Section>
+          <BlockStack gap="300">
+            <Text as="p">
+              {confirmLarge && estimateView && estimateView.reviews === confirmLarge.total
+                ? `Estimated ${formatUsd(estimateView.costUsd)} in API usage and ${formatEta(estimateView.seconds, estimateView.secondsHigh)}. The job runs in the background — you can leave this page while it generates.`
+                : estimating
+                  ? "Calculating the estimated cost and duration… The job runs in the background — you can leave this page while it generates."
+                  : "This is a very large batch. Consider pressing “Estimate cost” first to see the projected API spend and duration. The job runs in the background — you can leave this page while it generates."}
+            </Text>
+            <TextField
+              label={
+                confirmLarge
+                  ? `Type ${confirmLarge.total} to confirm`
+                  : "Type the review count to confirm"
+              }
+              autoComplete="off"
+              value={confirmText}
+              onChange={setConfirmText}
+              disabled={enqueueing}
+            />
+          </BlockStack>
+        </Modal.Section>
+      </Modal>
+
       {/* ---- Delete one batch ------------------------------------------- */}
       <ConfirmationModal
         open={deleteBatchTarget !== null}
         title="Delete this synthetic batch?"
         message={
           targetBatch
-            ? `This permanently deletes ${pluralize(targetBatch.count, "synthetic review")} for “${targetBatch.productTitle ?? `Product ${targetBatch.productId}`}”. The product rating updates automatically.`
-            : "This permanently deletes every review in this batch. The product rating updates automatically."
+            ? `This permanently deletes ${pluralize(targetBatch.count, "synthetic review")} for “${targetBatch.productTitle ?? `Product ${targetBatch.productId}`}”, and cancels and removes any generation job for this batch. The product rating updates automatically.`
+            : "This permanently deletes every review in this batch, and cancels and removes its generation job. The product rating updates automatically."
         }
         confirmLabel="Delete batch"
         loading={deleting}
@@ -1477,8 +1983,10 @@ export default function QaGeneratorRoute() {
           <BlockStack gap="300">
             <Text as="p">
               This permanently deletes {pluralize(typedStats.total, "synthetic review")} across
-              all batches, including their media, votes and cached translations. Affected
-              product ratings update automatically. This cannot be undone.
+              all batches, including their media, votes and cached translations. Any active
+              generation jobs are cancelled (a running job stops after its current chunk) and
+              finished job history is removed. Affected product ratings update automatically.
+              This cannot be undone.
             </Text>
             <TextField
               label='Type "DELETE" to confirm'

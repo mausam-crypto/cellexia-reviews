@@ -66,8 +66,41 @@
         }
       }
     },
+    "overall_block": {
+      "name": "Cellexia összesített értékelések",
+      "settings": {
+        "heading": {
+          "label": "Címsor"
+        },
+        "max_reviews": {
+          "label": "Megjelenített értékelések száma"
+        },
+        "layout": {
+          "label": "Elrendezés",
+          "options__1": {
+            "label": "Rács"
+          },
+          "options__2": {
+            "label": "Körhinta"
+          }
+        },
+        "show_distribution": {
+          "label": "Értékeléseloszlási sávok megjelenítése"
+        },
+        "show_product_links": {
+          "label": "Minden értékelés összekapcsolása a termékével"
+        },
+        "cta_label": {
+          "label": "Gombfelirat (nem kötelező)"
+        },
+        "cta_url": {
+          "label": "Gomb hivatkozása"
+        }
+      }
+    },
     "defaults": {
-      "heading": "Vásárlói értékelések"
+      "heading": "Vásárlói értékelések",
+      "overall_heading": "Ezt mondják vásárlóink"
     }
   }
 }

@@ -4,6 +4,241 @@ All notable changes to Cellexia Reviews are documented here. The version number 
 `package.json` and stamped into the release ZIP built by `npm run package`
 (`dist/cellexia-reviews-v<version>.zip`).
 
+## 1.9.0 — 2026-07-27
+
+The "your whole brand's reviews, on your home page" release: one new, optional theme block
+that shows the store-wide rating and your strongest reviews across **all** products — Amazon's
+trust language adapted to a homepage — plus the admin controls to curate it. Everything is
+additive: stores that never add the block see zero change.
+
+### Added
+
+- **"Cellexia Overall Reviews" theme block** — a brand-wide review section for the home page
+  (or any page whose template supports sections): theme editor → your page → **Add section**
+  (or Add block) → Apps → **Cellexia Overall Reviews**. It renders, entirely server-side for
+  an instant first paint with zero API calls on load:
+  - a centered, homepage-scale header: your combined rating across every product's published
+    reviews as a large star row with "4.8 out of 5", "Based on 12,438 reviews across our
+    products", and — whenever at least 60% of those reviews are verified purchases — the
+    trust line "93% from verified purchases";
+  - optional **clickable rating-distribution bars**: a shopper who clicks the 5-star bar sees
+    only 5-star reviews (one request, re-rendered in place), with an **All stars** chip to
+    return to the featured set;
+  - your top reviews across all products as condensed review cards — stars, bold title, a
+    clamped excerpt with **Read more**, author, date, **Verified Purchase** badge, a media
+    indicator for reviews with photos or video — each card linking to its product's review
+    section ("Read 6,214 reviews") when **Link each review to its product** is on;
+  - an optional call-to-action button (**Button label (optional)** + **Button link**, e.g.
+    "Shop bestsellers").
+  - Block settings: **Heading** (default "What our customers say"), **Number of reviews to
+    show** (3–12, default 6), **Layout** — **Grid** (1 column on phones, 2 from 640 px,
+    3 from 1024 px) or **Carousel** (swipeable snap row with previous/next arrows; the row
+    stays natively scrollable even without JavaScript) — **Show rating distribution bars**,
+    **Link each review to its product**, and the button pair above. All labels translated in
+    all 17 schema locales; the three new storefront strings are translated in all 17
+    storefront languages.
+- **You choose what leads** — the **Display order** page gains a third card, **"Overall
+  reviews (homepage widget)"**:
+  - **Auto** (default): "Our ranking picks your strongest recent reviews across all products,
+    max 2 per product" — reviews rated 4 stars or better, scored by helpful votes, Verified
+    Purchase status, attached photos/videos, a substantial (but not rambling) text, and
+    recency, with a **diversity rule**: never more than 2 reviews from the same product, so
+    the block reads like a brand, not one bestseller. Only if too few reviews qualify does
+    the bar relax to 3 stars — never below.
+  - **Hand-picked**: choose up to 12 reviews yourself, searching every product's published
+    reviews (with rating filter and product column), in your exact order, with keyboard-
+    friendly ↑ / ↓ / Remove buttons. If you pick fewer than the block shows, the auto ranking
+    backfills the rest; a picked review that loses its published status drops out by itself.
+  - A **Refresh homepage data** button pushes the current numbers to your theme immediately —
+    the card's help text says the rest: "updates automatically as reviews change; changes
+    appear within a minute" — and a stats preview (average, count, verified share) shows
+    exactly what the block will display.
+  - The fast path: every review's own page gains **Feature on homepage** / **Unfeature**
+    beside the 1.8 product-level action (same cap of 12).
+- **Brand-wide storefront endpoint** — `GET /apps/<subpath>/api/brand-reviews` (own rate
+  bucket, 120/h) powers the distribution-bar filtering: shop-wide stats plus reviews across
+  products, each with its product's title and link. Same HMAC verification, same
+  live/preview gating, same 60-second caching, and the same strict field whitelist as the
+  product review API — nothing merchant-only leaks.
+- **Shop metafields** `cellexia.shop_rating` and `cellexia.shop_top_reviews` carry the
+  aggregate and the chosen top reviews to the theme for the server-side paint. They re-sync
+  automatically whenever reviews change (batched, so bulk imports stay cheap) and immediately
+  on the admin card's Save / **Refresh homepage data**.
+- **Demo page**: an "Overall reviews" showcase beneath the widget — the block in both Grid
+  and Carousel layout, fed by a mock brand payload (4.8 average, 12,438 reviews, 93%
+  verified, 6 top reviews across 4 products), fully offline, exercising Read more, the
+  carousel arrows and the distribution filter, and following the three-skin Design switcher.
+
+### Notes
+
+- **Deliberately no structured data from this block.** Google disregards self-serving
+  organization-level star ratings, so the home-page block emits no JSON-LD at all — your
+  product pages keep carrying the rich-snippet markup that actually earns stars in search.
+  The reasoning is documented in `docs/SEO.md`.
+- **Shopper-safety rules unchanged**: while the store is not live, the block renders nothing
+  for visitors (hidden shell, zero requests); the theme editor and tokenized previews show it
+  fully. A shop with zero published reviews renders no empty frame — nothing at all. If a
+  distribution-bar request ever fails, shoppers simply keep the server-rendered cards; no
+  error boxes.
+- One database migration (a `Setting.overallWidget` column) is applied automatically on
+  deploy. No new dependencies, no new app permissions. Existing blocks, the app embed and the
+  product-page widget are byte-identical to 1.8.0 — this feature is purely additive.
+- All three design versions (Amazon like, Cellexia, Luxe) style the new block in their own
+  language: uppercase Gobold heading for Cellexia, serif heading with champagne accents for
+  Luxe.
+- Documentation updated: `docs/CONFIGURATION.md` gains an "Overall reviews widget" section,
+  `docs/SEO.md` explains the no-structured-data decision, and the demo README covers the new
+  showcase.
+
+## 1.8.0 — 2026-07-26
+
+The "you decide what shoppers read first" release: a full review display-order system, an
+automatic-translation display mode — and the real fix for the card-badge bug, with its actual
+cause explained below rather than papered over.
+
+### Added
+
+- **Review display order** — a new **Display order** page in the app navigation (between
+  Reviews and Bulk add) controls which reviews shoppers see first, at two levels:
+  - **A store-wide default ranking**, chosen from six systems, each described on the page in
+    plain language with a small star-row example: the Amazon-style helpfulness ranking (the
+    default — exactly how the widget has always ordered "Top reviews"), top positive first,
+    most recent first, Verified Purchases first, photos & videos first, or a balanced mix that
+    alternates three positive reviews with one critical so shoppers can see nothing is being
+    hidden. Two optional boosts — **Show Verified Purchase reviews first** and **Show reviews
+    with photos first** — push those reviews ahead in any system except the balanced mix
+    (whose fixed rhythm is the point).
+  - **Per-product control**: a table of every product with published reviews shows the system
+    in effect ("Default (Amazon-style)" until overridden) and how many featured reviews it
+    has. **Edit display** opens a per-product editor: keep **Use the store default** or pick a
+    system for that product only, and hand-pick **Featured reviews (shown first)** — up to
+    **10 per product**, in your exact order, with keyboard-friendly up/down/Remove buttons and
+    a searchable, rating-filterable picker of the product's published reviews. There is also a
+    fast path straight from moderation: a **Feature on product page** / **Unfeature** action
+    on each review's own page.
+  - Featured reviews lead page 1 under the default "Top reviews" sort; the moment a shopper
+    re-sorts, searches or filters, the shopper's choice wins — as the editor's banner puts it:
+    "Featured reviews always appear first under the default sort. Shoppers can still re-sort
+    and filter." The three server-rendered top reviews (page source + Google structured data)
+    follow the same selection, so what search engines index matches the live widget.
+    Storefront review data is cached for 60 seconds, so display changes appear to shoppers
+    within a minute; the server-rendered data re-syncs immediately on save.
+  - **Nothing changes out of the box**: the default remains the Amazon-style ranking with no
+    featured reviews — until you change something, shoppers see exactly the pages they saw
+    on 1.7.0.
+- **Translation display mode** — Settings → Translation gains a "Reviews written in other
+  languages" choice: **"Show in the original language, with a Translate button (default)"**
+  (the existing behavior, unchanged) or **"Automatically translate into the shopper's
+  language, with a 'See original' option"**. In the automatic mode, a review written in
+  another language appears already translated, marked "Translated from …", with a
+  **See original** link — and **See translation** to switch back (one new storefront string,
+  translated in all 17 languages). The per-review Translate button and the "Translate all
+  reviews" link are hidden in this mode, since they would be redundant. Honest expectations:
+  the mode needs a translation provider **and** its API key; the first page-load in a language
+  whose translations don't exist yet can take a few seconds while they are created, after
+  which they are cached and instant for every later visitor; and if the provider fails or the
+  key is missing, the widget simply falls back to the original language with the Translate
+  button — never an error.
+
+### Fixed
+
+- **Star badges on product cards (home, collections, search) never appeared — and product
+  pages were silently paying for the same bug.** The cause was found by measuring the live
+  store's rendered pages, and it was real, not a configuration issue: the app writes its
+  internal storefront address (the app-proxy path its scripts call) through a small theme
+  snippet, and **Shopify wraps every rendered app snippet in invisible HTML comments**
+  (`<!-- BEGIN app snippet: … -->` … `<!-- END app snippet -->`) — including inside captured
+  variables and attribute values. Those comments ended up embedded in the address everywhere
+  it was consumed, turning it into an invalid URL. Two consequences: the **card-badge script
+  failed on every page, live or preview** — its one batched request never reached the app, so
+  no badges, ever — and the main product-page widget only *looked* healthy because the
+  address-recovery sweep added in 1.5.1 rescued it after one failed request, meaning **every
+  product page silently wasted a request and added latency on every single load**. 1.8.0
+  fixes all three layers: the theme files now strip the comment wrappers at every point the
+  address is used; the script strips comments and validates the address before trusting it,
+  falling back to its discovery sweep otherwise; and the badge script now shares the widget's
+  recovered address, so badges self-heal from any future path corruption exactly like the
+  widget does. The internal verification harness now reproduces Shopify's comment-wrapping in
+  its replica theme, so this class of bug can never pass unnoticed again.
+
+### Notes
+
+- One database migration (a `ProductDisplayConfig` table plus three `Setting` columns) is
+  applied automatically on deploy. No new dependencies, no new app permissions, one new
+  storefront string ("See translation") translated in all 17 languages.
+- Out of the box the storefront is byte-identical to 1.7.0: Amazon-style default order, no
+  featured reviews, original-language translation mode. The merchant-only preview data rules
+  (1.6) and the background-generation behavior (1.7) are untouched.
+- Documentation updated: `docs/CONFIGURATION.md` gains a "Review display order" section and a
+  rewritten Translation section; the card-badge troubleshooting entries in
+  `docs/CONFIGURATION.md` and `docs/FAQ.md` now state the real root cause above.
+
+## 1.7.0 — 2026-07-25
+
+The "generate as many as you want — and know what it costs first" release. The QA review
+generator (the **QA data** page) used to top out at 200 reviews per batch, run only while you
+kept the browser tab open, handle one batch at a time, and give no hint of what a run would
+cost or how long it would take. All four limits are gone.
+
+### Added
+
+- **Generation now runs in the background, on the server.** Clicking **Generate** starts a
+  job and returns immediately — a toast confirms: "Generation started — you can leave this
+  page". Navigate anywhere in the admin or close the tab entirely; the reviews keep being
+  created either way. The form stays filled, so a second, different run can be launched right
+  away: several jobs run simultaneously (the app works on up to two at a time per store and
+  queues the rest). If the app's server restarts mid-run, the job picks up where it left off —
+  reviews already created are kept, and the job never overshoots the number you asked for.
+- **No more 200-review cap.** Generate any number of reviews for a product in one request.
+  The page keeps you informed rather than fencing you in: above 500 reviews an inline warning
+  names the estimated cost and duration, and above 5,000 the confirmation asks you to
+  re-confirm the figures ("Generate 8,000 reviews? Estimated $X and ~Y.") before anything
+  starts. Reviews are written in small chunks as they are generated, so even a
+  10,000-review run stays light on the server.
+- **Cost estimate before you spend.** A new **Estimate cost** button next to **Generate**
+  (optional — generating never requires it) shows what a run should cost:
+  "≈ 12,400 input + 20,800 output tokens · **≈ $0.35** · about 4 minutes", with a second line
+  naming the basis — "Based on your last 27 generated batches" once the app has measured your
+  store's own throughput, or "Based on a token count of one sample batch" before that — and
+  the pricing applied, including the Claude Sonnet 5 introductory-pricing note while that
+  rate lasts. The estimate refreshes by itself when you change the review count. Estimates
+  are approximate by nature; the **actual** cost of every job, computed from real token
+  usage, is shown in the jobs table once the job finishes. As always, all usage is billed by
+  Anthropic to your own API key — the app itself never charges anything (`docs/FAQ.md` has
+  the per-model rates).
+- **Time estimates that learn your store's speed.** Duration predictions are calibrated from
+  your own store's measured generation throughput, not a generic guess — and while a job
+  runs, its remaining-time readout is recomputed from that job's actual pace, so it
+  self-corrects within the first minute.
+- **A Generation jobs table** on the QA data page: the 50 newest jobs with status, product,
+  progress bar (created / target), live remaining time for running jobs, elapsed time and
+  actual cost for finished ones, and per-row actions — **Cancel** (stops after the in-flight
+  chunk; reviews already created are kept), **Retry remaining** (re-queues just the missing
+  reviews of a failed or cancelled job into the same batch), **View reviews** and
+  **Delete batch** (which also removes the job, cancelling it first if needed). Chunk-level
+  hiccups are retried once, then skipped and reported honestly — a job only fails outright
+  when nothing could be created at all or the Anthropic key is missing or invalid.
+- **Progress visible from every admin page.** While any job is active, a compact dismissible
+  banner under the navigation reads "Generating reviews — 148 of 500 · about 7 minutes left"
+  and links back to **QA data** — so a long run is never out of sight, whatever page you are
+  on.
+
+### Notes
+
+- **Storefront behavior is byte-identical** to 1.6.0 — this release changes only the admin
+  side of the generator. Synthetic reviews keep every safety property from 1.4: internally
+  flagged, batch-tracked, filterable, one-click deletable, warned about on the Dashboard, and
+  never labeled on the storefront — delete every batch before going live.
+- One database migration (two new tables, `GenerationJob` and `ModelThroughput` — the jobs
+  and the per-store speed calibration) is applied automatically on deploy. No new
+  dependencies, no new app permissions, no locale changes.
+- Background jobs run inside the app process and assume the single-instance deployment the
+  app already requires — see the note in `docs/INSTALL.md` §4 if you host on more than one
+  instance.
+- Documentation updated: `docs/CONFIGURATION.md` §10 rewritten around background generation
+  and estimates, `docs/FAQ.md` gains "How much does generating reviews cost?" with the
+  per-model rates, `docs/INSTALL.md` §4 single-instance note.
+
 ## 1.6.0 — 2026-07-24
 
 The "why is nothing showing?" release. On a real store, three separate problems could combine

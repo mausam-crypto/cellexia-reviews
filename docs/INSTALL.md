@@ -144,8 +144,8 @@ datasource db {
 ```
 
 Mount a volume at `/data` (each walkthrough below shows how) and set
-`DATABASE_URL=file:/data/production.sqlite`. Run a **single instance** — SQLite and the
-in-memory rate limiter both assume one process.
+`DATABASE_URL=file:/data/production.sqlite`. Run a **single instance** — SQLite, the
+in-memory rate limiter and the background job runner (below) all assume one process.
 
 **Option B — Postgres** (recommended if you may scale beyond one instance):
 
@@ -160,6 +160,13 @@ Set `DATABASE_URL` to the connection string from your host's Postgres add-on. Af
 provider, regenerate the migration history once against the new database:
 `npx prisma migrate dev --name init-postgres` (run locally with `DATABASE_URL` pointing at it),
 and commit the result.
+
+> **Keep one instance either way (background jobs).** Since 1.7.0 the QA review generator
+> runs as **background jobs inside the app process**, and the job runner assumes the
+> single-instance deployment this guide already prescribes. On a multi-instance host, any
+> instance could claim a queued generation job, so runs would be split unpredictably across
+> processes. Keep exactly one instance running — as SQLite (Option A) and the in-memory rate
+> limiter already require — even if you switched to Postgres.
 
 Migrations are applied automatically on every container start: the Dockerfile runs
 `npm run docker-start` = `prisma generate && prisma migrate deploy && remix-serve ...`.
@@ -219,7 +226,7 @@ fly secrets set \
   DATABASE_URL=file:/data/production.sqlite
 
 fly deploy
-fly scale count 1             # SQLite + in-memory rate limiter: keep exactly one machine
+fly scale count 1             # SQLite + rate limiter + background job runner: exactly one machine
 ```
 
 Backend URL: `https://<app-name>.fly.dev`.
@@ -483,10 +490,12 @@ connection test** — it covers, in one click, most of what the rest of this lis
       Dashboard's product table.
 - [ ] **QA data round-trip** (optional; needs the same Anthropic key): **QA data** page →
       pick a test product, generate a small synthetic batch (say 10 reviews, status
-      Published) — they render in the widget like real reviews, and the Dashboard shows the
-      synthetic-data warning banner. Then **Delete batch** on the same page — the reviews
-      disappear, the banner clears, and the product's rating returns to its previous state.
-      Do this before going live: synthetic reviews are never labeled on the storefront.
+      Published). Since 1.7.0 generation runs as a background job — watch it complete in the
+      **Generation jobs** card (a batch this small takes well under a minute). The reviews
+      render in the widget like real ones, and the Dashboard shows the synthetic-data warning
+      banner. Then **Delete batch** on the same page — the reviews disappear, the banner
+      clears, and the product's rating returns to its previous state. Do this before going
+      live: synthetic reviews are never labeled on the storefront.
 - [ ] **Translations**: switch the storefront to another published language — the widget UI is
       translated; reviews in other languages show a "Translate" link (if a translation provider
       is configured).
@@ -519,7 +528,7 @@ extension, review data, metafield sync, database, live state) and prints the fix
 | `npm install` fails on engine warnings, or `npm run build` dies with a `[vite:css-post] css content … was not found` error | Wrong Node version. Use Node 20 or 22 LTS (`nvm use` reads the included `.nvmrc`). Node 23.2.0 specifically is broken — any other 23.3+ works but LTS is safer. |
 | `npm ci` fails with `EUSAGE … requires package-lock.json` inside Docker | You deleted or regenerated the repo without `package-lock.json`. Restore it from the ZIP — the Dockerfile depends on it. |
 | `npm run dev` asks to create an app, then errors on organization selection | Your Partner account has no development store or you picked the wrong org. Create a development store first (Partner Dashboard → Stores). |
-| `prisma migrate deploy` says "No migration found" | You are not running it from the repo root, or `prisma/migrations/` was not copied. The ZIP contains 4 migration folders — verify they exist before deploying. |
+| `prisma migrate deploy` says "No migration found" | You are not running it from the repo root, or `prisma/migrations/` was not copied. The ZIP contains 6 migration folders — verify they exist before deploying. |
 | Container boots then exits immediately; logs show a Prisma connection error | `DATABASE_URL` points at a path/DB that doesn't exist in the container. SQLite: the volume isn't mounted at `/data` (§5), or you forgot `DATABASE_URL=file:/data/production.sqlite` after switching the datasource to `env("DATABASE_URL")`. |
 | Deploy works but everything resets after each redeploy (reviews vanish) | SQLite is on the container's ephemeral disk, not a volume. §4 Option A — mount a persistent volume and point `DATABASE_URL` at it. |
 

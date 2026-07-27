@@ -110,8 +110,18 @@
   v1.5.1 audit: the app-proxy base path is single-sourced in snippets/
   cx-proxy.liquid and carried in the config JSON too — badge-only pages
   (home, collections) have no widget root to read data-proxy from.
+
+  v1.8 (SPEC-1.8 §5, MEASURED root cause): Shopify wraps every render of an
+  app snippet in "BEGIN app snippet" / "END app snippet" HTML comments —
+  including inside capture — so the captured value reached consumers as
+  "<!-- BEGIN app snippet: cx-proxy -->/apps/…/api<!-- END app snippet -->",
+  an invalid URL that broke the badge fetcher on every deployed page. Strip
+  the exact wrapper strings after capturing; the filters are harmless when
+  Shopify omits the comments. Both consumers below (the config JSON and the
+  root's data-proxy attribute) read this cleaned variable.
 {%- endcomment -%}
 {%- capture cx_proxy -%}{% render 'cx-proxy' %}{%- endcapture -%}
+{%- assign cx_proxy = cx_proxy | remove: '<!-- BEGIN app snippet: cx-proxy -->' | remove: '<!-- END app snippet -->' | strip -%}
 {{ 'cellexia-reviews.css' | asset_url | stylesheet_tag }}
 <script src="{{ 'cellexia-reviews.js' | asset_url }}" defer></script>
 <script type="application/json" id="cx-embed-config">

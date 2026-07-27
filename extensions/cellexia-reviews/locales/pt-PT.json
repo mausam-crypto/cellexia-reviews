@@ -71,6 +71,7 @@
       "translate": "Traduzir",
       "translating": "A traduzir…",
       "see_original": "Ver original",
+      "see_translation": "Ver tradução",
       "translated_from": "Traduzido de [[language]]",
       "reply_from": "Resposta de [[brand]]",
       "read_more": "Ler mais",
@@ -136,6 +137,11 @@
       "badge": "Modo de pré-visualização",
       "note": "Isto só está visível para si — o widget não está visível para os visitantes.",
       "exit": "Sair da pré-visualização"
+    },
+    "overall": {
+      "based_on": "Com base em [[count]] avaliações de todos os nossos produtos",
+      "verified_share": "[[percent]]% de compras verificadas",
+      "read_reviews": "Ler [[count]] avaliações"
     },
     "notice": {
       "expired_title": "A sessão de pré-visualização expirou",

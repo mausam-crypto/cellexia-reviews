@@ -66,8 +66,41 @@
         }
       }
     },
+    "overall_block": {
+      "name": "Cellexia Opinie ogólne",
+      "settings": {
+        "heading": {
+          "label": "Nagłówek"
+        },
+        "max_reviews": {
+          "label": "Liczba wyświetlanych opinii"
+        },
+        "layout": {
+          "label": "Układ",
+          "options__1": {
+            "label": "Siatka"
+          },
+          "options__2": {
+            "label": "Karuzela"
+          }
+        },
+        "show_distribution": {
+          "label": "Pokaż paski rozkładu ocen"
+        },
+        "show_product_links": {
+          "label": "Połącz każdą opinię z jej produktem"
+        },
+        "cta_label": {
+          "label": "Etykieta przycisku (opcjonalnie)"
+        },
+        "cta_url": {
+          "label": "Link przycisku"
+        }
+      }
+    },
     "defaults": {
-      "heading": "Opinie klientów"
+      "heading": "Opinie klientów",
+      "overall_heading": "Co mówią nasi klienci"
     }
   }
 }

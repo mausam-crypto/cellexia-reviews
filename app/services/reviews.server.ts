@@ -5,7 +5,12 @@
  *   - listReviews(shop, params)  → §6 ListResponse (published reviews only,
  *     product stats with integer percents that sum to 100, summary, media
  *     gallery on page 1, filters/search/sort semantics), plus the opt-in
- *     merchant-only `meta.pendingCount` of SPEC-1.6.1 §B
+ *     merchant-only `meta.pendingCount` of SPEC-1.6.1 §B. v1.8 (SPEC-1.8 §2/
+ *     §4): the "top" sort routes through the ranking service (strategy +
+ *     boosts + pinned reviews; "recent" is untouched), and the "translated"
+ *     display mode attaches per-review auto-translations for the shopper's
+ *     locale (one batched translateReviews call; silent omission on provider
+ *     failure).
  *   - createReview(shop, input)  → persists a review + media rows; records
  *     v1.4 provenance (source defaults to "storefront"; the import/bulk-add/
  *     synthetic services pass their own source + metadata)
@@ -22,6 +27,7 @@ import type { Prisma, Review } from "@prisma/client";
 import prisma from "~/db.server";
 import {
   AGE_RANGES,
+  MAX_TRANSLATE_IDS,
   REPORT_REASONS,
   RESULTS_SEEN,
   REVIEW_SOURCES,
@@ -38,9 +44,12 @@ import type {
   ReviewStatus,
   Sort,
   SummaryDTO,
+  TranslationDisplay,
 } from "~/types/cellexia";
 import { parseStoredTopics, topicsToDTO } from "./ai.server";
+import { fetchRankedPage, getEffectiveDisplay } from "./ranking.server";
 import { getSettings } from "./settings.server";
+import { translateReviews } from "./translate.server";
 
 /** Query parameters accepted by listReviews (camelCase of the §6 query params). */
 export interface ListParams {
@@ -127,7 +136,7 @@ export interface CreateReviewInput {
   replyAt?: Date | string | null;
 }
 
-type ReviewWithMedia = Prisma.ReviewGetPayload<{ include: { media: true } }>;
+export type ReviewWithMedia = Prisma.ReviewGetPayload<{ include: { media: true } }>;
 
 /* ------------------------------------------------------------------------- *
  * listReviews
@@ -141,6 +150,11 @@ export async function listReviews(shop: string, params: ListParams): Promise<Lis
   const sort: Sort = params.sort === "recent" ? "recent" : "top";
 
   const where: Prisma.ReviewWhereInput = { shop, productId, status: "PUBLISHED" };
+  // v1.8 (SPEC-1.8 §2): pinned ("featured") reviews apply ONLY to the
+  // unfiltered "top" view — a filtered/searched/topic view must honor the
+  // filter, not the pins. Every shopper constraint added to `where` below
+  // flips this flag.
+  let filtered = false;
 
   if (
     typeof params.stars === "number" &&
@@ -149,56 +163,106 @@ export async function listReviews(shop: string, params: ListParams): Promise<Lis
     params.stars <= 5
   ) {
     where.rating = params.stars;
+    filtered = true;
   }
-  if (params.verified) where.verified = true;
-  if (params.withMedia) where.media = { some: {} };
+  if (params.verified) {
+    where.verified = true;
+    filtered = true;
+  }
+  if (params.withMedia) {
+    where.media = { some: {} };
+    filtered = true;
+  }
   if (params.ageRange && includesKey(AGE_RANGES, params.ageRange)) {
     where.ageRange = params.ageRange;
+    filtered = true;
   }
   if (params.timeUsing && includesKey(TIME_USING, params.timeUsing)) {
     where.timeUsing = params.timeUsing;
+    filtered = true;
   }
   // Array-contains against JSON string columns. LIKE containment with the
   // surrounding quotes is exact here because keys are validated against the
   // §5 vocabularies (no key is a quoted substring of another).
   if (params.skinConcern && includesKey(SKIN_CONCERNS, params.skinConcern)) {
     where.skinConcerns = { contains: `"${params.skinConcern}"` };
+    filtered = true;
   }
   if (params.resultsSeen && includesKey(RESULTS_SEEN, params.resultsSeen)) {
     where.resultsSeen = { contains: `"${params.resultsSeen}"` };
+    filtered = true;
   }
   if (params.q && params.q.trim()) {
     // SQLite LIKE is case-insensitive for ASCII, which satisfies the §6
     // "case-insensitive" search requirement for title + body.
     const q = params.q.trim().slice(0, 120);
     where.OR = [{ title: { contains: q } }, { body: { contains: q } }];
+    filtered = true;
   }
   if (params.topic) {
     where.id = { in: await topicReviewIds(shop, productId, params.topic, params.locale) };
+    filtered = true;
   }
-
-  const orderBy: Prisma.ReviewOrderByWithRelationInput[] =
-    sort === "top"
-      ? [{ helpfulCount: "desc" }, { verified: "desc" }, { createdAt: "desc" }]
-      : [{ createdAt: "desc" }];
 
   // The pending count deliberately ignores `where`: it answers "is anything
   // waiting for approval on this product?", not "does anything match the
-  // shopper's filters?". Only queried when the caller asked for it.
-  const [total, rows, stats, pendingCount] = await Promise.all([
+  // shopper's filters?". Only queried when the caller asked for it. The
+  // display config is only resolved for the ranked "top" sort — skipping the
+  // lookup keeps the "recent" path exactly as it was before v1.8.
+  const [total, stats, pendingCount, display] = await Promise.all([
     prisma.review.count({ where }),
-    prisma.review.findMany({
-      where,
-      orderBy,
-      skip: (page - 1) * perPage,
-      take: perPage,
-      include: { media: { orderBy: { position: "asc" } } },
-    }),
     computeProductStats(shop, productId),
     params.includeMeta === true
       ? prisma.review.count({ where: { shop, productId, status: "PENDING" } })
       : Promise.resolve(null),
+    sort === "top" ? getEffectiveDisplay(shop, productId) : Promise.resolve(null),
   ]);
+
+  const include = { media: { orderBy: { position: "asc" as const } } };
+  let rows: ReviewWithMedia[];
+  // The pinned ids actually applied to this page (empty when pins are off).
+  // The ranked remainder excludes pinned ids, so a served row is pinned iff
+  // its id is in this list — stale ids can never be served, hence never
+  // marked.
+  let pinnedApplied: readonly string[] = [];
+
+  if (sort === "top" && display) {
+    // v1.8 (SPEC-1.8 §2): rank via the display config. With the out-of-the-box
+    // config (amazon_top, no boosts, no pins) fetchRankedPage returns the
+    // historical "top" orderBy and this degenerates to the pre-1.8 query.
+    const effective = filtered ? { ...display, pinnedIds: [] } : display;
+    const ranked = await fetchRankedPage(shop, productId, effective, page, perPage, where);
+    if (ranked.ids === null) {
+      rows = await prisma.review.findMany({
+        where,
+        orderBy: ranked.orderBy,
+        skip: (page - 1) * perPage,
+        take: perPage,
+        include,
+      });
+    } else {
+      // Explicit-id page (pins and/or the balanced interleave): fetch the
+      // rows, then restore the exact order fetchRankedPage decided.
+      const unordered = await prisma.review.findMany({
+        where: { shop, id: { in: ranked.ids } },
+        include,
+      });
+      const position = new Map(ranked.ids.map((id, index) => [id, index] as [string, number]));
+      rows = unordered
+        .filter((row) => position.has(row.id))
+        .sort((a, b) => (position.get(a.id) ?? 0) - (position.get(b.id) ?? 0));
+    }
+    pinnedApplied = effective.pinnedIds;
+  } else {
+    // "recent" — unchanged since v1.0.
+    rows = await prisma.review.findMany({
+      where,
+      orderBy: [{ createdAt: "desc" }],
+      skip: (page - 1) * perPage,
+      take: perPage,
+      include,
+    });
+  }
 
   const summary = settings.showSummary
     ? await findSummaryDTO(shop, productId, params.locale)
@@ -206,10 +270,32 @@ export async function listReviews(shop: string, params: ListParams): Promise<Lis
   const mediaGallery =
     page === 1 && settings.showMediaStrip ? await loadMediaGallery(shop, productId) : [];
 
+  const pinnedSet = new Set(pinnedApplied);
+  const reviews = rows.map((row) => {
+    const dto = toReviewDTO(row);
+    if (pinnedSet.has(dto.id)) dto.pinned = true;
+    return dto;
+  });
+
+  // v1.8 (SPEC-1.8 §4): the EFFECTIVE translation display mode. "translated"
+  // only when the merchant chose it AND translations are possible at all
+  // (showTranslate on, provider not off) — the same collapse the serialized
+  // `showTranslate` below applies, so a shop whose provider is off behaves
+  // (and serializes) exactly like "original" mode.
+  const translationDisplay: TranslationDisplay =
+    settings.translationDisplay === "translated" &&
+    settings.showTranslate &&
+    settings.translationProvider !== "off"
+      ? "translated"
+      : "original";
+  if (translationDisplay === "translated") {
+    await attachTranslations(shop, reviews, params.locale);
+  }
+
   const response = {
     product: stats,
     summary,
-    reviews: rows.map(toReviewDTO),
+    reviews,
     media_gallery: mediaGallery,
     page,
     per_page: perPage,
@@ -219,6 +305,7 @@ export async function listReviews(shop: string, params: ListParams): Promise<Lis
       showTranslate: settings.showTranslate && settings.translationProvider !== "off",
       brandDisplayName: settings.brandDisplayName,
       designTheme: settings.designTheme,
+      translationDisplay,
     },
   } as ListResponse;
 
@@ -447,7 +534,7 @@ export async function reportReview(
  * syntheticGeneratedAt) — must NEVER be added to this output, so they can
  * never leak through the proxy responses.
  */
-function toReviewDTO(review: ReviewWithMedia): ReviewDTO {
+export function toReviewDTO(review: ReviewWithMedia): ReviewDTO {
   return {
     id: review.id,
     rating: review.rating,
@@ -475,6 +562,56 @@ function toReviewDTO(review: ReviewWithMedia): ReviewDTO {
         thumbUrl: m.thumbUrl ?? (m.url as string),
       })),
   } as ReviewDTO;
+}
+
+/**
+ * v1.8 (SPEC-1.8 §4) — "translated" display mode. Attaches
+ * `translated: { title, body, reply, from }` to every DTO whose language
+ * differs from the request locale, via batched translateReviews calls — the
+ * ids are chunked to the translateReviews id cap (MAX_TRANSLATE_IDS) so even
+ * a full per_page=50 page of foreign-language reviews is covered, not just
+ * the first 20 (TranslationCache makes repeat requests free; only cache
+ * misses reach the provider). Degradation is silent by contract: an
+ * invalid/absent locale, a provider failure, or a missing key simply leaves
+ * `translated` off the affected reviews and the widget falls back to the
+ * original text + Translate button — never an error. Mutates the DTOs in
+ * place.
+ */
+async function attachTranslations(
+  shop: string,
+  reviews: ReviewDTO[],
+  locale: string | undefined,
+): Promise<void> {
+  if (!locale || !includesKey(SHOP_LOCALES, locale)) return;
+  const needIds = reviews.filter((dto) => dto.language !== locale).map((dto) => dto.id);
+  if (needIds.length === 0) return;
+  try {
+    // translateReviews silently truncates each call to MAX_TRANSLATE_IDS ids,
+    // so call it once per chunk and merge — otherwise reviews 21+ of a large
+    // page would never receive `translated` (SPEC-1.8 §4 requires every
+    // foreign-language row of the page to get one when the provider is
+    // healthy).
+    const translations: Awaited<ReturnType<typeof translateReviews>> = {};
+    for (let offset = 0; offset < needIds.length; offset += MAX_TRANSLATE_IDS) {
+      const chunk = needIds.slice(offset, offset + MAX_TRANSLATE_IDS);
+      Object.assign(translations, await translateReviews(shop, chunk, locale));
+    }
+    for (const dto of reviews) {
+      if (dto.language === locale) continue;
+      const translation = translations[dto.id];
+      if (!translation || !translation.body) continue;
+      dto.translated = {
+        title: translation.title ?? null,
+        body: translation.body,
+        reply: translation.reply ?? null,
+        from: dto.language,
+      };
+    }
+  } catch (error) {
+    // translateReviews is documented never to throw, but the fallback (show
+    // originals) must hold even if that ever changes.
+    console.error("[cellexia] auto-translation for the review list failed", error);
+  }
 }
 
 async function findSummaryDTO(
@@ -549,7 +686,7 @@ async function loadMediaGallery(
  * points to the buckets with the biggest fractional parts (non-empty buckets
  * only), so integer percents sum to exactly 100 whenever total > 0.
  */
-function buildDistribution(
+export function buildDistribution(
   counts: Record<number, number>,
   total: number,
 ): Record<string, { count: number; percent: number }> {

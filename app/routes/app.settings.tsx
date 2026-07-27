@@ -25,7 +25,7 @@ import { TitleBar } from "@shopify/app-bridge-react";
 import { authenticate } from "~/shopify.server";
 import prisma from "~/db.server";
 import type { DesignTheme } from "~/types/cellexia";
-import { DESIGN_THEMES } from "~/types/cellexia";
+import { DESIGN_THEMES, TRANSLATION_DISPLAYS } from "~/types/cellexia";
 import { getSettings, updateSettings } from "~/services/settings.server";
 import { syncShopSettingsMetafields } from "~/services/metafields.server";
 import { generateSummary } from "~/services/ai.server";
@@ -51,6 +51,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       aiModel: settings.aiModel,
       summaryAutoThreshold: settings.summaryAutoThreshold,
       translationProvider: settings.translationProvider,
+      translationDisplay: settings.translationDisplay,
       showTranslate: settings.showTranslate,
       showSummary: settings.showSummary,
       showMediaStrip: settings.showMediaStrip,
@@ -82,6 +83,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       const aiProvider = str("aiProvider");
       const aiModel = str("aiModel");
       const translationProvider = str("translationProvider");
+      const translationDisplay = str("translationDisplay");
       const designTheme = str("designTheme");
 
       const patch: Record<string, unknown> = {
@@ -100,6 +102,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         )
           ? translationProvider
           : "anthropic",
+        // v1.8 (SPEC-1.8 §4): how reviews written in another language are
+        // displayed — "original" (Translate button) or "translated"
+        // (auto-translated with a "See original" toggle).
+        translationDisplay: (TRANSLATION_DISPLAYS as readonly string[]).includes(
+          translationDisplay,
+        )
+          ? translationDisplay
+          : "original",
         showTranslate: form.get("showTranslate") === "true",
         showSummary: form.get("showSummary") === "true",
         showMediaStrip: form.get("showMediaStrip") === "true",
@@ -351,6 +361,7 @@ export default function Settings() {
     anthropicApiKey: "",
     summaryAutoThreshold: String(settings.summaryAutoThreshold),
     translationProvider: settings.translationProvider,
+    translationDisplay: settings.translationDisplay,
     deeplApiKey: "",
     googleApiKey: "",
     showTranslate: settings.showTranslate,
@@ -380,6 +391,7 @@ export default function Settings() {
         anthropicApiKey: form.anthropicApiKey,
         summaryAutoThreshold: form.summaryAutoThreshold,
         translationProvider: form.translationProvider,
+        translationDisplay: form.translationDisplay,
         deeplApiKey: form.deeplApiKey,
         googleApiKey: form.googleApiKey,
         showTranslate: String(form.showTranslate),
@@ -583,6 +595,28 @@ export default function Settings() {
                     label="Show “Translate” buttons on the storefront"
                     checked={form.showTranslate}
                     onChange={set("showTranslate")}
+                  />
+                  {/* v1.8 (SPEC-1.8 §4): translation display mode. */}
+                  <ChoiceList
+                    title="Reviews written in other languages"
+                    choices={[
+                      {
+                        value: "original",
+                        label:
+                          "Show in the original language, with a Translate button (default)",
+                      },
+                      {
+                        value: "translated",
+                        label:
+                          "Automatically translate into the shopper's language, with a “See original” option",
+                        helpText:
+                          "Uses the translation provider above. When a translation isn't available, the original review is shown with a Translate button.",
+                      },
+                    ]}
+                    selected={[form.translationDisplay]}
+                    onChange={(selected) =>
+                      set("translationDisplay")(selected[0] ?? "original")
+                    }
                   />
                 </FormLayout>
               </BlockStack>

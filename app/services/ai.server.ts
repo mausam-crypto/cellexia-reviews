@@ -11,6 +11,11 @@
  * summary (text + topic labels + blurbs only) into the target locale and caches
  * the localized row.
  *
+ * `countTokens` (SPEC-1.7 §4) prices a prospective prompt via the Anthropic
+ * token-counting endpoint (`POST /v1/messages/count_tokens`) using the exact
+ * same auth headers and retry conventions as `callClaude`; it is consumed by
+ * estimate.server.ts and returns `null` on any failure.
+ *
  * All failures — missing API key, provider turned off, network errors,
  * unparseable model output — degrade gracefully by returning `null`. Nothing in
  * this module throws to a route.
@@ -21,6 +26,7 @@ import type { SummaryDTO, TopicDTO } from "~/types/cellexia";
 import { getSettings } from "./settings.server";
 
 const ANTHROPIC_MESSAGES_URL = "https://api.anthropic.com/v1/messages";
+const ANTHROPIC_COUNT_TOKENS_URL = "https://api.anthropic.com/v1/messages/count_tokens";
 const ANTHROPIC_VERSION = "2023-06-01";
 
 /** Topic shape as persisted inside Summary.topics (JSON string column). */
@@ -174,6 +180,71 @@ export async function callClaude(
         continue;
       }
       console.error("[cellexia] Claude API request failed", error);
+      return null;
+    }
+  }
+  return null;
+}
+
+/**
+ * Exact input-token count for a prospective Messages API call, via the
+ * Anthropic token-counting endpoint (`POST /v1/messages/count_tokens`,
+ * SPEC-1.7 §4). Counting is free and model-specific — pass the same model the
+ * generation call would use. Same auth/headers/retry conventions as
+ * `callClaude`: retries once on transient statuses (429/5xx/529) and network
+ * errors, and returns null on any failure instead of throwing.
+ */
+export async function countTokens(
+  apiKey: string,
+  model: string,
+  system: string,
+  userContent: string,
+): Promise<number | null> {
+  const body = JSON.stringify({
+    model,
+    system,
+    messages: [{ role: "user", content: userContent }],
+  });
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const response = await fetch(ANTHROPIC_COUNT_TOKENS_URL, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": ANTHROPIC_VERSION,
+        },
+        body,
+      });
+
+      if (response.status === 429 || response.status >= 500) {
+        // Transient — back off briefly and retry once.
+        if (attempt === 0) {
+          await sleep(1500);
+          continue;
+        }
+        console.error(`[cellexia] Claude count_tokens transient error ${response.status}`);
+        return null;
+      }
+
+      if (!response.ok) {
+        const detail = await response.text().catch(() => "");
+        console.error(
+          `[cellexia] Claude count_tokens error ${response.status}: ${detail.slice(0, 300)}`,
+        );
+        return null;
+      }
+
+      const data = (await response.json()) as { input_tokens?: unknown };
+      const tokens = Number(data.input_tokens);
+      return Number.isFinite(tokens) && tokens >= 0 ? Math.round(tokens) : null;
+    } catch (error) {
+      if (attempt === 0) {
+        await sleep(1000);
+        continue;
+      }
+      console.error("[cellexia] Claude count_tokens request failed", error);
       return null;
     }
   }

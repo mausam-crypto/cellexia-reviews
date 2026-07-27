@@ -141,4 +141,63 @@ model Setting {
   lastStorefrontHitAt  DateTime?
   lastSyncError        String?
   lastSyncAt           DateTime?
+  rankingStrategy      String  @default("amazon_top")
+  rankingBoosts        String  @default("{}")
+  translationDisplay   String  @default("original")
+  overallWidget        String  @default("{}")
+}
+
+model ProductDisplayConfig {
+  id        String   @id @default(cuid())
+  shop      String
+  productId String
+  strategy  String?
+  pinnedIds String   @default("[]")
+  updatedAt DateTime @updatedAt
+
+  @@unique([shop, productId])
+}
+
+model GenerationJob {
+  id             String    @id @default(cuid())
+  shop           String
+  status         String    @default("QUEUED")
+  productId      String
+  productTitle   String?
+  batchId        String
+  config         String
+  target         Int
+  created        Int       @default(0)
+  failed         Int       @default(0)
+  chunksTotal    Int       @default(0)
+  chunksDone     Int       @default(0)
+  inputTokens    Int       @default(0)
+  outputTokens   Int       @default(0)
+  costUsd        Float     @default(0)
+  estimate       String?
+  error          String?
+  errors         String    @default("[]")
+  startedAt      DateTime?
+  finishedAt     DateTime?
+  heartbeatAt    DateTime?
+  cancelRequested Boolean  @default(false)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([shop, status])
+  @@index([shop, createdAt])
+}
+
+model ModelThroughput {
+  id             String   @id @default(cuid())
+  shop           String
+  model          String
+  chunkCount     Int      @default(0)
+  totalSeconds   Float    @default(0)
+  totalReviews   Int      @default(0)
+  totalInTokens  Int      @default(0)
+  totalOutTokens Int      @default(0)
+  updatedAt      DateTime @updatedAt
+
+  @@unique([shop, model])
 }

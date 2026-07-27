@@ -66,8 +66,41 @@
         }
       }
     },
+    "overall_block": {
+      "name": "Cellexia Avaliações globais",
+      "settings": {
+        "heading": {
+          "label": "Título"
+        },
+        "max_reviews": {
+          "label": "Número de avaliações a mostrar"
+        },
+        "layout": {
+          "label": "Esquema",
+          "options__1": {
+            "label": "Grelha"
+          },
+          "options__2": {
+            "label": "Carrossel"
+          }
+        },
+        "show_distribution": {
+          "label": "Mostrar barras de distribuição das classificações"
+        },
+        "show_product_links": {
+          "label": "Ligar cada avaliação ao respetivo produto"
+        },
+        "cta_label": {
+          "label": "Etiqueta do botão (opcional)"
+        },
+        "cta_url": {
+          "label": "Ligação do botão"
+        }
+      }
+    },
     "defaults": {
-      "heading": "Avaliações de clientes"
+      "heading": "Avaliações de clientes",
+      "overall_heading": "O que dizem os nossos clientes"
     }
   }
 }

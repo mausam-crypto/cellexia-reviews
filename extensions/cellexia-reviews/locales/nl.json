@@ -71,6 +71,7 @@
       "translate": "Vertalen",
       "translating": "Vertalen…",
       "see_original": "Origineel bekijken",
+      "see_translation": "Vertaling bekijken",
       "translated_from": "Vertaald uit het [[language]]",
       "reply_from": "Reactie van [[brand]]",
       "read_more": "Meer lezen",
@@ -136,6 +137,11 @@
       "badge": "Voorbeeldmodus",
       "note": "Alleen u kunt dit zien — de widget is niet zichtbaar voor bezoekers.",
       "exit": "Voorbeeld verlaten"
+    },
+    "overall": {
+      "based_on": "Gebaseerd op [[count]] beoordelingen van al onze producten",
+      "verified_share": "[[percent]]% van geverifieerde aankopen",
+      "read_reviews": "Lees [[count]] beoordelingen"
     },
     "notice": {
       "expired_title": "Voorbeeldsessie verlopen",

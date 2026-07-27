@@ -67,6 +67,7 @@
       "translate": "翻訳する",
       "translating": "翻訳しています…",
       "see_original": "原文を表示",
+      "see_translation": "翻訳を表示",
       "translated_from": "[[language]]から翻訳されました",
       "reply_from": "[[brand]]からの返信",
       "read_more": "続きを読む",
@@ -132,6 +133,11 @@
       "badge": "プレビューモード",
       "note": "このプレビューはあなたにのみ表示されています。ウィジェットは訪問者には公開されていません。",
       "exit": "プレビューを終了"
+    },
+    "overall": {
+      "based_on": "全商品の[[count]]件のレビューに基づく",
+      "verified_share": "[[percent]]%が確認済み購入",
+      "read_reviews": "[[count]]件のレビューを読む"
     },
     "notice": {
       "expired_title": "プレビューセッションの有効期限が切れました",

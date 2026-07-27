@@ -160,4 +160,91 @@ model Setting {
   // token-gated `diag` block of /api/ping.
   lastSyncError        String?
   lastSyncAt           DateTime?
+  // v1.8 (SPEC-1.8 §1/§2): shop-wide default review display order. The
+  // defaults reproduce the pre-1.8 behavior exactly (amazon_top ordering, no
+  // boosts, original-language display), so upgrades are shopper-invisible.
+  // "rankingStrategy" is a RANKING_STRATEGIES key; "rankingBoosts" is a JSON
+  // object { boostVerified?: boolean, boostMedia?: boolean } whose true flags
+  // prepend orderBy keys (skipped for the "balanced" strategy);
+  // "translationDisplay" is a TRANSLATION_DISPLAYS key ("original" |
+  // "translated").
+  rankingStrategy      String  @default("amazon_top")
+  rankingBoosts        String  @default("{}")
+  translationDisplay   String  @default("original")
+  // v1.9 (SPEC-1.9 §1): configuration of the brand-wide "Overall reviews"
+  // theme block. JSON: { mode?: "auto"|"picked", pickedIds?: string[] } —
+  // parsed tolerantly on read (brand.server.ts parseOverallWidget): malformed
+  // JSON or an unknown mode degrades to the auto ranking, and stale/
+  // unpublished picked ids are dropped at use time, never persisted back.
+  overallWidget        String  @default("{}")
+}
+
+// v1.8 (SPEC-1.8 §1): per-product review display override. At most one row
+// per (shop, productId); the row is deleted when the merchant reverts to the
+// shop default with no pinned reviews, so absence == "inherit everything".
+model ProductDisplayConfig {
+  id        String   @id @default(cuid())
+  shop      String
+  productId String
+  // RANKING_STRATEGIES key, or null = inherit the shop default.
+  strategy  String?
+  // JSON string[] of review ids, in the exact order to show first.
+  pinnedIds String   @default("[]")
+  updatedAt DateTime @updatedAt
+
+  @@unique([shop, productId])
+}
+
+// v1.7 (SPEC-1.7 §1): one background synthetic-generation job. The runner in
+// app/services/jobs.server.ts claims QUEUED rows (oldest first, max 2 RUNNING
+// per shop), drives chunked generation, and writes progress + a heartbeat
+// after every chunk so a crashed run can be detected (heartbeatAt older than
+// 3 minutes) and re-queued without ever overshooting `target` (existing rows
+// for `batchId` are counted before resuming).
+model GenerationJob {
+  id             String    @id @default(cuid())
+  shop           String
+  status         String    @default("QUEUED") // QUEUED|RUNNING|COMPLETED|FAILED|CANCELLED
+  productId      String
+  productTitle   String?
+  batchId        String    // the Review.syntheticBatchId this job writes
+  config         String    // JSON: the full SyntheticConfig (SPEC-1.4 §C)
+  target         Int       // reviews requested
+  created        Int       @default(0)
+  failed         Int       @default(0)
+  chunksTotal    Int       @default(0) // chunks of the CURRENT run (recomputed when a job is claimed/resumed)
+  chunksDone     Int       @default(0)
+  inputTokens    Int       @default(0)  // actuals, summed across chunks
+  outputTokens   Int       @default(0)
+  costUsd        Float     @default(0)
+  estimate       String?   // JSON: EstimateDTO produced before the run
+  error          String?   // first fatal error (truncated 500 chars)
+  errors         String    @default("[]") // JSON string[]: per-chunk failures, capped at 20
+  startedAt      DateTime?
+  finishedAt     DateTime?
+  heartbeatAt    DateTime?
+  cancelRequested Boolean  @default(false)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  @@index([shop, status])
+  @@index([shop, createdAt])
+}
+
+// v1.7 (SPEC-1.7 §1/§4): rolling per-shop+model calibration measured from real
+// generation chunks. Powers the "measured" basis of cost/time estimates
+// (estimate.server.ts) once chunkCount >= 3. Updated by the job runner after
+// every successful chunk.
+model ModelThroughput {
+  id             String   @id @default(cuid())
+  shop           String
+  model          String
+  chunkCount     Int      @default(0)   // chunks measured
+  totalSeconds   Float    @default(0)
+  totalReviews   Int      @default(0)
+  totalInTokens  Int      @default(0)
+  totalOutTokens Int      @default(0)
+  updatedAt      DateTime @updatedAt
+
+  @@unique([shop, model])
 }

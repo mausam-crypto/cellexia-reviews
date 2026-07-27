@@ -144,6 +144,16 @@
 {%- if cx_accent != '' and cx_accent != blank and cx_accent != '#ffa41c' -%}
   {%- capture cx_style -%}--cx-star: {{ block.settings.accent_color }}; --cx-star-stroke: {{ block.settings.accent_color | color_darken: 12 }}; --cx-bar: {{ block.settings.accent_color }};{%- endcapture -%}
 {%- endif -%}
+{%- comment -%}
+  v1.8 (SPEC-1.8 §5, MEASURED root cause): Shopify wraps every render of an
+  app snippet in "BEGIN app snippet" / "END app snippet" HTML comments — even
+  when rendered inside an HTML attribute value — so data-proxy used to carry
+  "<!-- BEGIN app snippet: cx-proxy -->/apps/…/api<!-- END app snippet -->",
+  an invalid URL. Capture once, strip the exact wrapper strings (harmless
+  when Shopify omits the comments), then emit the cleaned value.
+{%- endcomment -%}
+{%- capture cx_proxy -%}{% render 'cx-proxy' %}{%- endcapture -%}
+{%- assign cx_proxy = cx_proxy | remove: '<!-- BEGIN app snippet: cx-proxy -->' | remove: '<!-- END app snippet -->' | strip -%}
 <div
   id="cellexia-reviews"
   class="cx"
@@ -153,7 +163,7 @@
   data-product-handle="{{ product.handle }}"
   data-locale="{{ request.locale.iso_code }}"
   data-shop-default-locale="{{ cx_default_locale }}"
-  data-proxy="{% render 'cx-proxy' %}"
+  data-proxy="{{ cx_proxy }}"
   data-per-page="{{ block.settings.per_page | default: 10 }}"
   data-heading="{{ cx_heading | escape }}"
   {% if cx_brand != blank %}data-brand="{{ cx_brand | escape }}"{% endif %}

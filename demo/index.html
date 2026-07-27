@@ -178,6 +178,36 @@
       font-size: 13px;
       color: #565959;
     }
+    /* v1.9 "Overall reviews" showcase — demo chrome only (framing, notes,
+       variant labels). The .cx-overall blocks themselves are styled by the
+       real extension CSS, exactly like the widget above them. */
+    .demo-overall {
+      border-top: 1px solid #E7E7E7;
+      margin-top: 44px;
+      padding-top: 26px;
+    }
+    .demo-overall h2 {
+      margin: 0 0 4px;
+      font-size: 20px;
+      line-height: 1.3;
+      font-weight: 700;
+    }
+    .demo-overall__note {
+      margin: 0 0 20px;
+      font-size: 13px;
+      line-height: 1.5;
+      color: #565959;
+      max-width: 78ch;
+    }
+    .demo-overall__variant {
+      margin: 30px 0 12px;
+      font-size: 11.5px;
+      font-weight: 700;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: #565959;
+    }
+    .demo-overall__variant:first-of-type { margin-top: 0; }
   </style>
 </head>
 <body>
@@ -331,6 +361,9 @@
   "preview.badge": "Preview mode",
   "preview.note": "Only you can see this — the widget is not live for visitors.",
   "preview.exit": "Exit preview",
+  "overall.based_on": "Based on [[count]] reviews across our products",
+  "overall.verified_share": "[[percent]]% from verified purchases",
+  "overall.read_reviews": "Read [[count]] reviews",
   "form.title": "Write a review",
   "form.rating_label": "Overall rating",
   "form.rating_value.one": "[[count]] star",
@@ -487,6 +520,9 @@
   "cellexia.report_dialog.other": "Other",
   "cellexia.report_dialog.submit": "Submit report",
   "cellexia.report_dialog.cancel": "Cancel",
+  "cellexia.overall.based_on": "Based on [[count]] reviews across our products",
+  "cellexia.overall.verified_share": "[[percent]]% from verified purchases",
+  "cellexia.overall.read_reviews": "Read [[count]] reviews",
   "cellexia.form.title": "Write a review",
   "cellexia.form.rating_label": "Overall rating",
   "cellexia.form.rating_value.one": "[[count]] star",
@@ -616,6 +652,411 @@
     </div>
 
     <!--
+      v1.9 (SPEC-1.9 §2 + §6): "Overall reviews" showcase — the brand-wide
+      theme block (blocks/overall-reviews.liquid) in both of its layouts.
+      The markup mirrors the block's server-side render from the two shop
+      metafields (cellexia.shop_rating + cellexia.shop_top_reviews): a
+      homepage-scale header (big star row, "Based on … reviews across our
+      products", the ≥60% verified-share trust line), the clickable cx-dist
+      distribution bars, six condensed top-review cards — max 2 per product,
+      the SPEC-1.9 §1 diversity rule — with product links, and the optional
+      CTA button. data-demo="true" makes the widget script resolve the
+      distribution-bar filter from window.CellexiaDemoData.brand instead of
+      calling GET /apps/cellexia/api/brand-reviews. The "Read more" toggles
+      and the carousel's prev/next buttons are added by the script on
+      hydrate (per SPEC-1.9 §2 the carousel stays natively scrollable
+      without JS, so no buttons are server-rendered).
+    -->
+    <section class="demo-overall" aria-label="Overall reviews — brand-wide block demo">
+      <p class="demo-kicker">Cellexia · Demo home page</p>
+      <h2>Overall reviews — the brand-wide block</h2>
+      <p class="demo-overall__note">
+        The v1.9 <strong>Cellexia Overall Reviews</strong> theme block, as a merchant would
+        place it on the home page: the shop-wide rating across all products — fed here by the
+        mocked brand payload in <code>mock-data.js</code> (<code>CellexiaDemoData.brand</code>:
+        4.8 · 12,438 reviews · 93% verified) instead of the
+        <code>/apps/cellexia/api/brand-reviews</code> endpoint — with clickable distribution
+        bars (click one to filter the cards by star level; “All stars” resets), six top
+        reviews across four products (never more than two per product), each linking to its
+        product's review section, and an optional button. Both block layouts are shown below,
+        and the <strong>Design</strong> switcher in the banner restyles them together with the
+        widget. Product links are inert in this demo.
+      </p>
+
+      <p class="demo-overall__variant">Grid layout (default)</p>
+      <section
+        id="cellexia-overall"
+        class="cx cx-overall cx-overall--grid"
+        data-cx="overall"
+        data-layout="grid"
+        data-max-reviews="6"
+        data-show-product-links="true"
+        data-locale="en"
+        data-shop-default-locale="en"
+        data-proxy="/apps/cellexia/api"
+        data-demo="true"
+        data-cx-live="true"
+        data-cx-skin="amazon"
+        aria-label="What our customers say"
+      >
+        <div class="cx-overall__header">
+          <h2 class="cx-overall__heading">What our customers say</h2>
+          <div class="cx-overall__score">
+            <span class="cx-stars cx-overall__stars" role="img" aria-label="4.8 out of 5 stars" style="--cx-star-size:28px">
+              <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+              <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+              <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+              <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+              <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><defs><linearGradient id="cxg-ov-grid" x1="0" y1="0" x2="1" y2="0"><stop offset="80%" stop-color="#FFA41C"/><stop offset="80%" stop-color="#FFFFFF"/></linearGradient></defs><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="url(#cxg-ov-grid)" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+            </span>
+            <span class="cx-avg-text">4.8 out of 5</span>
+          </div>
+          <p class="cx-overall__based">Based on 12,438 reviews across our products</p>
+          <p class="cx-overall__trust">93% from verified purchases</p>
+        </div>
+
+        <div class="cx-dist cx-overall__dist" data-cx="overall-dist">
+          <button type="button" class="cx-dist__row" data-stars="5" aria-pressed="false" aria-label="Filter by 5 star reviews">
+            <span class="cx-dist__label">5 star</span>
+            <span class="cx-dist__bar" aria-hidden="true"><span class="cx-dist__fill" style="inline-size:89%"></span></span>
+            <span class="cx-dist__percent" aria-hidden="true">89%</span>
+          </button>
+          <button type="button" class="cx-dist__row" data-stars="4" aria-pressed="false" aria-label="Filter by 4 star reviews">
+            <span class="cx-dist__label">4 star</span>
+            <span class="cx-dist__bar" aria-hidden="true"><span class="cx-dist__fill" style="inline-size:7%"></span></span>
+            <span class="cx-dist__percent" aria-hidden="true">7%</span>
+          </button>
+          <button type="button" class="cx-dist__row" data-stars="3" aria-pressed="false" aria-label="Filter by 3 star reviews">
+            <span class="cx-dist__label">3 star</span>
+            <span class="cx-dist__bar" aria-hidden="true"><span class="cx-dist__fill" style="inline-size:2%"></span></span>
+            <span class="cx-dist__percent" aria-hidden="true">2%</span>
+          </button>
+          <button type="button" class="cx-dist__row" data-stars="2" aria-pressed="false" aria-label="Filter by 2 star reviews">
+            <span class="cx-dist__label">2 star</span>
+            <span class="cx-dist__bar" aria-hidden="true"><span class="cx-dist__fill" style="inline-size:1%"></span></span>
+            <span class="cx-dist__percent" aria-hidden="true">1%</span>
+          </button>
+          <button type="button" class="cx-dist__row" data-stars="1" aria-pressed="false" aria-label="Filter by 1 star reviews">
+            <span class="cx-dist__label">1 star</span>
+            <span class="cx-dist__bar" aria-hidden="true"><span class="cx-dist__fill" style="inline-size:1%"></span></span>
+            <span class="cx-dist__percent" aria-hidden="true">1%</span>
+          </button>
+        </div>
+
+        <div class="cx-overall__cards cx-overall__cards--grid" data-cx-overall-cards>
+          <article class="cx-card cx-overall__card" data-review-id="brand-0001">
+            <div class="cx-card__titleline">
+              <span class="cx-stars" role="img" aria-label="5 out of 5 stars">
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+              </span>
+              <strong class="cx-card__title">The only cream that actually changed my skin</strong>
+            </div>
+            <div class="cx-overall__body cx-clamp"><p>I am 58 and I have tried more face creams than I care to admit. This is the first one that changed the texture of my skin instead of just sitting on it. The cream is rich but absorbs in under a minute, so I can apply makeup right after. Within two weeks my cheeks felt smoother, and by the two-month mark…</p></div>
+            <p class="cx-card__meta">
+              <span class="cx-card__author">Margaret Ellison</span><span aria-hidden="true"> · </span><span>July 6, 2026</span>
+            </p>
+            <p class="cx-badge-verified">Verified Purchase</p>
+            <p class="cx-overall__media"><span class="cx-overall__mediadot" aria-hidden="true"></span>With photos or videos</p>
+            <div class="cx-overall__foot">
+              <a class="cx-overall__plink" href="/products/regenerant-cellular-renewal-cream#cellexia-reviews">Régénérant Cellular Renewal Cream</a>
+              <a class="cx-link cx-overall__read" href="/products/regenerant-cellular-renewal-cream#cellexia-reviews">Read 6,214 reviews</a>
+            </div>
+          </article>
+
+          <article class="cx-card cx-overall__card" data-review-id="brand-0002">
+            <div class="cx-card__titleline">
+              <span class="cx-stars" role="img" aria-label="5 out of 5 stars">
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+              </span>
+              <strong class="cx-card__title">Glow in under two weeks</strong>
+            </div>
+            <div class="cx-overall__body cx-clamp"><p>The vitamin C serum my morning routine was missing. No sting, no orange cast — just a steady, healthy glow that friends started noticing before I did. A gentle tingle the first few days, then nothing but brightness. My dark spots from last summer are already softer at the edges…</p></div>
+            <p class="cx-card__meta">
+              <span class="cx-card__author">Aisha Thompson</span><span aria-hidden="true"> · </span><span>July 12, 2026</span>
+            </p>
+            <p class="cx-badge-verified">Verified Purchase</p>
+            <div class="cx-overall__foot">
+              <a class="cx-overall__plink" href="/products/eclat-vitamin-c-serum#cellexia-reviews">Éclat Vitamin C Serum</a>
+              <a class="cx-link cx-overall__read" href="/products/eclat-vitamin-c-serum#cellexia-reviews">Read 2,861 reviews</a>
+            </div>
+          </article>
+
+          <article class="cx-card cx-overall__card" data-review-id="brand-0003">
+            <div class="cx-card__titleline">
+              <span class="cx-stars" role="img" aria-label="5 out of 5 stars">
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+              </span>
+              <strong class="cx-card__title">Softer skin by morning, every morning</strong>
+            </div>
+            <div class="cx-overall__body cx-clamp"><p>I smooth it on as the last step at night and wake up with skin that feels rested and plush. It is a proper balm — thick in the jar, melting on contact — yet my pillow stays clean. Through a dry winter and an air-conditioned summer it has kept every trace of flaking away…</p></div>
+            <p class="cx-card__meta">
+              <span class="cx-card__author">Claire Whitmore</span><span aria-hidden="true"> · </span><span>June 28, 2026</span>
+            </p>
+            <p class="cx-badge-verified">Verified Purchase</p>
+            <p class="cx-overall__media"><span class="cx-overall__mediadot" aria-hidden="true"></span>With photos or videos</p>
+            <div class="cx-overall__foot">
+              <a class="cx-overall__plink" href="/products/hydra-riche-night-balm#cellexia-reviews">Hydra-Riche Night Balm</a>
+              <a class="cx-link cx-overall__read" href="/products/hydra-riche-night-balm#cellexia-reviews">Read 1,940 reviews</a>
+            </div>
+          </article>
+
+          <article class="cx-card cx-overall__card" data-review-id="brand-0004">
+            <div class="cx-card__titleline">
+              <span class="cx-stars" role="img" aria-label="5 out of 5 stars">
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+              </span>
+              <strong class="cx-card__title">Sensitive skin approved — zero irritation</strong>
+            </div>
+            <div class="cx-overall__body cx-clamp"><p>My skin flares at almost everything, so I patch-tested for a week first. Not a single reaction since — no sting, no redness, just calm, deeply hydrated skin. Three months in, my barrier feels stronger than it has in years…</p></div>
+            <p class="cx-card__meta">
+              <span class="cx-card__author">Ruth Calloway</span><span aria-hidden="true"> · </span><span>July 18, 2026</span>
+            </p>
+            <p class="cx-badge-verified">Verified Purchase</p>
+            <div class="cx-overall__foot">
+              <a class="cx-overall__plink" href="/products/regenerant-cellular-renewal-cream#cellexia-reviews">Régénérant Cellular Renewal Cream</a>
+              <a class="cx-link cx-overall__read" href="/products/regenerant-cellular-renewal-cream#cellexia-reviews">Read 6,214 reviews</a>
+            </div>
+          </article>
+
+          <article class="cx-card cx-overall__card" data-review-id="brand-0005">
+            <div class="cx-card__titleline">
+              <span class="cx-stars" role="img" aria-label="5 out of 5 stars">
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+              </span>
+              <strong class="cx-card__title">Dark circles visibly brighter</strong>
+            </div>
+            <div class="cx-overall__body cx-clamp"><p>Two pumps every morning under concealer. Within a month the shadows under my eyes were light enough that most days I skip the concealer entirely. It is cooling, sinks in fast and never pills under sunscreen…</p></div>
+            <p class="cx-card__meta">
+              <span class="cx-card__author">Sofia Marchetti</span><span aria-hidden="true"> · </span><span>July 1, 2026</span>
+            </p>
+            <p class="cx-badge-verified">Verified Purchase</p>
+            <p class="cx-overall__media"><span class="cx-overall__mediadot" aria-hidden="true"></span>With photos or videos</p>
+            <div class="cx-overall__foot">
+              <a class="cx-overall__plink" href="/products/lumiere-eye-contour-gel#cellexia-reviews">Lumière Eye Contour Gel</a>
+              <a class="cx-link cx-overall__read" href="/products/lumiere-eye-contour-gel#cellexia-reviews">Read 1,423 reviews</a>
+            </div>
+          </article>
+
+          <article class="cx-card cx-overall__card" data-review-id="brand-0006">
+            <div class="cx-card__titleline">
+              <span class="cx-stars" role="img" aria-label="4 out of 5 stars">
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFFFFF" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+              </span>
+              <strong class="cx-card__title">Lovely serum — give it time</strong>
+            </div>
+            <div class="cx-overall__body cx-clamp"><p>Four stars for now, only because vitamin C rewards patience: six weeks in, my tone is more even and my forehead looks brighter, but the deeper spots are still fading. The texture is perfect — watery-light, layers under anything…</p></div>
+            <p class="cx-card__meta">
+              <span class="cx-card__author">Hannah Ostrowski</span><span aria-hidden="true"> · </span><span>June 20, 2026</span>
+            </p>
+            <p class="cx-badge-verified">Verified Purchase</p>
+            <div class="cx-overall__foot">
+              <a class="cx-overall__plink" href="/products/eclat-vitamin-c-serum#cellexia-reviews">Éclat Vitamin C Serum</a>
+              <a class="cx-link cx-overall__read" href="/products/eclat-vitamin-c-serum#cellexia-reviews">Read 2,861 reviews</a>
+            </div>
+          </article>
+        </div>
+
+        <div class="cx-overall__footer">
+          <a class="cx-btn cx-btn--primary cx-overall__cta" href="/collections/bestsellers">Shop bestsellers</a>
+        </div>
+      </section>
+
+      <p class="demo-overall__variant">Carousel layout</p>
+      <section
+        id="cellexia-overall-carousel"
+        class="cx cx-overall cx-overall--carousel"
+        data-cx="overall"
+        data-layout="carousel"
+        data-max-reviews="6"
+        data-show-product-links="true"
+        data-locale="en"
+        data-shop-default-locale="en"
+        data-proxy="/apps/cellexia/api"
+        data-demo="true"
+        data-cx-live="true"
+        data-cx-skin="amazon"
+        aria-label="What our customers say (carousel)"
+      >
+        <div class="cx-overall__header">
+          <h2 class="cx-overall__heading">What our customers say</h2>
+          <div class="cx-overall__score">
+            <span class="cx-stars cx-overall__stars" role="img" aria-label="4.8 out of 5 stars" style="--cx-star-size:28px">
+              <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+              <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+              <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+              <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+              <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><defs><linearGradient id="cxg-ov-car" x1="0" y1="0" x2="1" y2="0"><stop offset="80%" stop-color="#FFA41C"/><stop offset="80%" stop-color="#FFFFFF"/></linearGradient></defs><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="url(#cxg-ov-car)" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+            </span>
+            <span class="cx-avg-text">4.8 out of 5</span>
+          </div>
+          <p class="cx-overall__based">Based on 12,438 reviews across our products</p>
+          <p class="cx-overall__trust">93% from verified purchases</p>
+        </div>
+
+        <div class="cx-overall__cards cx-overall__cards--carousel" data-cx-overall-cards tabindex="0">
+          <article class="cx-card cx-overall__card" data-review-id="brand-0001">
+            <div class="cx-card__titleline">
+              <span class="cx-stars" role="img" aria-label="5 out of 5 stars">
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+              </span>
+              <strong class="cx-card__title">The only cream that actually changed my skin</strong>
+            </div>
+            <div class="cx-overall__body cx-clamp"><p>The first cream in years that changed the texture of my skin instead of just sitting on it — smoother cheeks in two weeks, visibly improved jawline by month two.</p></div>
+            <p class="cx-card__meta">
+              <span class="cx-card__author">Margaret Ellison</span><span aria-hidden="true"> · </span><span>July 6, 2026</span>
+            </p>
+            <p class="cx-badge-verified">Verified Purchase</p>
+            <p class="cx-overall__media"><span class="cx-overall__mediadot" aria-hidden="true"></span>With photos or videos</p>
+            <div class="cx-overall__foot">
+              <a class="cx-overall__plink" href="/products/regenerant-cellular-renewal-cream#cellexia-reviews">Régénérant Cellular Renewal Cream</a>
+              <a class="cx-link cx-overall__read" href="/products/regenerant-cellular-renewal-cream#cellexia-reviews">Read 6,214 reviews</a>
+            </div>
+          </article>
+
+          <article class="cx-card cx-overall__card" data-review-id="brand-0002">
+            <div class="cx-card__titleline">
+              <span class="cx-stars" role="img" aria-label="5 out of 5 stars">
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+              </span>
+              <strong class="cx-card__title">Glow in under two weeks</strong>
+            </div>
+            <div class="cx-overall__body cx-clamp"><p>No sting, no orange cast — just a steady, healthy glow that friends noticed before I did. Last summer's dark spots are already softer at the edges.</p></div>
+            <p class="cx-card__meta">
+              <span class="cx-card__author">Aisha Thompson</span><span aria-hidden="true"> · </span><span>July 12, 2026</span>
+            </p>
+            <p class="cx-badge-verified">Verified Purchase</p>
+            <div class="cx-overall__foot">
+              <a class="cx-overall__plink" href="/products/eclat-vitamin-c-serum#cellexia-reviews">Éclat Vitamin C Serum</a>
+              <a class="cx-link cx-overall__read" href="/products/eclat-vitamin-c-serum#cellexia-reviews">Read 2,861 reviews</a>
+            </div>
+          </article>
+
+          <article class="cx-card cx-overall__card" data-review-id="brand-0003">
+            <div class="cx-card__titleline">
+              <span class="cx-stars" role="img" aria-label="5 out of 5 stars">
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+              </span>
+              <strong class="cx-card__title">Softer skin by morning, every morning</strong>
+            </div>
+            <div class="cx-overall__body cx-clamp"><p>A proper balm — thick in the jar, melting on contact, pillow stays clean. Not a trace of flaking through winter or air-conditioned summer.</p></div>
+            <p class="cx-card__meta">
+              <span class="cx-card__author">Claire Whitmore</span><span aria-hidden="true"> · </span><span>June 28, 2026</span>
+            </p>
+            <p class="cx-badge-verified">Verified Purchase</p>
+            <p class="cx-overall__media"><span class="cx-overall__mediadot" aria-hidden="true"></span>With photos or videos</p>
+            <div class="cx-overall__foot">
+              <a class="cx-overall__plink" href="/products/hydra-riche-night-balm#cellexia-reviews">Hydra-Riche Night Balm</a>
+              <a class="cx-link cx-overall__read" href="/products/hydra-riche-night-balm#cellexia-reviews">Read 1,940 reviews</a>
+            </div>
+          </article>
+
+          <article class="cx-card cx-overall__card" data-review-id="brand-0004">
+            <div class="cx-card__titleline">
+              <span class="cx-stars" role="img" aria-label="5 out of 5 stars">
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+              </span>
+              <strong class="cx-card__title">Sensitive skin approved — zero irritation</strong>
+            </div>
+            <div class="cx-overall__body cx-clamp"><p>Patch-tested for a week, not a single reaction since — just calm, deeply hydrated skin and a barrier that feels stronger than it has in years.</p></div>
+            <p class="cx-card__meta">
+              <span class="cx-card__author">Ruth Calloway</span><span aria-hidden="true"> · </span><span>July 18, 2026</span>
+            </p>
+            <p class="cx-badge-verified">Verified Purchase</p>
+            <div class="cx-overall__foot">
+              <a class="cx-overall__plink" href="/products/regenerant-cellular-renewal-cream#cellexia-reviews">Régénérant Cellular Renewal Cream</a>
+              <a class="cx-link cx-overall__read" href="/products/regenerant-cellular-renewal-cream#cellexia-reviews">Read 6,214 reviews</a>
+            </div>
+          </article>
+
+          <article class="cx-card cx-overall__card" data-review-id="brand-0005">
+            <div class="cx-card__titleline">
+              <span class="cx-stars" role="img" aria-label="5 out of 5 stars">
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+              </span>
+              <strong class="cx-card__title">Dark circles visibly brighter</strong>
+            </div>
+            <div class="cx-overall__body cx-clamp"><p>Within a month the shadows under my eyes were light enough that most days I skip concealer entirely. Cooling, fast-absorbing, never pills.</p></div>
+            <p class="cx-card__meta">
+              <span class="cx-card__author">Sofia Marchetti</span><span aria-hidden="true"> · </span><span>July 1, 2026</span>
+            </p>
+            <p class="cx-badge-verified">Verified Purchase</p>
+            <p class="cx-overall__media"><span class="cx-overall__mediadot" aria-hidden="true"></span>With photos or videos</p>
+            <div class="cx-overall__foot">
+              <a class="cx-overall__plink" href="/products/lumiere-eye-contour-gel#cellexia-reviews">Lumière Eye Contour Gel</a>
+              <a class="cx-link cx-overall__read" href="/products/lumiere-eye-contour-gel#cellexia-reviews">Read 1,423 reviews</a>
+            </div>
+          </article>
+
+          <article class="cx-card cx-overall__card" data-review-id="brand-0006">
+            <div class="cx-card__titleline">
+              <span class="cx-stars" role="img" aria-label="4 out of 5 stars">
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFA41C" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+                <svg class="cx-star" viewBox="0 0 20 20" width="16" height="16" aria-hidden="true" focusable="false"><path d="M10 1.4l2.62 5.35 5.88.83-4.26 4.13 1.02 5.85L10 14.8l-5.26 2.76 1.02-5.85L1.5 7.58l5.88-.83L10 1.4z" fill="#FFFFFF" stroke="#DE7921" stroke-width="1" stroke-linejoin="round"/></svg>
+              </span>
+              <strong class="cx-card__title">Lovely serum — give it time</strong>
+            </div>
+            <div class="cx-overall__body cx-clamp"><p>Six weeks in: tone more even, forehead brighter, deeper spots still fading. Watery-light texture that layers under anything.</p></div>
+            <p class="cx-card__meta">
+              <span class="cx-card__author">Hannah Ostrowski</span><span aria-hidden="true"> · </span><span>June 20, 2026</span>
+            </p>
+            <p class="cx-badge-verified">Verified Purchase</p>
+            <div class="cx-overall__foot">
+              <a class="cx-overall__plink" href="/products/eclat-vitamin-c-serum#cellexia-reviews">Éclat Vitamin C Serum</a>
+              <a class="cx-link cx-overall__read" href="/products/eclat-vitamin-c-serum#cellexia-reviews">Read 2,861 reviews</a>
+            </div>
+          </article>
+        </div>
+      </section>
+    </section>
+
+    <!--
       v1.5 (SPEC-1.5 §3.4): "product card grid" showcase for the site-wide
       star badges. The markup mimics a theme's collection/featured-products
       cards — each card is a /products/<handle> link plus a heading
@@ -707,13 +1148,16 @@
       });
     })();
 
-    /* Demo-only: design-version switcher (SPEC-1.1, SPEC-1.3, SPEC-1.5).
-       Toggles data-cx-skin on the widget root — the same attribute
-       blocks/reviews.liquid renders from the `cellexia.design_theme` shop
-       metafield — on any top-layer surface (dialog / sheet / lightbox /
-       filter panel) that is open at that moment, and on the star badges
-       (.cx-badge-inline) injected next to the card-grid titles, so all
-       three skins are previewable live. Default: amazon. */
+    /* Demo-only: design-version switcher (SPEC-1.1, SPEC-1.3, SPEC-1.5,
+       SPEC-1.9). Toggles data-cx-skin on the widget root — the same
+       attribute blocks/reviews.liquid renders from the
+       `cellexia.design_theme` shop metafield — on the two v1.9
+       "Overall reviews" block roots (.cx-overall, exactly as
+       blocks/overall-reviews.liquid renders the same metafield), on any
+       top-layer surface (dialog / sheet / lightbox / filter panel) that is
+       open at that moment, and on the star badges (.cx-badge-inline)
+       injected next to the card-grid titles, so all three skins are
+       previewable live. Default: amazon. */
     (function () {
       "use strict";
       var buttons = document.querySelectorAll(".demo-skin__btn");
@@ -721,8 +1165,10 @@
       function applySkin(value) {
         var skin = value === "cellexia" || value === "luxe" ? value : "amazon";
         currentSkin = skin;
-        var root = document.getElementById("cellexia-reviews");
-        if (root) root.setAttribute("data-cx-skin", skin);
+        var roots = document.querySelectorAll("#cellexia-reviews, .cx-overall");
+        Array.prototype.forEach.call(roots, function (node) {
+          node.setAttribute("data-cx-skin", skin);
+        });
         var surfaces = document.querySelectorAll(".cx-overlay, .cx-dialog, .cx-badge-inline");
         Array.prototype.forEach.call(surfaces, function (node) {
           node.setAttribute("data-cx-skin", skin);
@@ -745,20 +1191,29 @@
       window.setTimeout(function () { applySkin(currentSkin); }, 3000);
     })();
 
-    /* Demo-only: the card grid's /products/… links point at products that
-       exist only on this page — keep them inert. (The hrefs are still real
-       product-URL paths because that is how the badge injector derives each
-       card's product handle, exactly as on a live theme.) */
+    /* Demo-only: the /products/… and /collections/… links in the card grid
+       AND in the v1.9 "Overall reviews" showcase point at pages that exist
+       only on this demo — keep them inert. (The hrefs are still real
+       product-URL paths: the badge injector derives each card's handle from
+       them, and the overall block's cards link to
+       /products/<handle>#cellexia-reviews exactly as on a live theme.) */
     (function () {
       "use strict";
-      var grid = document.querySelector(".demo-grid");
-      if (!grid) return;
-      grid.addEventListener("click", function (ev) {
-        var node = ev.target;
-        while (node && node !== grid) {
-          if (node.tagName === "A") { ev.preventDefault(); return; }
-          node = node.parentNode;
-        }
+      var containers = document.querySelectorAll(".demo-grid, .demo-overall");
+      Array.prototype.forEach.call(containers, function (container) {
+        container.addEventListener("click", function (ev) {
+          var node = ev.target;
+          while (node && node !== container) {
+            if (node.tagName === "A") {
+              var href = node.getAttribute("href") || "";
+              if (href.indexOf("/products/") === 0 || href.indexOf("/collections/") === 0) {
+                ev.preventDefault();
+              }
+              return;
+            }
+            node = node.parentNode;
+          }
+        });
       });
     })();
   </script>

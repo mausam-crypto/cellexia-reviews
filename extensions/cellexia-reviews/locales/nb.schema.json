@@ -66,8 +66,41 @@
         }
       }
     },
+    "overall_block": {
+      "name": "Cellexia-samleanmeldelser",
+      "settings": {
+        "heading": {
+          "label": "Overskrift"
+        },
+        "max_reviews": {
+          "label": "Antall anmeldelser som vises"
+        },
+        "layout": {
+          "label": "Oppsett",
+          "options__1": {
+            "label": "Rutenett"
+          },
+          "options__2": {
+            "label": "Karusell"
+          }
+        },
+        "show_distribution": {
+          "label": "Vis stolper for vurderingsfordeling"
+        },
+        "show_product_links": {
+          "label": "Koble hver anmeldelse til produktet sitt"
+        },
+        "cta_label": {
+          "label": "Knappetekst (valgfritt)"
+        },
+        "cta_url": {
+          "label": "Knappelenke"
+        }
+      }
+    },
     "defaults": {
-      "heading": "Kundeanmeldelser"
+      "heading": "Kundeanmeldelser",
+      "overall_heading": "Hva kundene våre sier"
     }
   }
 }

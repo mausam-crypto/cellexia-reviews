@@ -66,8 +66,41 @@
         }
       }
     },
+    "overall_block": {
+      "name": "مراجعات Cellexia الإجمالية",
+      "settings": {
+        "heading": {
+          "label": "العنوان"
+        },
+        "max_reviews": {
+          "label": "عدد المراجعات المعروضة"
+        },
+        "layout": {
+          "label": "التخطيط",
+          "options__1": {
+            "label": "شبكة"
+          },
+          "options__2": {
+            "label": "شريط دوّار"
+          }
+        },
+        "show_distribution": {
+          "label": "عرض أشرطة توزيع التقييمات"
+        },
+        "show_product_links": {
+          "label": "ربط كل مراجعة بمنتجها"
+        },
+        "cta_label": {
+          "label": "نص الزر (اختياري)"
+        },
+        "cta_url": {
+          "label": "رابط الزر"
+        }
+      }
+    },
     "defaults": {
-      "heading": "تقييمات العملاء"
+      "heading": "تقييمات العملاء",
+      "overall_heading": "ماذا يقول عملاؤنا"
     }
   }
 }

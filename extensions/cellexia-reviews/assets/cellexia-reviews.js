@@ -1,6 +1,7 @@
 /* Cellexia Reviews storefront widget — vanilla ES2019, no dependencies.
 * Contract: SPEC §6/§8/§9/§15, SPEC-1.2 (gating), SPEC-1.5/1.5.1 (embed, badges),
-* SPEC-1.6 (proxy discovery, editor token, 3-audience failure UX).
+* SPEC-1.6 (proxy discovery, editor token, 3-audience failure UX),
+* SPEC-1.8 (proxy comment-strip, translated display mode).
 * No innerHTML with user content — DOM built via createElement/textContent only. */
 (() => {
 "use strict";
@@ -98,12 +99,10 @@ function ssSet(key, val) {
 function ssDel(key) {
  try { window.sessionStorage.removeItem(key); } catch (e) {}
 }
-/* Reads `?cx_preview=` and PERSISTS it for the rest of the session, so it must
-   only ever be called for a store that is not live (or in design mode): on a
-   live store the value is unverifiable — the API answers everyone, so nothing
-   can prove it junk — and persisting it would let a link handed to a shopper
-   promote them to a merchant context on every later page (§9). Every caller
-   gates on that; see boot() and initBadges(). */
+/* Reads `?cx_preview=` and PERSISTS it for the session — call only when the
+   store is not live (or in design mode): a live store cannot verify the value
+   (the API answers everyone), and persisting would promote a shopper link to
+   a merchant context on every later page (§9). See boot()/initBadges(). */
 function urlPreviewToken() {
  try { return new URLSearchParams(window.location.search).get("cx_preview") || null; } catch (e) { return null; }
 }
@@ -189,6 +188,16 @@ function badPathError(status) {
  var e = new Error("cx_bad_path_" + status);
  e.cxBadPath = true;
  return e;
+}
+/* v1.8 (SPEC-1.8 §5, layer 2) — Shopify wraps app-snippet renders in
+   "BEGIN/END app snippet" HTML comments, poisoning every Liquid-carried proxy
+   value. Liquid now strips them at the source; belt-and-braces here: drop
+   comments + whitespace, accept only "/apps/<subpath>/api" — else "" so the
+   caller falls back to the default base and the §2 discovery sweep. */
+function cleanProxyValue(v) {
+ if (typeof v !== "string" || !v) return "";
+ var s = v.replace(/<!--[\s\S]*?-->/g, "").replace(/\s+/g, "").replace(/\/+$/, "");
+ return PROXY_BASE_RE.test(s) ? s : "";
 }
 /* i18n: flat dict from #cx-i18n + Intl formatters for one locale. */
 function makeI18n(locale) {
@@ -308,7 +317,8 @@ var cfg = {
  productHandle: attr("product-handle", ""), // v1.5: sent with review POSTs
  locale: attr("locale", "en"),
  // cx-proxy.liquid single-sources this from cellexia.proxy_path (§2).
- proxy: attr("proxy", "/apps/cellexia-reviews/api").replace(/\/$/, ""),
+ // v1.8 §5: comment-strip + validate; invalid ⇒ default base + discovery.
+ proxy: cleanProxyValue(attr("proxy", "")) || "/apps/cellexia-reviews/api",
  perPage: parseInt(attr("per-page", "10"), 10) || 10,
  defaultLocale: attr("shop-default-locale", "en"),
  showSummary: flag("show-summary", true),
@@ -316,7 +326,10 @@ var cfg = {
  showForm: flag("show-form", true),
  showTranslate: flag("show-translate", true),
  demo: attr("demo", "false") === "true",
- brand: attr("brand", "Cellexia")
+ brand: attr("brand", "Cellexia"),
+ // v1.8 §4: "original" (default) | "translated". Set only by the server
+ // settings ride-along — demo mode never carries it, so demo is unchanged.
+ translationDisplay: "original"
 };
 
 /* ---- v1.2 live/preview gating + v1.6 token resolution (§3) ---- */
@@ -334,19 +347,14 @@ var isEmbed = root.getAttribute("data-cx-embed") === "true";
 // junk value handed to a visitor still cannot follow them across the session.
 var previewToken = (!isLive || designMode) ? resolveToken(root, readEmbedConfig()) : urlPreviewToken();
 // Decides the whole failure UX (§4); everyone else is a shopper and must never
-// see a notice, an error box or a preview token.
-//
-// A token holder counts as a merchant on a LIVE store too: "Preview on your
-// store" keeps working after go-live (docs/CONFIGURATION.md §2), and the two
-// failure cases that matter most — unreachable proxy, 5xx on first load — leave
-// no server response to verify the token against, so gating notices on
-// server-proof would silence exactly the diagnostics the merchant needs.
-// This is the same rule the preview ribbon already uses, so the two can never
-// disagree. Safety is preserved because notices carry NO shop data (they are
-// static UI strings + the proxy paths tried), and a visitor would have to
-// hand-craft a ?cx_preview= URL to see one. Merchant-only DATA stays gated on
-// server proof — readPendingCount only trusts `meta`, which the server returns
-// exclusively for a token it validated.
+// see a notice, an error box or a preview token. A token holder counts as a
+// merchant on a LIVE store too: "Preview on your store" keeps working after
+// go-live (docs/CONFIGURATION.md §2) and the worst failures (unreachable
+// proxy, 5xx on first load) leave no server response to verify the token
+// against — the preview ribbon uses the same rule, so the two never disagree.
+// Safe: notices carry NO shop data (static strings + proxy paths tried).
+// Merchant-only DATA stays gated on server proof — readPendingCount only
+// trusts `meta`, which the server returns for a validated token only.
 var isMerchantContext = designMode || !!previewToken;
 if (!isLive) {
  if (previewToken || designMode) {
@@ -463,6 +471,17 @@ function markHelpful(id) {
 }
 var trCache = {};      // reviewId -> {title, body, reply} for cfg.locale
 var reportedSet = {};  // reviewId -> true (session only)
+/* v1.8 §4 translated display mode: the server attaches review.translated =
+   { title, body, reply, from } — rendered BY DEFAULT with a See original ⇄
+   See translation toggle. Reviews without the payload (provider failure)
+   keep the classic Translate button — never an error. */
+var showOriginalIds = {}; // reviewId -> true while "See original" is chosen
+function autoTranslation(r) {
+ if (cfg.translationDisplay !== "translated") return null;
+ var v = r && r.translated;
+ if (!v || typeof v !== "object" || typeof v.body !== "string" || !v.body) return null;
+ return v;
+}
 
 /* ---- API layer (with demo adapter) ---- */
 function qs(params) {
@@ -1132,7 +1151,8 @@ function renderControls() {
  });
  sa(filterBtn, "aria-haspopup", "dialog");
  ap(secControls, filterBtn);
- if (cfg.showTranslate && hasForeignReviews()) {
+ // v1.8: "Translate all" is redundant in translated mode (SPEC-1.8 §4).
+ if (cfg.showTranslate && cfg.translationDisplay !== "translated" && hasForeignReviews()) {
   var trLink = btn("cx-link cx-translate-all",
    allTranslated ? tw("show_original_all") : tw("translate_all"),
    () => { toggleTranslateAll(trLink); });
@@ -1343,7 +1363,9 @@ function renderCard(r) {
  sa(card, "data-review-id", r.id);
  card.tabIndex = -1;
  cardRefs[r.id] = card;
- var tr = translatedIds[r.id] ? trCache[r.id] : null;
+ // v1.8: translated mode shows the server translation until "See original".
+ var auto = autoTranslation(r);
+ var tr = auto && !showOriginalIds[r.id] ? auto : (translatedIds[r.id] ? trCache[r.id] : null);
  var title = tr && tr.title ? tr.title : r.title;
  var body = tr && tr.body ? tr.body : r.body;
  var reply = tr && tr.reply ? tr.reply : r.reply;
@@ -1452,6 +1474,27 @@ function fetchTranslations(ids) {
 }
 function translationControls(r, card) {
  var wrap = el("div", "cx-translate");
+ // v1.8 §4 translated mode: "Translated from X" + See original ⇄ See
+ // translation; the Translate button is redundant here. Reviews WITHOUT a
+ // server translation fall through to the classic controls below.
+ var auto = autoTranslation(r);
+ if (auto) {
+  if (showOriginalIds[r.id]) {
+   ap(wrap, btn("cx-link", trs("see_translation"), () => {
+    delete showOriginalIds[r.id];
+    rerenderCard(r);
+   }));
+  } else {
+   ap(wrap, el("span", "cx-muted cx-translated-note",
+    trs("translated_from", { language: langName(auto.from || r.language) })));
+   ap(wrap, tx(" "));
+   ap(wrap, btn("cx-link", trs("see_original"), () => {
+    showOriginalIds[r.id] = true;
+    rerenderCard(r);
+   }));
+  }
+  return wrap;
+ }
  if (translatedIds[r.id]) {
   ap(wrap, el("span", "cx-muted cx-translated-note",
    trs("translated_from", { language: langName(r.language) })));
@@ -1566,12 +1609,11 @@ function renderList() {
  if (!data.reviews.length) {
   ap(secList, el("p", "cx-muted cx-empty",
    anyFilterActive() ? tw("no_results") : tw("no_reviews")));
-  // Zero reviews is not a failure, but it is why no stars show (RC-B).
-  // v1.6.1 §B: when reviews DO exist and are merely unapproved, say so —
-  // telling the merchant to import what they already imported is the exact
-  // confusion this release removes. A non-zero pendingCount is server-proven
-  // merchant-ness (readPendingCount), which is what lets the hint appear for a
-  // preview link on a LIVE store; a shopper reaches neither branch.
+  // Zero reviews is not a failure, just why no stars show (RC-B). v1.6.1 §B:
+  // reviews that exist but are unapproved get named as such — a non-zero
+  // pendingCount is server-proven merchant-ness (readPendingCount), letting
+  // the hint appear for a preview link on a LIVE store; a shopper reaches
+  // neither branch.
   var pending = data.pendingCount > 0;
   if ((isMerchantContext || pending) && !anyFilterActive()) {
    ap(secList, pending
@@ -1975,12 +2017,16 @@ function applyServerSettings(res) {
  var theme = own(s, "designTheme") ? s.designTheme :
   (own(res, "design_theme") ? res.design_theme : undefined);
  if (typeof theme === "string" && theme) applySkin(theme);
+ // v1.8 §4: translation display mode — only the two known values apply;
+ // an older server leaves the "original" default alone.
+ var td = own(s, "translationDisplay") ? s.translationDisplay :
+  (own(res, "translation_display") ? res.translation_display : undefined);
+ if (td === "translated" || td === "original") cfg.translationDisplay = td;
 }
-/* v1.6.1 §B — `meta.pendingCount` is MERCHANT-ONLY, and its presence is also the
-   only client-side PROOF that the server validated our token. We refuse to read
-   it unless we actually sent one, so a payload that ever leaked to a tokenless
-   shopper (CDN cache, a future server regression) still never enters their page
-   state, let alone the DOM. Requests carrying a token are `no-store`. */
+/* v1.6.1 §B — `meta.pendingCount` is MERCHANT-ONLY; its presence is the only
+   client-side PROOF the server validated our token. Read it only if we sent
+   one, so a payload leaked to a tokenless shopper (CDN cache, regression)
+   never enters page state or the DOM. Token requests are `no-store`. */
 function readPendingCount(res) {
  if (!previewToken) return 0;
  var m = res && res.meta;
@@ -2033,6 +2079,7 @@ function reload() {
  state.page = 1;
  translatedIds = {};
  allTranslated = false;
+ showOriginalIds = {}; // v1.8: a fresh list shows translations by default again
  loadPage(false);
 }
 function localizeSummaryIfNeeded() {
@@ -2063,7 +2110,7 @@ function init() {
  loadPage(false);
 }
 window.CellexiaReviews = {
- version: "1.6.0",
+ version: "1.8.0",
  refresh: reload,
  t: t,
  getState: () => Object.assign({}, state)
@@ -2350,7 +2397,7 @@ function initBadges(cfgE, I) {
   }
   return null;
  }
- var pending = []; // collected {handle, titleEl, done}
+ var pending = []; // collected {handle, card, titleEl, done}
  function collect() {
   var anchors;
   try { anchors = document.querySelectorAll('a[href*="/products/"]'); } catch (e) { return; }
@@ -2364,9 +2411,12 @@ function initBadges(cfgE, I) {
     var card = cardFor(a);
     // nested matches = same card
     if (!card || card.closest("[data-cx-badged]") || card.querySelector("[data-cx-badged]")) continue;
+    // v1.8 audit #5: themes may clone a badged card's inner markup into a
+    // fresh unmarked element — adopt it, never insert a second badge.
+    if (card.querySelector(".cx-badge-inline--card")) { sa(card, "data-cx-badged", handle); continue; }
     var titleEl = titleFor(card) || a; // fallback: the anchor
     sa(card, "data-cx-badged", handle); // dedupe ON the card
-    pending.push({ handle: handle, titleEl: titleEl, done: false });
+    pending.push({ handle: handle, card: card, titleEl: titleEl, done: false });
    } catch (e) {}
   }
  }
@@ -2378,9 +2428,11 @@ function initBadges(cfgE, I) {
    return Promise.resolve(true);
   }
   var r0 = anyRoot();
-  // Badge-only pages have no root: base from the config, or a proven one (§2).
-  var base = seedProxyBase() || (typeof cfgE.proxy === "string" && cfgE.proxy) ||
-   (r0 && r0.getAttribute("data-proxy")) || "/apps/cellexia-reviews/api";
+  // A base PROVEN this session (sessionStorage cx_proxy_base — §5 layer 3)
+  // wins, then the comment-stripped + validated config/attribute values
+  // (layer 2), then the default (self-heals via the 404 → discovery retry).
+  var base = seedProxyBase() || cleanProxyValue(cfgE.proxy) ||
+   cleanProxyValue(r0 ? r0.getAttribute("data-proxy") : "") || "/apps/cellexia-reviews/api";
   // On failure un-mark the handles so a later pass may retry (capped above).
   var unmark = () => { handles.forEach((h) => { if (cache[h] === undefined) delete requested[h]; }); };
   // Badges never surface a failure — a broken path just means no stars.
@@ -2415,10 +2467,17 @@ function initBadges(cfgE, I) {
     var stats = cache[en.handle];
     if (stats === undefined) continue; // not fetched yet — stays pending
     en.done = true;
-    if (!stats || !(Number(stats.count) > 0) || !en.titleEl.parentNode) continue;
+    if (!stats || !(Number(stats.count) > 0)) continue;
+    // v1.8 audit #4/#5: the card is marked at collect time — if the theme
+    // replaced the title before data arrived, re-resolve it within the
+    // still-attached card; and never insert twice.
+    var tEl = en.titleEl && en.titleEl.parentNode ? en.titleEl :
+     (en.card && en.card.parentNode ? titleFor(en.card) : null);
+    if (!tEl || !tEl.parentNode) continue;
+    if (en.card && en.card.querySelector(".cx-badge-inline--card")) continue;
     var b = buildInlineBadge(Number(stats.average) || 0, Number(stats.count) || 0, s.badge_style, cfgE.skin, I, null);
     b.className += " cx-badge-inline--card";
-    insertAfter(b, en.titleEl);
+    insertAfter(b, tEl);
    } catch (e) { en.done = true; }
   }
  }
@@ -2480,6 +2539,219 @@ function initBadges(cfgE, I) {
  if (document.readyState === "loading") on(document, "DOMContentLoaded", runIdle);
  else runIdle();
 }
+/* ===== v1.9 (SPEC-1.9 §3) "Overall reviews" block — per-root module for
+   .cx-overall. Liquid SSRs everything; JS adds read-more, carousel buttons,
+   the distribution filter (GET /brand-reviews, createElement-only). Gating =
+   badge injector: not live + no token ⇒ zero fetches (SSR hidden by the
+   shell). Failures keep SSR cards. Demo: CellexiaDemoData.brand.reviews. */
+function initOverall(root) {
+ if (!root || root.getAttribute("data-cx-overall-init") === "true") return;
+ sa(root, "data-cx-overall-init", "true");
+ function ga(n, d) { var v = root.getAttribute("data-" + n); return v === null || v === "" ? d : v; }
+ function each(l, f) { Array.prototype.forEach.call(l, f); }
+ var demo = ga("demo", "false") === "true";
+ var live = ga("cx-live", "true") !== "false";
+ var ed = inDesignMode();
+ var cfgE = readEmbedConfig();
+ // Token rules identical to boot() (§9).
+ var token = demo ? null : ((!live || ed) ? resolveToken(root, cfgE) : urlPreviewToken());
+ var max = Math.min(24, parseInt(ga("max-reviews", "6"), 10) || 6);
+ var car = ga("layout", "grid") === "carousel";
+ var links = ga("show-product-links", "true") !== "false";
+ var I = makeI18n(ga("locale", "en"));
+ var ot = I.t;
+ seedProxyBase();
+ function ob() { return resolvedProxyBase || cleanProxyValue(root.getAttribute("data-proxy") || "") || cleanProxyValue(cfgE ? cfgE.proxy : "") || "/apps/cellexia-reviews/api"; }
+ var stars = 0, nsync = null, chip = null, note = null;
+ var box = root.querySelector("[data-cx-overall-cards]");
+ var ssr = box ? Array.prototype.slice.call(box.children) : [];
+ function ntxt(k) { return I.str("notice." + k) || NOTICE_FALLBACK[k] || ""; }
+ function unnote() { detach(note); note = null; }
+ // §1.6 notice — merchant-only (§4).
+ function showNote(kind) {
+  if (!(ed || token) || !box || !box.parentNode) return;
+  unnote();
+  var t1, b1, d1;
+  if (kind === "not_live") { t1 = ntxt("expired_title"); b1 = ntxt("expired_body"); }
+  else if (kind === "bad_path") {
+   t1 = ntxt("unconfigured_title"); b1 = ntxt("unconfigured_body");
+   d1 = (proxyTried.length ? proxyTried : [ob()]).join("  ·  ");
+  } else { t1 = I.str("notice.error_title") || ot("widget.error_loading"); b1 = I.str("notice.error_body") || ""; }
+  note = el("div", "cx-notice cx-notice--merchant");
+  sa(note, "role", "status");
+  if (t1) ap(note, el("strong", "cx-notice__title", t1));
+  if (b1) ap(note, el("p", "cx-notice__body", b1));
+  if (d1) ap(note, el("p", "cx-notice__detail", d1));
+  box.parentNode.insertBefore(note, chip || box);
+ }
+ function unchip() { detach(chip); chip = null; }
+ function rst(row) { return parseInt(row.getAttribute("data-stars"), 10) || 0; }
+ function mark() {
+  each(root.querySelectorAll(".cx-dist__row"), (row) => {
+   var a = stars > 0 && stars === rst(row);
+   row.classList.toggle("is-active", a);
+   sa(row, "aria-pressed", a ? "true" : "false");
+  });
+ }
+ // Re-measure while collapsed (resize / rotation / font swap).
+ function syncMore(c) {
+  var b = c.querySelector(".cx-overall__body"), tg = c.querySelector(".cx-read-more");
+  if (!b || !tg || tg.getAttribute("aria-expanded") === "true") return;
+  try { tg.hidden = !(b.scrollHeight > b.clientHeight + 2); } catch (e) {}
+ }
+ function syncAll() { each(root.querySelectorAll(".cx-overall__card"), syncMore); }
+ function readMore(c) {
+  var b = c.querySelector(".cx-overall__body");
+  if (!b || c.querySelector(".cx-read-more")) return;
+  var tg = btn("cx-link cx-read-more", ot("review.read_more"), () => {
+   var cl = b.classList.toggle("cx-clamp");
+   tg.textContent = ot(cl ? "review.read_more" : "review.show_less");
+   sa(tg, "aria-expanded", cl ? "false" : "true");
+  });
+  sa(tg, "aria-expanded", "false");
+  tg.hidden = true;
+  if (!insertAfter(tg, b)) ap(c, tg);
+  window.requestAnimationFrame(() => { syncMore(c); });
+ }
+ // Entry shape or API DTO.
+ function card(r) {
+  r = r || {};
+  var p = r.product || {};
+  var c = el("article", "cx-card cx-overall__card");
+  var rating = Number(r.rating) || 0;
+  var line = ap(c, el("div", "cx-card__titleline"));
+  ap(line, starRowCore(rating, 16, ot("a11y.stars_label", { rating: I.NF1.format(rating) })));
+  if (r.title) ap(line, el("strong", "cx-card__title", r.title));
+  ap(ap(c, el("div", "cx-overall__body cx-clamp")), el("p", null, r.body || ""));
+  var who = r.author || r.authorName || "";
+  var dt = I.fmtDate(r.date || r.createdAt || "");
+  var meta = el("p", "cx-card__meta");
+  if (who) ap(meta, el("span", "cx-card__author", who));
+  if (dt) {
+   if (who) sa(ap(meta, el("span", null, " · ")), "aria-hidden", "true");
+   ap(meta, el("span", null, dt));
+  }
+  if (meta.firstChild) ap(c, meta);
+  if (r.verified) ap(c, el("p", "cx-badge-verified", ot("review.verified")));
+  if (r.hasMedia || (r.media && r.media.length)) {
+   var mi = ap(c, el("p", "cx-overall__media"));
+   sa(ap(mi, el("span", "cx-overall__mediadot")), "aria-hidden", "true");
+   ap(mi, tx(ot("widget.filter_media")));
+  }
+  var h = r.productHandle || p.handle || "";
+  if (links && h) {
+   var url = (p.url || "").charAt(0) === "/" ? p.url : "/products/" + h;
+   if (url.indexOf("#") < 0) url += "#cellexia-reviews";
+   var foot = el("div", "cx-overall__foot");
+   var pt = r.productTitle || p.title || "";
+   if (pt) sa(ap(foot, el("a", "cx-overall__plink", pt)), "href", url);
+   var pc = Number(r.productReviewCount) || 0;
+   if (pc > 0) sa(ap(foot, el("a", "cx-link cx-overall__read", ot("overall.read_reviews", { count: pc }))), "href", url);
+   if (foot.firstChild) ap(c, foot);
+  }
+  readMore(c);
+  return c;
+ }
+ function swap(nodes, empty) {
+  clear(box);
+  for (var i = 0; i < nodes.length; i++) ap(box, nodes[i]);
+  if (empty) ap(box, el("p", "cx-muted cx-empty", ot("widget.no_results")));
+  box.scrollLeft = 0;
+  if (nsync) nsync();
+ }
+ function filtered(list) {
+  unnote();
+  swap(list.slice(0, max).map(card), !list.length);
+  if (!chip && box.parentNode) {
+   chip = btn("cx-btn cx-btn--sm cx-overall__reset", ot("widget.filter_all_stars"), () => { setFilter(0); });
+   box.parentNode.insertBefore(chip, box);
+  }
+ }
+ function restore() { unchip(); unnote(); swap(ssr, false); }
+ // §2: 404/410 joins the one shared discovery sweep, retries once.
+ function fetchBrand(n) {
+  return new Promise((res, rej) => {
+   if (!window.fetch) { rej("network"); return; }
+   var q = "?per_page=" + max + "&stars=" + n + (token ? "&preview_token=" + encodeURIComponent(token) : "");
+   var go = (from, retry) => {
+    window.fetch(from + "/brand-reviews" + q, { credentials: "same-origin" }).then((r) => {
+     if (r.status === 403) { rej("not_live"); return; }
+     if (r.status === 404 || r.status === 410) {
+      if (!retry) { rej("bad_path"); return; }
+      runProxyDiscovery(from).then((found) => {
+       if (found && found !== from) go(found, false); else rej("bad_path");
+      });
+      return;
+     }
+     if (!r.ok) { rej("network"); return; }
+     r.json().then((b) => { if (b && b.reviews) res(b); else rej("network"); }, () => { rej("bad_path"); });
+    }, () => { rej("network"); });
+   };
+   go(ob(), true);
+  });
+ }
+ function setFilter(n) {
+  if (!box) return;
+  stars = n;
+  mark();
+  if (!n) { restore(); return; }
+  if (demo) {
+   var bd = (window.CellexiaDemoData || {}).brand || {};
+   filtered((bd.reviews || []).filter((r) => { return Math.round(Number(r.rating) || 0) === n; }));
+   return;
+  }
+  if (!live && !token) { showNote("not_live"); return; } // gating BEFORE any fetch
+  fetchBrand(n).then((body) => {
+   if (stars === n) filtered(body.reviews);
+  }, (kind) => {
+   if (!stars) return;
+   stars = 0;
+   mark();
+   restore();
+   if (kind === "not_live") removePreviewBar();
+   showNote(kind);
+  });
+ }
+ function wire() {
+  if (box) each(box.querySelectorAll(".cx-overall__card"), readMore);
+  on(window, "resize", debounce(syncAll, 150), { passive: true });
+  try { if (document.fonts && document.fonts.ready) document.fonts.ready.then(syncAll); } catch (e) {}
+  if (car && box && !root.querySelector(".cx-overall__nav")) {
+   var nav = el("div", "cx-overall__nav");
+   var rtl = (root.getAttribute("dir") || "") === "rtl";
+   var mk = (dirn, label, glyph) => {
+    var b = ap(nav, btn("cx-overall__navbtn", glyph, () => {
+     var amt = Math.max(box.clientWidth * 0.9, 160) * dirn * (rtl ? -1 : 1);
+     // behavior:auto defers to the CSS scroll-behavior rules
+     try { box.scrollBy({ left: amt, behavior: "auto" }); } catch (e) { box.scrollLeft += amt; }
+    }));
+    al(b, label);
+   };
+   mk(-1, ot("a11y.prev"), "‹");
+   mk(1, ot("a11y.next"), "›");
+   if (!insertAfter(nav, box)) ap(root, nav);
+   nsync = () => { try { nav.hidden = box.scrollWidth - box.clientWidth <= 4; } catch (e) {} };
+   on(window, "resize", debounce(nsync, 150), { passive: true });
+   nsync();
+  }
+  each(root.querySelectorAll(".cx-dist__row"), (row) => {
+   on(row, "click", () => { var n = rst(row); if (n) setFilter(stars === n ? 0 : n); });
+  });
+ }
+ if (!demo && !live && !ed) {
+  if (!token) { root.hidden = true; return; } // shopper: zero fetches, zero pixels
+  root.hidden = false; // tokenized preview: SSR already in the shell
+  try { renderPreviewBar(ot); } catch (e) {}
+ }
+ wire();
+}
+function initOverallRoots(scope) {
+ var list;
+ try { list = (scope || document).querySelectorAll(".cx-overall"); } catch (e) { return; }
+ for (var i = 0; i < list.length; i++) {
+  try { initOverall(list[i]); } catch (e) { /* never break the theme */ }
+ }
+}
 /* ---- start orchestration (§3.1) ---- */
 function start() {
  // block + embed both emit the (cached) script tag — run once
@@ -2506,6 +2778,7 @@ function start() {
  if (widgetRoot) {
   try { boot(widgetRoot); } catch (e) { /* the widget must never break the theme */ }
  }
+ initOverallRoots(document); // v1.9 overall-reviews roots
  if (!cfgE) return; // block-only page: v1.4.1 behavior ends here
  try {
   var r0 = anyRoot();
@@ -2523,4 +2796,8 @@ if (document.readyState === "loading") {
 } else {
  start();
 }
+// v1.9: hydrate roots re-rendered by the theme editor.
+on(document, "shopify:section:load", (ev) => {
+ initOverallRoots(ev && ev.target ? ev.target : document);
+});
 })();

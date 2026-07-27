@@ -29,11 +29,13 @@ import type { AdminApiContext as BaseAdminApiContext } from "@shopify/shopify-ap
  * contexts with and without REST both satisfy it structurally.
  */
 type AdminApiContext = Pick<BaseAdminApiContext, "graphql">;
+import type { Prisma, Review } from "@prisma/client";
 import prisma from "~/db.server";
 import type { ProductStatsDTO } from "~/types/cellexia";
 import { generateSummary, parseStoredTopics } from "./ai.server";
 import { syncProductMetafields } from "./metafields.server";
 import type { MetafieldSyncResult, SummaryMetafieldSource } from "./metafields.server";
+import { fetchRankedPage, getEffectiveDisplay } from "./ranking.server";
 import { computeProductStats } from "./reviews.server";
 import { getSettings } from "./settings.server";
 
@@ -97,11 +99,42 @@ export async function recomputeProductWithSync(
     }
   }
 
-  const topReviews = await prisma.review.findMany({
-    where: { shop, productId: pid, status: "PUBLISHED" },
-    orderBy: [{ helpfulCount: "desc" }, { createdAt: "desc" }],
-    take: 3,
-  });
+  // v1.8 (SPEC-1.8 §2): the 3 SSR/JSON-LD reviews follow the same effective
+  // display config as the live widget's unfiltered "top" page — pinned
+  // ("featured") reviews first in their stored order, then the shop/product
+  // ranking strategy — so the server-rendered stars and rich snippets match
+  // what the widget shows once it loads.
+  const topWhere: Prisma.ReviewWhereInput = { shop, productId: pid, status: "PUBLISHED" };
+  let topReviews: Review[];
+  try {
+    const display = await getEffectiveDisplay(shop, pid);
+    const ranked = await fetchRankedPage(shop, pid, display, 1, 3, topWhere);
+    if (ranked.ids === null) {
+      topReviews = await prisma.review.findMany({
+        where: topWhere,
+        orderBy: ranked.orderBy,
+        take: 3,
+      });
+    } else {
+      const unordered = await prisma.review.findMany({
+        where: { shop, id: { in: ranked.ids } },
+      });
+      const position = new Map(ranked.ids.map((id, index) => [id, index] as [string, number]));
+      topReviews = unordered
+        .filter((row) => position.has(row.id))
+        .sort((a, b) => (position.get(a.id) ?? 0) - (position.get(b.id) ?? 0));
+    }
+  } catch (error) {
+    // The metafield sync must keep working even if the display config read
+    // fails — fall back to the pre-1.8 selection rather than skipping the
+    // sync (a moderation action depends on this function completing).
+    console.error("[cellexia] display-config top_reviews selection failed", error);
+    topReviews = await prisma.review.findMany({
+      where: topWhere,
+      orderBy: [{ helpfulCount: "desc" }, { createdAt: "desc" }],
+      take: 3,
+    });
+  }
 
   const summary: SummaryMetafieldSource | null = summaryRow
     ? {

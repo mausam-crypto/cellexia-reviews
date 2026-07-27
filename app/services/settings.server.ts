@@ -11,7 +11,7 @@
 import crypto from "node:crypto";
 import type { Setting } from "@prisma/client";
 import prisma from "~/db.server";
-import { DESIGN_THEMES } from "~/types/cellexia";
+import { DESIGN_THEMES, RANKING_STRATEGIES, TRANSLATION_DISPLAYS } from "~/types/cellexia";
 
 const AI_PROVIDERS = ["anthropic", "off"] as const;
 const TRANSLATION_PROVIDERS = ["anthropic", "deepl", "google", "off"] as const;
@@ -27,6 +27,29 @@ function normalizeNullable(value: string | null | undefined, maxLength: number):
   if (value === null || value === undefined) return null;
   const trimmed = String(value).trim().slice(0, maxLength);
   return trimmed.length > 0 ? trimmed : null;
+}
+
+/**
+ * Canonicalize the v1.8 ranking-boost JSON (SPEC-1.8 §1): only the two known
+ * flags survive, only when strictly `true`, serialized in a fixed key order so
+ * the stored value is deterministic. Anything unparsable becomes "{}" — the
+ * column default and the no-boost behavior — rather than corrupting the row.
+ */
+function sanitizeRankingBoosts(value: unknown): string {
+  let parsed: unknown = value;
+  if (typeof value === "string") {
+    try {
+      parsed = JSON.parse(value);
+    } catch {
+      return "{}";
+    }
+  }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return "{}";
+  const flags = parsed as { boostVerified?: unknown; boostMedia?: unknown };
+  const out: { boostVerified?: true; boostMedia?: true } = {};
+  if (flags.boostVerified === true) out.boostVerified = true;
+  if (flags.boostMedia === true) out.boostMedia = true;
+  return JSON.stringify(out);
 }
 
 /**
@@ -95,6 +118,26 @@ export async function updateSettings(shop: string, patch: Partial<Setting>): Pro
       (DESIGN_THEMES as readonly string[]).includes(patch.designTheme)
         ? patch.designTheme
         : "amazon";
+  }
+  if (patch.rankingStrategy !== undefined) {
+    // v1.8 (SPEC-1.8 §1): unknown display-order systems fall back to the
+    // shipped default, which is byte-compatible with the pre-1.8 "top" sort.
+    data.rankingStrategy =
+      typeof patch.rankingStrategy === "string" &&
+      (RANKING_STRATEGIES as readonly string[]).includes(patch.rankingStrategy)
+        ? patch.rankingStrategy
+        : "amazon_top";
+  }
+  if (patch.translationDisplay !== undefined) {
+    // v1.8 (SPEC-1.8 §4): unknown modes fall back to the pre-1.8 behavior.
+    data.translationDisplay =
+      typeof patch.translationDisplay === "string" &&
+      (TRANSLATION_DISPLAYS as readonly string[]).includes(patch.translationDisplay)
+        ? patch.translationDisplay
+        : "original";
+  }
+  if (patch.rankingBoosts !== undefined) {
+    data.rankingBoosts = sanitizeRankingBoosts(patch.rankingBoosts);
   }
 
   // Free-form strings

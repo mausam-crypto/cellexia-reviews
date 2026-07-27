@@ -79,6 +79,7 @@
       "translate": "Przetłumacz",
       "translating": "Tłumaczenie…",
       "see_original": "Zobacz oryginał",
+      "see_translation": "Zobacz tłumaczenie",
       "translated_from": "Przetłumaczono z języka: [[language]]",
       "reply_from": "Odpowiedź od [[brand]]",
       "read_more": "Czytaj dalej",
@@ -144,6 +145,11 @@
       "badge": "Tryb podglądu",
       "note": "Tylko Ty to widzisz — widżet nie jest widoczny dla odwiedzających.",
       "exit": "Wyjdź z podglądu"
+    },
+    "overall": {
+      "based_on": "Na podstawie [[count]] opinii o wszystkich naszych produktach",
+      "verified_share": "[[percent]]% ze zweryfikowanych zakupów",
+      "read_reviews": "Przeczytaj opinie ([[count]])"
     },
     "notice": {
       "expired_title": "Sesja podglądu wygasła",

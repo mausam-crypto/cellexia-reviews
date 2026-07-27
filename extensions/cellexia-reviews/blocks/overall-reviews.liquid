@@ -1,0 +1,276 @@
+{% comment %}
+  Cellexia Reviews — "Overall reviews" brand-wide theme app block (SPEC-1.9 §2).
+
+  Placeable on the home page or any sections-enabled OS 2.0 page. Everything is
+  SSR'd from the two app-synced SHOP metafields — `cellexia.shop_rating`
+  ({ average, count, verifiedPercent, distribution }) and
+  `cellexia.shop_top_reviews` (up to 12 display-ready entries) — so the first
+  paint costs zero fetches. assets/cellexia-reviews.js (initOverall) then adds
+  read-more toggles, the carousel prev/next buttons and the distribution-bar
+  star filter (GET /brand-reviews).
+
+  Nil-guards everywhere; when `shop_rating.count` is 0 (or the metafield is
+  absent/invalid) the block renders NOTHING at all — no empty frame, no assets.
+
+  Live/preview gating is identical to blocks/reviews.liquid (SPEC-1.2/1.6):
+  only an explicit `cellexia.live == false` means "not live"; the theme editor
+  (request.design_mode) always shows the block and carries the design-mode-only
+  editor token. Not live on the real storefront ⇒ the root ships `hidden` —
+  per SPEC-1.9 §3 the SSR content is already hidden by the shell, and the JS
+  un-hides it ONLY for tokenized admin previews (no token ⇒ zero fetches,
+  zero pixels). Shoppers never see tokens, notices or error boxes.
+
+  Deliberately NO JSON-LD anywhere in this block: Google ignores self-serving
+  Organization ratings, so we emit none (docs/SEO.md). The product pages carry
+  the rich-snippet markup.
+{% endcomment %}
+{%- liquid
+  assign cx_o_stats = nil
+  if shop.metafields.cellexia.shop_rating
+    assign cx_o_stats = shop.metafields.cellexia.shop_rating.value
+  endif
+  assign cx_o_count = 0
+  if cx_o_stats
+    assign cx_o_count = cx_o_stats.count | default: 0 | times: 1
+  endif
+-%}
+{%- if cx_o_count > 0 -%}
+{{ 'cellexia-reviews.css' | asset_url | stylesheet_tag }}
+{%- liquid
+  assign cx_o_avg = cx_o_stats.average | default: 0 | times: 1.0
+  assign cx_o_vp = cx_o_stats.verifiedPercent | default: 0 | times: 1
+  assign cx_o_dist = cx_o_stats.distribution
+
+  assign cx_o_top = nil
+  assign cx_o_top_size = 0
+  if shop.metafields.cellexia.shop_top_reviews
+    assign cx_o_top = shop.metafields.cellexia.shop_top_reviews.value
+    if cx_o_top
+      assign cx_o_top_size = cx_o_top.size
+    endif
+  endif
+
+  comment
+    Gating — byte-for-byte the reviews.liquid rules (SPEC-1.2/1.6): only an
+    explicit false on `cellexia.live` means "not live"; the theme editor
+    always shows the full block; the preview token is emitted ONLY in
+    design mode and never on a normal storefront request.
+  endcomment
+  assign cx_is_live = true
+  if shop.metafields.cellexia.live.value == false
+    assign cx_is_live = false
+  endif
+  assign cx_show_full = cx_is_live
+  if request.design_mode
+    assign cx_show_full = true
+  endif
+  assign cx_editor_token = ''
+  if request.design_mode
+    assign cx_editor_token = shop.metafields.cellexia.preview_token.value | default: '' | append: '' | strip
+  endif
+
+  assign cx_lang = request.locale.iso_code | split: '-' | first
+
+  comment
+    v1.1/v1.3 design version — unknown/missing values fall back to "amazon",
+    identical to blocks/reviews.liquid.
+  endcomment
+  assign cx_skin = 'amazon'
+  case shop.metafields.cellexia.design_theme.value
+    when 'cellexia'
+      assign cx_skin = 'cellexia'
+    when 'luxe'
+      assign cx_skin = 'luxe'
+  endcase
+
+  assign cx_o_heading = block.settings.heading
+  assign cx_o_max = block.settings.max_reviews | default: 6
+  assign cx_o_layout = 'grid'
+  if block.settings.layout == 'carousel'
+    assign cx_o_layout = 'carousel'
+  endif
+  assign cx_o_rating_str = cx_o_avg | round: 1 | append: ''
+  assign cx_o_count_str = cx_o_count | append: ''
+  assign cx_o_vp_str = cx_o_vp | append: ''
+-%}
+{%- comment -%}
+  v1.8 (SPEC-1.8 §5): Shopify wraps every render of an app snippet in
+  "BEGIN/END app snippet" HTML comments — even inside capture and attribute
+  values — so the proxy path must be captured once and stripped of the exact
+  wrapper strings (harmless when Shopify omits the comments). This rule
+  applies to EVERY value-context render site; cx-proxy is the only one here.
+{%- endcomment -%}
+{%- capture cx_proxy -%}{% render 'cx-proxy' %}{%- endcapture -%}
+{%- assign cx_proxy = cx_proxy | remove: '<!-- BEGIN app snippet: cx-proxy -->' | remove: '<!-- END app snippet -->' | strip -%}
+<div
+  class="cx cx-overall"
+  {% if cx_lang == 'ar' %}dir="rtl"{% endif %}
+  data-locale="{{ request.locale.iso_code }}"
+  data-proxy="{{ cx_proxy }}"
+  data-heading="{{ cx_o_heading | escape }}"
+  data-max-reviews="{{ cx_o_max }}"
+  data-layout="{{ cx_o_layout }}"
+  data-show-distribution="{{ block.settings.show_distribution }}"
+  data-show-product-links="{{ block.settings.show_product_links }}"
+  {% if block.settings.cta_label != blank %}data-cta-label="{{ block.settings.cta_label | escape }}"{% endif %}
+  {% if block.settings.cta_url != blank %}data-cta-url="{{ block.settings.cta_url | escape }}"{% endif %}
+  data-demo="false"
+  data-cx-skin="{{ cx_skin }}"
+  data-cx-live="{{ cx_show_full }}"
+  {% if cx_editor_token != blank %}data-cx-editor-token="{{ cx_editor_token | escape }}"{% endif %}
+  {% unless cx_show_full %}hidden{% endunless %}
+>
+  <div class="cx-overall__header">
+    {%- if cx_o_heading != blank -%}
+    <h2 class="cx-overall__heading">{{ cx_o_heading | escape }}</h2>
+    {%- endif -%}
+    <div class="cx-overall__score">
+      {% render 'cx-stars', rating: cx_o_avg, size: 28 %}
+      <span class="cx-avg-text">{{ 'cellexia.widget.rating_out_of' | t: rating: cx_o_rating_str | replace: '[[rating]]', cx_o_rating_str }}</span>
+    </div>
+    <p class="cx-overall__based">{{ 'cellexia.overall.based_on' | t: count: cx_o_count_str | replace: '[[count]]', cx_o_count_str }}</p>
+    {%- if cx_o_vp >= 60 -%}
+    <p class="cx-overall__trust">{{ 'cellexia.overall.verified_share' | t: percent: cx_o_vp_str | replace: '[[percent]]', cx_o_vp_str }}</p>
+    {%- endif -%}
+  </div>
+
+  {%- if block.settings.show_distribution and cx_o_dist -%}
+  <div class="cx-dist cx-overall__dist" role="group">
+    {%- for cx_i in (1..5) reversed -%}
+    {%- liquid
+      assign cx_i_str = cx_i | append: ''
+      assign cx_row = cx_o_dist[cx_i_str]
+      assign cx_pct_val = 0
+      if cx_row
+        assign cx_pct_val = cx_row.percent | default: 0
+      endif
+      assign cx_pct_str = cx_pct_val | append: ''
+    -%}
+    <button
+      type="button"
+      class="cx-dist__row"
+      data-stars="{{ cx_i }}"
+      aria-pressed="false"
+      aria-label="{{ 'cellexia.a11y.filter_row' | t: stars: cx_i_str | replace: '[[stars]]', cx_i_str | escape }}"
+    >
+      <span class="cx-dist__label">{{ 'cellexia.widget.star_row' | t: count: cx_i | replace: '[[count]]', cx_i_str }}</span>
+      <span class="cx-dist__bar" aria-hidden="true"><span class="cx-dist__fill" style="inline-size:{{ cx_pct_val }}%"></span></span>
+      <span class="cx-dist__percent" aria-hidden="true">{{ 'cellexia.widget.percent' | t: percent: cx_pct_str | replace: '[[percent]]', cx_pct_str }}</span>
+    </button>
+    {%- endfor -%}
+  </div>
+  {%- endif -%}
+
+  <div class="cx-overall__cards cx-overall__cards--{{ cx_o_layout }}" data-cx-overall-cards aria-live="polite">
+    {%- if cx_o_top_size > 0 -%}
+    {%- for cx_r in cx_o_top limit: cx_o_max -%}
+    {%- liquid
+      assign cx_r_author = cx_r.author | default: ''
+      assign cx_r_date_fmt = cx_r.date | date: '%B %d, %Y'
+      assign cx_r_prc = cx_r.productReviewCount | default: 0 | times: 1
+      assign cx_r_prc_str = cx_r_prc | append: ''
+    -%}
+    <article class="cx-card cx-overall__card">
+      <div class="cx-card__titleline">
+        {% render 'cx-stars', rating: cx_r.rating, size: 16 %}
+        {%- if cx_r.title != blank -%}<strong class="cx-card__title">{{ cx_r.title | escape }}</strong>{%- endif -%}
+      </div>
+      <div class="cx-overall__body cx-clamp"><p>{{ cx_r.body | escape | newline_to_br }}</p></div>
+      <p class="cx-card__meta">
+        {%- if cx_r_author != blank -%}<span class="cx-card__author">{{ cx_r_author | escape }}</span>{%- endif -%}
+        {%- if cx_r_author != blank and cx_r_date_fmt %} <span aria-hidden="true">·</span> {% endif -%}
+        {%- if cx_r_date_fmt -%}<span>{{ cx_r_date_fmt }}</span>{%- endif -%}
+      </p>
+      {%- if cx_r.verified -%}
+      <p class="cx-badge-verified">{{ 'cellexia.review.verified' | t }}</p>
+      {%- endif -%}
+      {%- if cx_r.hasMedia -%}
+      <p class="cx-overall__media"><span class="cx-overall__mediadot" aria-hidden="true"></span>{{ 'cellexia.widget.filter_media' | t }}</p>
+      {%- endif -%}
+      {%- if block.settings.show_product_links and cx_r.productHandle != blank -%}
+      <div class="cx-overall__foot">
+        {%- if cx_r.productTitle != blank -%}
+        <a class="cx-overall__plink" href="/products/{{ cx_r.productHandle }}#cellexia-reviews">{{ cx_r.productTitle | escape }}</a>
+        {%- endif -%}
+        {%- if cx_r_prc > 0 -%}
+        <a class="cx-link cx-overall__read" href="/products/{{ cx_r.productHandle }}#cellexia-reviews">{{ 'cellexia.overall.read_reviews' | t: count: cx_r_prc_str | replace: '[[count]]', cx_r_prc_str }}</a>
+        {%- endif -%}
+      </div>
+      {%- endif -%}
+    </article>
+    {%- endfor -%}
+    {%- endif -%}
+  </div>
+
+  {%- if block.settings.cta_label != blank and block.settings.cta_url != blank -%}
+  <div class="cx-overall__cta">
+    <a class="cx-btn cx-btn--primary" href="{{ block.settings.cta_url }}">{{ block.settings.cta_label | escape }}</a>
+  </div>
+  {%- endif -%}
+</div>
+
+{% render 'cx-i18n' %}
+<script src="{{ 'cellexia-reviews.js' | asset_url }}" defer></script>
+{%- endif -%}
+
+{% schema %}
+{
+  "name": "t:cellexia.overall_block.name",
+  "target": "section",
+  "settings": [
+    {
+      "type": "text",
+      "id": "heading",
+      "label": "t:cellexia.overall_block.settings.heading.label",
+      "default": "t:cellexia.defaults.overall_heading"
+    },
+    {
+      "type": "range",
+      "id": "max_reviews",
+      "label": "t:cellexia.overall_block.settings.max_reviews.label",
+      "min": 3,
+      "max": 12,
+      "step": 1,
+      "default": 6
+    },
+    {
+      "type": "select",
+      "id": "layout",
+      "label": "t:cellexia.overall_block.settings.layout.label",
+      "options": [
+        {
+          "value": "grid",
+          "label": "t:cellexia.overall_block.settings.layout.options__1.label"
+        },
+        {
+          "value": "carousel",
+          "label": "t:cellexia.overall_block.settings.layout.options__2.label"
+        }
+      ],
+      "default": "grid"
+    },
+    {
+      "type": "checkbox",
+      "id": "show_distribution",
+      "label": "t:cellexia.overall_block.settings.show_distribution.label",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "show_product_links",
+      "label": "t:cellexia.overall_block.settings.show_product_links.label",
+      "default": true
+    },
+    {
+      "type": "text",
+      "id": "cta_label",
+      "label": "t:cellexia.overall_block.settings.cta_label.label"
+    },
+    {
+      "type": "url",
+      "id": "cta_url",
+      "label": "t:cellexia.overall_block.settings.cta_url.label"
+    }
+  ]
+}
+{% endschema %}

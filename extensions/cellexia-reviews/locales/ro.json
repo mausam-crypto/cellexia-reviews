@@ -75,6 +75,7 @@
       "translate": "Tradu",
       "translating": "Se traduce…",
       "see_original": "Vezi originalul",
+      "see_translation": "Vezi traducerea",
       "translated_from": "Tradus din [[language]]",
       "reply_from": "Răspuns de la [[brand]]",
       "read_more": "Citește mai mult",
@@ -140,6 +141,11 @@
       "badge": "Mod previzualizare",
       "note": "Doar dumneavoastră puteți vedea acest lucru — widgetul nu este vizibil pentru vizitatori.",
       "exit": "Ieși din previzualizare"
+    },
+    "overall": {
+      "based_on": "Pe baza a [[count]] recenzii pentru toate produsele noastre",
+      "verified_share": "[[percent]]% din achiziții verificate",
+      "read_reviews": "Citește cele [[count]] recenzii"
     },
     "notice": {
       "expired_title": "Sesiunea de previzualizare a expirat",

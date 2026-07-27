@@ -12,6 +12,15 @@
  * - badges["<handle>"] mirrors the inner "badges" map of
  *   GET /apps/cellexia/api/badges (SPEC-1.5 §2) so the v1.5 site-wide star
  *   badges render offline on the demo page's product card grid.
+ * - brand mirrors the response of GET /apps/cellexia/api/brand-reviews
+ *   (SPEC-1.9 §1): { stats: ShopStatsDTO, reviews: BrandReviewDTO[] } — the
+ *   v1.9 "Overall reviews" block's distribution-bar filter (initOverall's
+ *   demo branch reads CellexiaDemoData.brand.reviews) re-renders its cards
+ *   from this pool in demo mode instead of fetching. The pool holds ALL
+ *   candidate reviews (all star levels); the widget script applies the
+ *   ?stars=N filter locally, like demoList does for the product widget.
+ *   Each entry also carries the metafield-shape extras initOverall's
+ *   buildCard reads (productReviewCount for the "Read N reviews" link).
  * - All media are inline SVG data URIs (gradient placeholders, one "video").
  *   Zero network requests are made by this file.
  */
@@ -839,6 +848,291 @@
   };
 
   /* ------------------------------------------------------------------ *
+   * v1.9 (SPEC-1.9 §1/§6): brand-wide payload for the "Overall reviews"
+   * block — the shape of GET /apps/cellexia/api/brand-reviews:
+   *   { stats: ShopStatsDTO, reviews: [ReviewDTO & { product }] }
+   *
+   * stats = { average, count, verifiedPercent, distribution } — the same
+   * numbers the block SSRs from the `cellexia.shop_rating` shop metafield
+   * (4.8 · 12,438 reviews · 93% verified; distribution percents via
+   * largest remainder, counts sum to 12,438 and weight to 4.8).
+   *
+   * reviews = the candidate pool ACROSS ALL star levels, ordered by the
+   * §1 auto score. The first six (all rating ≥ 4, max 2 per product —
+   * the diversity rule) are the same six cards the demo page SSRs; the
+   * lower-rated tail exists so the distribution-bar filter (?stars=N)
+   * has real content to show for 1–3 star clicks. Each entry is a full
+   * BrandReviewDTO (ReviewDTO plus `product: { title, handle, url }`)
+   * with the metafield-entry field `productReviewCount` on top —
+   * initOverall's buildCard accepts both shapes and needs that count for
+   * the "Read [[count]] reviews" footer link.
+   * ------------------------------------------------------------------ */
+
+  var brandProducts = {
+    cream: {
+      title: 'Régénérant Cellular Renewal Cream',
+      handle: 'regenerant-cellular-renewal-cream',
+      url: '/products/regenerant-cellular-renewal-cream',
+      reviewCount: 6214
+    },
+    serum: {
+      title: 'Éclat Vitamin C Serum',
+      handle: 'eclat-vitamin-c-serum',
+      url: '/products/eclat-vitamin-c-serum',
+      reviewCount: 2861
+    },
+    balm: {
+      title: 'Hydra-Riche Night Balm',
+      handle: 'hydra-riche-night-balm',
+      url: '/products/hydra-riche-night-balm',
+      reviewCount: 1940
+    },
+    eye: {
+      title: 'Lumière Eye Contour Gel',
+      handle: 'lumiere-eye-contour-gel',
+      url: '/products/lumiere-eye-contour-gel',
+      reviewCount: 1423
+    }
+  };
+
+  var brand = {
+    stats: {
+      average: 4.8,
+      count: 12438,
+      verifiedPercent: 93,
+      distribution: {
+        '5': { count: 11000, percent: 89 },
+        '4': { count: 900, percent: 7 },
+        '3': { count: 300, percent: 2 },
+        '2': { count: 100, percent: 1 },
+        '1': { count: 138, percent: 1 }
+      }
+    },
+    reviews: [
+      {
+        id: 'brand-0001',
+        rating: 5,
+        title: 'The only cream that actually changed my skin',
+        body: 'I am 58 and I have tried more face creams than I care to admit. This is the first one that changed the texture of my skin instead of just sitting on it. The cream is rich but absorbs in under a minute, so I can apply makeup right after. Within two weeks my cheeks felt smoother, and by the two-month mark the crepey texture along my jawline had visibly improved — my dermatologist commented on it unprompted. It is fragrance-free, which my reactive skin appreciates, and one jar has lasted almost three months of twice-daily use. I have already ordered a second jar and convinced my sister to start too.',
+        language: 'en',
+        authorName: 'Margaret Ellison',
+        country: 'US',
+        variantTitle: '50 mL Jar',
+        verified: true,
+        createdAt: '2026-07-06T14:02:00.000Z',
+        ageRange: '55_64',
+        skinConcerns: ['fine_lines', 'texture'],
+        timeUsing: 'm3_6',
+        resultsSeen: ['smoother', 'fewer_lines', 'firmer'],
+        helpfulCount: 214,
+        reply: null,
+        replyAt: null,
+        media: [media('brand-m-0001a', 'IMAGE', '#EFE3D0', '#D9BE93')],
+        productReviewCount: brandProducts.cream.reviewCount,
+        product: brandProducts.cream
+      },
+      {
+        id: 'brand-0002',
+        rating: 5,
+        title: 'Glow in under two weeks',
+        body: 'The vitamin C serum my morning routine was missing. No sting, no orange cast — just a steady, healthy glow that friends started noticing before I did. A gentle tingle the first few days, then nothing but brightness. My dark spots from last summer are already softer at the edges, and it layers under sunscreen without a hint of pilling.',
+        language: 'en',
+        authorName: 'Aisha Thompson',
+        country: 'US',
+        variantTitle: '30 mL',
+        verified: true,
+        createdAt: '2026-07-12T09:41:00.000Z',
+        ageRange: '45_54',
+        skinConcerns: ['dark_spots', 'dullness'],
+        timeUsing: 'm1_3',
+        resultsSeen: ['radiance', 'even_tone'],
+        helpfulCount: 158,
+        reply: null,
+        replyAt: null,
+        media: [],
+        productReviewCount: brandProducts.serum.reviewCount,
+        product: brandProducts.serum
+      },
+      {
+        id: 'brand-0003',
+        rating: 5,
+        title: 'Softer skin by morning, every morning',
+        body: 'I smooth it on as the last step at night and wake up with skin that feels rested and plush. It is a proper balm — thick in the jar, melting on contact — yet my pillow stays clean. Through a dry winter and an air-conditioned summer it has kept every trace of flaking away, and my makeup sits noticeably better the next day.',
+        language: 'en',
+        authorName: 'Claire Whitmore',
+        country: 'GB',
+        variantTitle: '50 mL Jar',
+        verified: true,
+        createdAt: '2026-06-28T21:17:00.000Z',
+        ageRange: '45_54',
+        skinConcerns: ['dryness', 'dullness'],
+        timeUsing: 'm3_6',
+        resultsSeen: ['hydration', 'smoother'],
+        helpfulCount: 121,
+        reply: null,
+        replyAt: null,
+        media: [media('brand-m-0003a', 'IMAGE', '#D9E7F5', '#A9C6E8')],
+        productReviewCount: brandProducts.balm.reviewCount,
+        product: brandProducts.balm
+      },
+      {
+        id: 'brand-0004',
+        rating: 5,
+        title: 'Sensitive skin approved — zero irritation',
+        body: 'My skin flares at almost everything, so I patch-tested for a week first. Not a single reaction since — no sting, no redness, just calm, deeply hydrated skin. Three months in, my barrier feels stronger than it has in years and the tight feeling I used to get by mid-afternoon is simply gone.',
+        language: 'en',
+        authorName: 'Ruth Calloway',
+        country: 'US',
+        variantTitle: '50 mL Jar',
+        verified: true,
+        createdAt: '2026-07-18T08:29:00.000Z',
+        ageRange: '45_54',
+        skinConcerns: ['sensitivity', 'redness'],
+        timeUsing: 'm3_6',
+        resultsSeen: ['calmer', 'hydration'],
+        helpfulCount: 96,
+        reply: null,
+        replyAt: null,
+        media: [],
+        productReviewCount: brandProducts.cream.reviewCount,
+        product: brandProducts.cream
+      },
+      {
+        id: 'brand-0005',
+        rating: 5,
+        title: 'Dark circles visibly brighter',
+        body: 'Two pumps every morning under concealer. Within a month the shadows under my eyes were light enough that most days I skip the concealer entirely. It is cooling, sinks in fast and never pills under sunscreen — the first eye product I have finished to the last drop.',
+        language: 'en',
+        authorName: 'Sofia Marchetti',
+        country: 'IT',
+        variantTitle: '15 mL',
+        verified: true,
+        createdAt: '2026-07-01T17:55:00.000Z',
+        ageRange: '35_44',
+        skinConcerns: ['dark_circles', 'fine_lines'],
+        timeUsing: 'm1_3',
+        resultsSeen: ['radiance', 'even_tone'],
+        helpfulCount: 88,
+        reply: null,
+        replyAt: null,
+        media: [media('brand-m-0005a', 'IMAGE', '#E5DFF2', '#BCA9DD')],
+        productReviewCount: brandProducts.eye.reviewCount,
+        product: brandProducts.eye
+      },
+      {
+        id: 'brand-0006',
+        rating: 4,
+        title: 'Lovely serum — give it time',
+        body: 'Four stars for now, only because vitamin C rewards patience: six weeks in, my tone is more even and my forehead looks brighter, but the deeper spots are still fading. The texture is perfect — watery-light, layers under anything, no scent. I will update at the three-month mark.',
+        language: 'en',
+        authorName: 'Hannah Ostrowski',
+        country: 'CA',
+        variantTitle: '30 mL',
+        verified: true,
+        createdAt: '2026-06-20T12:03:00.000Z',
+        ageRange: '35_44',
+        skinConcerns: ['dark_spots', 'texture'],
+        timeUsing: 'm1_3',
+        resultsSeen: ['even_tone', 'radiance'],
+        helpfulCount: 64,
+        reply: null,
+        replyAt: null,
+        media: [],
+        productReviewCount: brandProducts.serum.reviewCount,
+        product: brandProducts.serum
+      },
+      {
+        id: 'brand-0007',
+        rating: 4,
+        title: 'Rich but worth it',
+        body: 'Almost too rich for my combination skin in summer, so I use it every other night — and on that schedule it is wonderful: no tightness by morning and a soft, even feel that lasts all day. Come winter I expect to use it nightly.',
+        language: 'en',
+        authorName: 'Laura Bennett',
+        country: 'US',
+        variantTitle: '50 mL Jar',
+        verified: false,
+        createdAt: '2026-07-15T19:26:00.000Z',
+        ageRange: '25_34',
+        skinConcerns: ['dryness', 'texture'],
+        timeUsing: 'm1_3',
+        resultsSeen: ['hydration'],
+        helpfulCount: 23,
+        reply: null,
+        replyAt: null,
+        media: [],
+        productReviewCount: brandProducts.balm.reviewCount,
+        product: brandProducts.balm
+      },
+      {
+        id: 'brand-0008',
+        rating: 3,
+        title: 'Pleasant, but subtle',
+        body: 'After two months of twice-daily use the gel feels lovely going on — cool and weightless — but the change in my dark circles is subtle at best. Fine if you want gentle maintenance; temper your expectations if you are hoping for more.',
+        language: 'en',
+        authorName: 'Denise Park',
+        country: 'US',
+        variantTitle: '15 mL',
+        verified: true,
+        createdAt: '2026-06-05T10:48:00.000Z',
+        ageRange: '45_54',
+        skinConcerns: ['dark_circles'],
+        timeUsing: 'm1_3',
+        resultsSeen: ['too_early'],
+        helpfulCount: 31,
+        reply: null,
+        replyAt: null,
+        media: [],
+        productReviewCount: brandProducts.eye.reviewCount,
+        product: brandProducts.eye
+      },
+      {
+        id: 'brand-0009',
+        rating: 2,
+        title: 'Too rich for combination skin',
+        body: 'Beautifully made cream, but by day ten I had congestion along my chin that I never normally get. Drier skin types will likely love it; my combination skin did not. The texture and the fragrance-free formula deserve credit all the same.',
+        language: 'en',
+        authorName: 'Mia Kowalczyk',
+        country: 'PL',
+        variantTitle: '50 mL Jar',
+        verified: true,
+        createdAt: '2026-05-22T15:12:00.000Z',
+        ageRange: '25_34',
+        skinConcerns: ['pores', 'texture'],
+        timeUsing: 'w1_4',
+        resultsSeen: ['too_early'],
+        helpfulCount: 44,
+        reply: 'We are sorry the cream did not agree with your skin, Mia. Régénérant is rich by design — on combination skin we recommend a thin layer at night only. Please contact care@cellexia.com and we will happily arrange a refund. — The Cellexia Care Team',
+        replyAt: '2026-05-23T09:05:00.000Z',
+        media: [],
+        productReviewCount: brandProducts.cream.reviewCount,
+        product: brandProducts.cream
+      },
+      {
+        id: 'brand-0010',
+        rating: 1,
+        title: 'My skin reacted, sadly',
+        body: 'Within three days of starting the serum I had stinging and blotchy redness across my cheeks and had to stop. I seem to be the exception judging by the other reviews, but if your skin is very reactive, patch-test first. Customer service refunded me quickly and kindly.',
+        language: 'en',
+        authorName: 'Karen Mitchell',
+        country: 'US',
+        variantTitle: '30 mL',
+        verified: true,
+        createdAt: '2026-04-30T18:37:00.000Z',
+        ageRange: '55_64',
+        skinConcerns: ['sensitivity', 'redness'],
+        timeUsing: 'lt_1w',
+        resultsSeen: ['too_early'],
+        helpfulCount: 17,
+        reply: 'Thank you for the patch-testing advice, Karen, and we are truly sorry the serum did not suit your skin — vitamin C can be demanding on very reactive skin. Your refund has been processed. — The Cellexia Care Team',
+        replyAt: '2026-05-01T08:52:00.000Z',
+        media: [],
+        productReviewCount: brandProducts.serum.reviewCount,
+        product: brandProducts.serum
+      }
+    ]
+  };
+
+  /* ------------------------------------------------------------------ *
    * Assemble — same top-level shape as GET /apps/cellexia/api/reviews,
    * plus `translations` for the offline translate endpoint.
    * ------------------------------------------------------------------ */
@@ -882,6 +1176,14 @@
       'eclat-vitamin-c-serum': { average: 4.8, count: 1234 },
       'hydra-riche-night-balm': { average: 4.2, count: 87 },
       'lumiere-eye-contour-gel': { average: 3.4, count: 412 }
-    }
+    },
+
+    /* v1.9 (SPEC-1.9 §1 + §6): GET /apps/cellexia/api/brand-reviews shape
+     * for the "Overall reviews" showcase — see the `brand` block above.
+     * initOverall's demo branch reads exactly this key. Like every showcase
+     * section on the demo page, it is its own sample payload (the product
+     * widget's 50,506-rating header, the badges map and this brand payload
+     * are three independent mock datasets). */
+    brand: brand
   };
 })();

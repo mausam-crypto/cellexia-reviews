@@ -66,8 +66,41 @@
         }
       }
     },
+    "overall_block": {
+      "name": "Cellexia Opiniones globales",
+      "settings": {
+        "heading": {
+          "label": "Encabezado"
+        },
+        "max_reviews": {
+          "label": "Número de opiniones que mostrar"
+        },
+        "layout": {
+          "label": "Diseño",
+          "options__1": {
+            "label": "Cuadrícula"
+          },
+          "options__2": {
+            "label": "Carrusel"
+          }
+        },
+        "show_distribution": {
+          "label": "Mostrar barras de distribución de valoraciones"
+        },
+        "show_product_links": {
+          "label": "Enlazar cada opinión con su producto"
+        },
+        "cta_label": {
+          "label": "Texto del botón (opcional)"
+        },
+        "cta_url": {
+          "label": "Enlace del botón"
+        }
+      }
+    },
     "defaults": {
-      "heading": "Opiniones de clientes"
+      "heading": "Opiniones de clientes",
+      "overall_heading": "Lo que dicen nuestros clientes"
     }
   }
 }

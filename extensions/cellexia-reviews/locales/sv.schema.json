@@ -66,8 +66,41 @@
         }
       }
     },
+    "overall_block": {
+      "name": "Cellexia Samlade recensioner",
+      "settings": {
+        "heading": {
+          "label": "Rubrik"
+        },
+        "max_reviews": {
+          "label": "Antal recensioner att visa"
+        },
+        "layout": {
+          "label": "Layout",
+          "options__1": {
+            "label": "Rutnät"
+          },
+          "options__2": {
+            "label": "Karusell"
+          }
+        },
+        "show_distribution": {
+          "label": "Visa staplar för betygsfördelning"
+        },
+        "show_product_links": {
+          "label": "Länka varje recension till dess produkt"
+        },
+        "cta_label": {
+          "label": "Knapptext (valfritt)"
+        },
+        "cta_url": {
+          "label": "Knapplänk"
+        }
+      }
+    },
     "defaults": {
-      "heading": "Kundrecensioner"
+      "heading": "Kundrecensioner",
+      "overall_heading": "Vad våra kunder säger"
     }
   }
 }

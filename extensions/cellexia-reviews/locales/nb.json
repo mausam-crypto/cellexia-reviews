@@ -152,6 +152,7 @@
       "error_body": "Denne meldingen er bare synlig for deg under forhåndsvisning.",
       "empty_merchant": "Ingen anmeldelser ennå – importer anmeldelsene dine eller generer testdata i appen.",
       "empty_pending": "Ingen publiserte anmeldelser ennå – [[count]] venter på godkjenning i appen.",
+      "overall_pending": "De samlede anmeldelsene vises her når anmeldelsesdataene er synkronisert. Åpne siden «Display order» i appen og trykk på «Refresh homepage data».",
       "retry": "Prøv igjen"
     },
     "form": {

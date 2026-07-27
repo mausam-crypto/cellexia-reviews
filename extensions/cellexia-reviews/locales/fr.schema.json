@@ -47,6 +47,20 @@
         "show_pdp_title_badge": {
           "label": "Afficher les étoiles sous le titre du produit"
         },
+        "pdp_badge_position": {
+          "label": "Position des étoiles sur la page produit",
+          "info": "Où la note en étoiles et le nombre d'avis apparaissent sur les pages produit.",
+          "options__1": {
+            "label": "Directement sous le titre"
+          },
+          "options__2": {
+            "label": "Sous le slogan"
+          }
+        },
+        "pdp_badge_selector": {
+          "label": "Emplacement des étoiles (sélecteur CSS, facultatif)",
+          "info": "Avancé : les étoiles sont insérées après le premier élément correspondant à ce sélecteur, ce qui remplace le choix de position."
+        },
         "enable_badges": {
           "label": "Afficher les badges d'étoiles sur les fiches produit de tout le site",
           "info": "Ajoute les notes en étoiles à côté des noms de produits sur la page d'accueil, les collections et les résultats de recherche pour les produits ayant des avis publiés."

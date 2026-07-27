@@ -152,6 +152,7 @@
       "error_body": "Questo messaggio è visibile solo a Lei durante l'anteprima.",
       "empty_merchant": "Nessuna recensione al momento — importi le sue recensioni o generi dati di prova nell'app.",
       "empty_pending": "Nessuna recensione pubblicata — [[count]] in attesa di approvazione nell'app.",
+      "overall_pending": "Le recensioni complessive appariranno qui una volta sincronizzati i dati delle recensioni. Apra la pagina “Display order” dell'app e prema “Refresh homepage data”.",
       "retry": "Riprova"
     },
     "form": {

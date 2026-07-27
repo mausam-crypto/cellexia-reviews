@@ -156,6 +156,7 @@
       "error_body": "Acest mesaj este vizibil doar pentru dumneavoastră în timpul previzualizării.",
       "empty_merchant": "Încă nu există recenzii — importați recenziile sau generați date de test în aplicație.",
       "empty_pending": "Încă nu există recenzii publicate — [[count]] în așteptarea aprobării în aplicație.",
+      "overall_pending": "Recenziile generale vor apărea aici după sincronizarea datelor recenziilor. Deschideți pagina „Display order” a aplicației și apăsați „Refresh homepage data”.",
       "retry": "Încercați din nou"
     },
     "form": {

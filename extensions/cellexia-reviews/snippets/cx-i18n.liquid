@@ -160,6 +160,12 @@
   "notice.error_body": {{ 'cellexia.notice.error_body' | t | json }},
   "notice.empty_merchant": {{ 'cellexia.notice.empty_merchant' | t | json }},
   "notice.empty_pending": {{ 'cellexia.notice.empty_pending' | t: count: '[[count]]' | json }},
+  {%- comment -%}
+    v1.10 (SPEC-1.10 §5C) — merchant-only placeholder for the Overall block
+    before the first shop-rating sync. Position mirrors the locale files
+    (after empty_pending, before retry).
+  {%- endcomment %}
+  "notice.overall_pending": {{ 'cellexia.notice.overall_pending' | t | json }},
   "notice.retry": {{ 'cellexia.notice.retry' | t | json }},
   "form.title": {{ 'cellexia.form.title' | t | json }},
   "form.rating_label": {{ 'cellexia.form.rating_label' | t | json }},

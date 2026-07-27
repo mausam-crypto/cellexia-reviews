@@ -95,6 +95,21 @@ const finished = new Promise((resolve, reject) => {
 
 archive.pipe(output);
 
+// Release gate: the storefront asset budgets (SPEC-1.10 §9). Shopify serves
+// these gzipped, but the unminified caps keep growth deliberate — a failure
+// here means trim comments/code before shipping, not raise the number casually.
+const ASSET_BUDGETS = [
+  ["extensions/cellexia-reviews/assets/cellexia-reviews.js", 114688],
+  ["extensions/cellexia-reviews/assets/cellexia-reviews.css", 56320],
+];
+for (const [rel, cap] of ASSET_BUDGETS) {
+  const size = fs.statSync(path.join(ROOT, rel)).size;
+  if (size > cap) {
+    console.error(`BUDGET EXCEEDED: ${rel} is ${size.toLocaleString("en-US")} bytes (cap ${cap.toLocaleString("en-US")})`);
+    process.exit(1);
+  }
+}
+
 let fileCount = 0;
 for (const file of walk(ROOT)) {
   archive.file(file.abs, { name: `${TOP_FOLDER}/${file.rel}` });

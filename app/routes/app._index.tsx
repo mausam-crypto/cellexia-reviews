@@ -9,6 +9,7 @@ import { json } from "@remix-run/node";
 import { useFetcher, useLoaderData } from "@remix-run/react";
 import type { ShouldRevalidateFunction } from "@remix-run/react";
 import {
+  ActionList,
   Badge,
   Banner,
   BlockStack,
@@ -22,9 +23,9 @@ import {
   Link as PolarisLink,
   Modal,
   Page,
+  Popover,
   Spinner,
   Text,
-  Tooltip,
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 
@@ -32,7 +33,7 @@ import { authenticate } from "~/shopify.server";
 import prisma from "~/db.server";
 import { getSettings, updateSettings } from "~/services/settings.server";
 import { syncShopSettingsMetafields } from "~/services/metafields.server";
-import { getPreviewUrl } from "~/services/preview.server";
+import { getPreviewUrls } from "~/services/preview.server";
 import { runStorefrontHealthCheck } from "~/services/proxyhealth.server";
 import type { HealthReport } from "~/services/proxyhealth.server";
 import { generateSummary } from "~/services/ai.server";
@@ -339,7 +340,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 
   const [
     settings,
-    previewUrl,
+    previewUrls,
     totalReviews,
     publishedAgg,
     pendingCount,
@@ -349,7 +350,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     productGroups,
   ] = await Promise.all([
     getSettings(shop),
-    getPreviewUrl(admin, shop),
+    // SPEC-1.10 §5 fix B: one tokenized URL per preview destination
+    // (product page / home page / collection page).
+    getPreviewUrls(admin, shop),
     prisma.review.count({ where: { shop } }),
     prisma.review.aggregate({
       where: { shop, status: "PUBLISHED" },
@@ -419,7 +422,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   return json({
     shop,
     isLive: settings.isLive,
-    previewUrl,
+    previewUrls,
     stats: {
       average: publishedAgg._avg.rating,
       totalReviews,
@@ -705,29 +708,72 @@ function SetupStep({
   );
 }
 
+/** The three tokenized preview destinations, as serialized by the loader. */
+interface PreviewUrlsView {
+  product: string | null;
+  home: string;
+  collection: string;
+}
+
 /**
- * Opens the tokenized storefront preview in a new tab. When the store has no
- * product page to preview on (`previewUrl` is null) the button is disabled
- * with an explanatory tooltip.
+ * The multi-destination preview menu (SPEC-1.10 §5 fix B): a Popover /
+ * ActionList offering the tokenized preview on the product page, the home
+ * page and the collection page (`/collections/all` — it exists on every
+ * Shopify store), each opening in a new tab exactly like the old
+ * single-destination button did. When the store has no product page to
+ * preview on (`previewUrls.product` is null) only the product item is
+ * disabled, with the explanation as its help text — home and collection stay
+ * available.
  */
-function PreviewLinkButton({
-  previewUrl,
+function PreviewMenu({
+  previewUrls,
   children,
 }: {
-  previewUrl: string | null;
+  previewUrls: PreviewUrlsView;
   children: string;
 }) {
-  if (!previewUrl) {
-    return (
-      <Tooltip content="The preview opens on a product page — add at least one product to your store first.">
-        <Button disabled>{children}</Button>
-      </Tooltip>
-    );
-  }
+  const [open, setOpen] = useState(false);
+  const toggle = useCallback(() => setOpen((current) => !current), []);
+  const close = useCallback(() => setOpen(false), []);
+  const openDestination = useCallback((url: string | null) => {
+    if (!url) return;
+    setOpen(false);
+    window.open(url, "_blank", "noopener,noreferrer");
+  }, []);
+
   return (
-    <Button onClick={() => window.open(previewUrl, "_blank", "noopener,noreferrer")}>
-      {children}
-    </Button>
+    <Popover
+      active={open}
+      activator={
+        <Button onClick={toggle} disclosure>
+          {children}
+        </Button>
+      }
+      onClose={close}
+      autofocusTarget="first-node"
+    >
+      <ActionList
+        actionRole="menuitem"
+        items={[
+          {
+            content: "Product page",
+            disabled: !previewUrls.product,
+            helpText: previewUrls.product
+              ? undefined
+              : "Add at least one product to your store first.",
+            onAction: () => openDestination(previewUrls.product),
+          },
+          {
+            content: "Home page",
+            onAction: () => openDestination(previewUrls.home),
+          },
+          {
+            content: "Collection page",
+            onAction: () => openDestination(previewUrls.collection),
+          },
+        ]}
+      />
+    </Popover>
   );
 }
 
@@ -967,7 +1013,7 @@ export default function Dashboard() {
   const {
     shop,
     isLive,
-    previewUrl,
+    previewUrls,
     stats,
     setup,
     needsAttention,
@@ -1288,7 +1334,8 @@ export default function Dashboard() {
                   <Banner tone="success" title="Storefront connection verified">
                     <Text as="p">
                       Every check passed — your theme reaches the app, the preview works
-                      and your product ratings are in sync.
+                      on your product, home and collection pages, and your product
+                      ratings are in sync.
                     </Text>
                   </Banner>
                 )
@@ -1307,7 +1354,8 @@ export default function Dashboard() {
               ) : healthError ? null : (
                 <Text as="p" tone="subdued">
                   Run the test to verify that your theme can reach the app, that the
-                  preview works and that your product ratings are in sync.
+                  preview works on your product, home and collection pages, and that
+                  your product ratings are in sync.
                 </Text>
               )}
 
@@ -1327,7 +1375,7 @@ export default function Dashboard() {
         {isLive ? (
           <Banner tone="success" title="Live — visitors can see the review widget.">
             <InlineStack gap="300" blockAlign="center" wrap>
-              <PreviewLinkButton previewUrl={previewUrl}>Preview link</PreviewLinkButton>
+              <PreviewMenu previewUrls={previewUrls}>Preview link</PreviewMenu>
               <Button variant="plain" onClick={() => setLiveConfirm("go-offline")}>
                 Switch off
               </Button>
@@ -1344,9 +1392,7 @@ export default function Dashboard() {
                 live when you're ready.
               </Text>
               <InlineStack gap="200" blockAlign="center" wrap>
-                <PreviewLinkButton previewUrl={previewUrl}>
-                  Preview on your store
-                </PreviewLinkButton>
+                <PreviewMenu previewUrls={previewUrls}>Preview on your store</PreviewMenu>
                 <Button variant="primary" onClick={() => setLiveConfirm("go-live")}>
                   Go live
                 </Button>
@@ -1426,7 +1472,7 @@ export default function Dashboard() {
                 done={isLive}
                 action={
                   <InlineStack gap="200">
-                    <PreviewLinkButton previewUrl={previewUrl}>Preview</PreviewLinkButton>
+                    <PreviewMenu previewUrls={previewUrls}>Preview</PreviewMenu>
                     {!isLive ? (
                       <Button variant="primary" onClick={() => setLiveConfirm("go-live")}>
                         Go live

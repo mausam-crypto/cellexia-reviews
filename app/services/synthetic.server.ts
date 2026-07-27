@@ -39,6 +39,18 @@
  * `generateSyntheticBatch` are unchanged wrappers for pre-1.7 callers.
  * Deleting a batch now also cancels/deletes its GenerationJob rows
  * (SPEC-1.7 §7).
+ *
+ * v1.10 (SPEC-1.10 §2–§4):
+ *   - Optional `languageWeights` / `variantWeights` share maps on the config
+ *     (validated in parseSyntheticConfig; keys ⊆ the selected languages /
+ *     the product's variants + the reserved "__none__" row). When present,
+ *     buildBatchPlan apportions counts by deterministic largest remainder
+ *     and shuffles the assignment across specs; when absent, the pre-1.10
+ *     paths run byte-identically (same RNG consumption), so existing batch
+ *     plans and resumed jobs rebuild unchanged.
+ *   - Em/en-dash scrub: STYLE_RULES is appended to the chunk generation
+ *     prompt and scrubDashes sanitizes every parsed title/body/reply, so
+ *     generated reviews never ship em or en dashes (hyphens untouched).
  */
 import crypto from "node:crypto";
 import type { AdminApiContext as BaseAdminApiContext } from "@shopify/shopify-app-remix/server";
@@ -60,7 +72,7 @@ import {
   formatDisplayName,
   poolFor,
 } from "./synthetic-names.server";
-import { LENGTH_MIX, PERSONA_BRIEFS } from "./synthetic-prompts.server";
+import { LENGTH_MIX, PERSONA_BRIEFS, STYLE_RULES, scrubDashes } from "./synthetic-prompts.server";
 import type { LengthBand } from "./synthetic-prompts.server";
 
 /**
@@ -93,6 +105,13 @@ const MAX_ERRORS = 50;
 
 const NO_AI_KEY_MESSAGE =
   "The generator needs the Anthropic API key from Settings → AI Summary";
+
+/**
+ * Reserved `variantWeights` key meaning "no variant assigned" (SPEC-1.10 §3).
+ * The admin UI mirrors this constant client-side (a .server module cannot be
+ * imported into the browser bundle).
+ */
+export const VARIANT_NONE_KEY = "__none__";
 
 /* ------------------------------------------------------------------------- *
  * Config
@@ -131,6 +150,20 @@ export interface SyntheticConfig {
   structuredAttrs: boolean;
   /** Status at creation. */
   status: "PUBLISHED" | "PENDING";
+  /**
+   * Optional per-language shares (SPEC-1.10 §2). Keys ⊆ `languages`, values
+   * ≥ 0 relative weights (the UI sends percentages; any positive scale
+   * works — counts are apportioned by largest remainder over the total).
+   * Absent ⇒ the pre-1.10 even split + jitter.
+   */
+  languageWeights?: Record<string, number>;
+  /**
+   * Optional per-variant shares (SPEC-1.10 §3). Keys ⊆ `productVariants`
+   * plus the reserved VARIANT_NONE_KEY ("__none__") row; same semantics as
+   * languageWeights. Only meaningful while `assignVariants` is on.
+   * Absent ⇒ the pre-1.10 randomized weighting.
+   */
+  variantWeights?: Record<string, number>;
 }
 
 function clampInt(value: unknown, min: number, max: number, fallback: number): number {
@@ -155,6 +188,36 @@ function cleanString(value: unknown, max: number): string {
 function isIsoDay(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   return !Number.isNaN(new Date(`${value}T12:00:00.000Z`).getTime());
+}
+
+/**
+ * Validates an optional share-weight map (SPEC-1.10 §2/§3): every key must be
+ * in `allowedKeys`, every value a finite number ≥ 0, and at least one value
+ * positive — anything else invalidates the WHOLE map (⇒ undefined ⇒ the
+ * pre-1.10 behavior; the UI cannot produce an invalid map, so a broken one is
+ * a hand-crafted request that safely degrades). Values are rounded to 2
+ * decimals and capped, keeping the sanitized config idempotent under
+ * re-parsing (the job runner stores it as JSON and re-reads it every run).
+ * Weights are relative — they do NOT need to sum to 100.
+ */
+function parseShareWeights(
+  raw: unknown,
+  allowedKeys: readonly string[],
+): Record<string, number> | undefined {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
+  const allowed = new Set(allowedKeys);
+  const out: Record<string, number> = {};
+  let anyPositive = false;
+  for (const [key, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!allowed.has(key)) return undefined;
+    const num = Number(value);
+    if (!Number.isFinite(num) || num < 0) return undefined;
+    const clean = Math.min(1_000_000, Math.round(num * 100) / 100);
+    out[key] = clean;
+    if (clean > 0) anyPositive = true;
+  }
+  if (!anyPositive) return undefined;
+  return out;
 }
 
 function todayIsoDay(): string {
@@ -235,6 +298,18 @@ export function parseSyntheticConfig(
     ? Math.min(5, Math.max(1, Math.round(rawAverage * 10) / 10))
     : 4.5;
 
+  const languageList = languages.length ? languages : (["en"] as ShopLocale[]);
+  const assignVariants = v.assignVariants === true || v.assignVariants === "true";
+  // SPEC-1.10 §2/§3 — optional share maps. Only meaningful with more than one
+  // language (resp. variants actually being assigned); dropped otherwise so
+  // the stored config stays minimal and the legacy plan paths run.
+  const languageWeights =
+    languageList.length > 1 ? parseShareWeights(v.languageWeights, languageList) : undefined;
+  const variantWeights =
+    assignVariants && variants.length > 0
+      ? parseShareWeights(v.variantWeights, [VARIANT_NONE_KEY, ...variants])
+      : undefined;
+
   const config: SyntheticConfig = {
     productId,
     productTitle: cleanString(v.productTitle, 255) || `Product ${productId}`,
@@ -246,14 +321,16 @@ export function parseSyntheticConfig(
     count: clampInt(v.count, 1, MAX_SYNTHETIC_REVIEWS, 20),
     targetAverage,
     verifiedPercent: clampInt(v.verifiedPercent, 0, 100, 80),
-    languages: languages.length ? languages : (["en"] as ShopLocale[]),
+    languages: languageList,
     repliesPercent: clampInt(v.repliesPercent, 0, 100, 15),
     maxHelpfulVotes: clampInt(v.maxHelpfulVotes, 0, 1000, 25),
     dateStart,
     dateEnd,
-    assignVariants: v.assignVariants === true || v.assignVariants === "true",
+    assignVariants,
     structuredAttrs: !(v.structuredAttrs === false || v.structuredAttrs === "false"),
     status: v.status === "PENDING" ? "PENDING" : "PUBLISHED",
+    ...(languageWeights ? { languageWeights } : {}),
+    ...(variantWeights ? { variantWeights } : {}),
   };
   return { config, error: null };
 }
@@ -396,6 +473,39 @@ function weightedPick<T>(items: readonly T[], weights: readonly number[], rng: (
   return items[items.length - 1];
 }
 
+/**
+ * Largest-remainder apportionment of `n` items across non-negative weights
+ * (SPEC-1.10 §2/§3). Fully deterministic — no RNG: floors first, then hands
+ * the remaining items to the largest fractional parts, ties broken by lowest
+ * index. Weights are relative (they need not sum to 100); a non-positive
+ * total degrades to an even split so the function can never under-allocate.
+ */
+function largestRemainderCounts(weights: readonly number[], n: number): number[] {
+  const slots = weights.length;
+  if (slots === 0) return [];
+  const total = weights.reduce((a, b) => a + b, 0);
+  const safe = total > 0 ? weights : new Array<number>(slots).fill(1);
+  const safeTotal = total > 0 ? total : slots;
+  const exact = safe.map((w) => (w / safeTotal) * n);
+  const counts = exact.map((x) => Math.floor(x));
+  let assigned = counts.reduce((a, b) => a + b, 0);
+  const order = exact
+    .map((x, i) => ({ i, frac: x - Math.floor(x) }))
+    .sort((a, b) => b.frac - a.frac || a.i - b.i);
+  for (const { i } of order) {
+    if (assigned >= n) break;
+    counts[i] += 1;
+    assigned += 1;
+  }
+  // Floating-point paranoia — each slot lost < 1 to the floor, so this loop
+  // is unreachable in practice; it guarantees the exact total regardless.
+  while (assigned < n) {
+    counts[0] += 1;
+    assigned += 1;
+  }
+  return counts;
+}
+
 /* ------------------------------------------------------------------------- *
  * Batch plan
  * ------------------------------------------------------------------------- */
@@ -473,27 +583,41 @@ export function buildBatchPlan(config: SyntheticConfig, batchId: string): Synthe
   ratings.length = n;
   shuffle(ratings, rng);
 
-  // 2. Languages — even split + jitter, then shuffled.
+  // 2. Languages — SPEC-1.10 §2: explicit shares apportion by deterministic
+  // largest remainder (no jitter — the editor's numbers are honored exactly);
+  // absent shares keep the pre-1.10 even split + jitter BYTE-IDENTICALLY
+  // (same statements, same RNG consumption), so plans for existing configs —
+  // including jobs resumed across the upgrade — rebuild unchanged. Both
+  // paths shuffle the per-review assignment across specs below.
   const langs = config.languages.length ? config.languages : (["en"] as ShopLocale[]);
-  const perLang = new Array<number>(langs.length).fill(Math.floor(n / langs.length));
-  let remainder = n - perLang.reduce((a, b) => a + b, 0);
-  const remainderOrder = shuffle(
-    langs.map((_, i) => i),
-    rng,
-  );
-  for (const i of remainderOrder) {
-    if (remainder <= 0) break;
-    perLang[i] += 1;
-    remainder -= 1;
-  }
-  if (langs.length > 1) {
-    const moves = Math.floor(n * 0.08);
-    for (let m = 0; m < moves; m += 1) {
-      const a = Math.floor(rng() * langs.length);
-      const b = Math.floor(rng() * langs.length);
-      if (a !== b && perLang[a] > 1) {
-        perLang[a] -= 1;
-        perLang[b] += 1;
+  let perLang: number[];
+  if (config.languageWeights) {
+    const weights = config.languageWeights;
+    perLang = largestRemainderCounts(
+      langs.map((lang) => weights[lang] ?? 0),
+      n,
+    );
+  } else {
+    perLang = new Array<number>(langs.length).fill(Math.floor(n / langs.length));
+    let remainder = n - perLang.reduce((a, b) => a + b, 0);
+    const remainderOrder = shuffle(
+      langs.map((_, i) => i),
+      rng,
+    );
+    for (const i of remainderOrder) {
+      if (remainder <= 0) break;
+      perLang[i] += 1;
+      remainder -= 1;
+    }
+    if (langs.length > 1) {
+      const moves = Math.floor(n * 0.08);
+      for (let m = 0; m < moves; m += 1) {
+        const a = Math.floor(rng() * langs.length);
+        const b = Math.floor(rng() * langs.length);
+        if (a !== b && perLang[a] > 1) {
+          perLang[a] -= 1;
+          perLang[b] += 1;
+        }
       }
     }
   }
@@ -537,14 +661,38 @@ export function buildBatchPlan(config: SyntheticConfig, batchId: string): Synthe
   );
   for (let k = 0; k < replyTarget && k < n; k += 1) replyFlags[replyOrder[k]] = true;
 
-  // 6. Variants — randomly weighted across the real variants, sometimes null.
-  const variantWeights = config.productVariants.map(() => 1 + rng() * 2);
+  // 6. Variants — SPEC-1.10 §3: explicit shares (reserved "__none__" row =
+  // no variant) apportion by the same deterministic largest remainder and
+  // are then shuffled across specs; absent shares keep the pre-1.10
+  // randomized weighting BYTE-IDENTICALLY (the legacy path always consumed
+  // one rng() per variant for its weights plus the per-review rolls — that
+  // exact consumption is preserved, weights or not being assigned).
   const variantByReview: Array<string | null> = [];
-  for (let i = 0; i < n; i += 1) {
-    if (!config.assignVariants || config.productVariants.length === 0 || rng() < 0.22) {
-      variantByReview.push(null);
-    } else {
-      variantByReview.push(weightedPick(config.productVariants, variantWeights, rng));
+  const useVariantShares =
+    config.variantWeights !== undefined &&
+    config.assignVariants &&
+    config.productVariants.length > 0;
+  if (useVariantShares) {
+    const shares = config.variantWeights as Record<string, number>;
+    const options: Array<string | null> = [null, ...config.productVariants];
+    const counts = largestRemainderCounts(
+      options.map((option) => shares[option === null ? VARIANT_NONE_KEY : option] ?? 0),
+      n,
+    );
+    options.forEach((option, i) => {
+      for (let k = 0; k < counts[i]; k += 1) variantByReview.push(option);
+    });
+    while (variantByReview.length < n) variantByReview.push(null); // paranoid backstop
+    variantByReview.length = n;
+    shuffle(variantByReview, rng);
+  } else {
+    const legacyVariantWeights = config.productVariants.map(() => 1 + rng() * 2);
+    for (let i = 0; i < n; i += 1) {
+      if (!config.assignVariants || config.productVariants.length === 0 || rng() < 0.22) {
+        variantByReview.push(null);
+      } else {
+        variantByReview.push(weightedPick(config.productVariants, legacyVariantWeights, rng));
+      }
     }
   }
 
@@ -762,11 +910,13 @@ function planFor(config: SyntheticConfig, batchId: string): SyntheticReviewSpec[
  * AI text generation (title / body / reply only)
  * ------------------------------------------------------------------------- */
 
+// Dash-free on purpose (SPEC-1.10 §4): prompt text must not exemplify the
+// em/en dashes the model is told never to write.
 const TIME_USING_PROMPT: Record<string, string> = {
   lt_1w: "less than 1 week",
-  w1_4: "1–4 weeks",
-  m1_3: "1–3 months",
-  m3_6: "3–6 months",
+  w1_4: "1 to 4 weeks",
+  m1_3: "1 to 3 months",
+  m3_6: "3 to 6 months",
   gt_6m: "more than 6 months",
 };
 
@@ -787,22 +937,23 @@ const RESULTS_PROMPT: Record<string, string> = {
  * uses (SPEC-1.7 §4 "counted baseline").
  */
 export function buildSystemPrompt(brandDisplayName: string): string {
-  return `You write realistic customer product reviews used as internal QA/test data for a premium anti-aging skincare storefront. Each request supplies real product context and a list of review specifications. For every spec you write ONLY the free-text parts: a natural title, the review body, and (when reply_needed is true) the merchant's public reply. Every structured fact (rating, language, verified, variant, usage time, results) is already fixed — your text must agree with it.
+  return `You write realistic customer product reviews used as internal QA/test data for a premium anti-aging skincare storefront. Each request supplies real product context and a list of review specifications. For every spec you write ONLY the free-text parts: a natural title, the review body, and (when reply_needed is true) the merchant's public reply. Every structured fact (rating, language, verified, variant, usage time, results) is already fixed. Your text must agree with it.
 
-Respond with a single JSON array and NOTHING else — no markdown fences, no commentary before or after:
+Respond with a single JSON array and NOTHING else: no markdown fences, no commentary before or after.
 [{ "i": number, "title": string, "body": string, "reply": string | null }]
 
 Hard rules:
 - Output exactly one object per spec, with "i" matching the spec's "i".
 - Write title, body and reply entirely in the spec's "language" (a locale code). Never mix languages inside one review.
-- The star rating always outranks the persona: 1–2 stars read as disappointment, 3 as genuinely mixed, 4–5 as satisfaction — expressed through the persona's voice.
-- Follow the persona brief, tone, quirks and length band: "one_liner" = a fragment or one sentence; "short" = 1–3 sentences; "medium" = 4–6 sentences; "long" = 7–12 sentences (short paragraphs allowed).
+- The star rating always outranks the persona: 1 or 2 stars read as disappointment, 3 as genuinely mixed, 4 or 5 as satisfaction, expressed through the persona's voice.
+- Follow the persona brief, tone, quirks and length band: "one_liner" = a fragment or one sentence; "short" = 1 to 3 sentences; "medium" = 4 to 6 sentences; "long" = 7 to 12 sentences (short paragraphs allowed).
 - Stay consistent with time_using and results_seen: someone using the product under a week cannot report long-term results; "too early to tell" means no visible results yet.
 - Ground concrete product details in the provided context only; never invent ingredient percentages or medical claims; never name real competitor brands.
 - Titles: natural and specific, at most 80 characters, no surrounding quotes.
 - When "imperfect" is true include exactly one small typo or casual punctuation slip; otherwise write cleanly.
-- When "reply_needed" is true, "reply" is a warm, professional public response of 1–3 sentences from the brand "${brandDisplayName}", in the same language, thanking the reviewer and addressing their specific point (apologetic and constructive for low ratings). When false, "reply" must be null.
-- These are fictional reviews by fictional customers. Do not mention AI, QA, testing, or that anything is synthetic.`;
+- When "reply_needed" is true, "reply" is a warm, professional public response of 1 to 3 sentences from the brand "${brandDisplayName}", in the same language, thanking the reviewer and addressing their specific point (apologetic and constructive for low ratings). When false, "reply" must be null.
+- These are fictional reviews by fictional customers. Do not mention AI, QA, testing, or that anything is synthetic.
+- ${STYLE_RULES}`;
 }
 
 /**
@@ -822,7 +973,7 @@ export function buildUserContent(config: SyntheticConfig, specs: SyntheticReview
   lines.push(config.productDescription || "(no description provided)");
   lines.push("");
   lines.push(
-    `REVIEW SPECS — write exactly ${specs.length} review${specs.length === 1 ? "" : "s"}, one JSON object per spec:`,
+    `REVIEW SPECS: write exactly ${specs.length} review${specs.length === 1 ? "" : "s"}, one JSON object per spec:`,
   );
   specs.forEach((spec, i) => {
     lines.push(
@@ -1065,16 +1216,21 @@ async function generateChunkTexts(
       const index =
         Number.isInteger(iRaw) && iRaw >= 1 && iRaw <= specs.length ? iRaw - 1 : position;
       if (index < 0 || index >= specs.length || byIndex.has(index)) return;
-      const body = typeof record.body === "string" ? record.body.trim().slice(0, 5000) : "";
+      // scrubDashes (SPEC-1.10 §4): even a disobedient model output ships
+      // without em/en dashes. Scrub BEFORE the length slice (the ", "
+      // replacement can lengthen the text), and re-check emptiness after (a
+      // dash-only string scrubs down to nothing).
+      const body =
+        typeof record.body === "string" ? scrubDashes(record.body.trim()).slice(0, 5000) : "";
       if (!body) return;
-      const title =
-        typeof record.title === "string" && record.title.trim()
-          ? record.title.trim().slice(0, 150)
-          : null;
-      const reply =
-        specs[index].wantsReply && typeof record.reply === "string" && record.reply.trim()
-          ? record.reply.trim().slice(0, 5000)
-          : null;
+      const titleClean =
+        typeof record.title === "string" ? scrubDashes(record.title.trim()).slice(0, 150) : "";
+      const title = titleClean || null;
+      const replyClean =
+        specs[index].wantsReply && typeof record.reply === "string"
+          ? scrubDashes(record.reply.trim()).slice(0, 5000)
+          : "";
+      const reply = replyClean || null;
       byIndex.set(index, { title, body, reply });
     });
 

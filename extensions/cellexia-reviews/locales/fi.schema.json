@@ -47,6 +47,20 @@
         "show_pdp_title_badge": {
           "label": "Näytä tähdet tuotteen otsikon alla"
         },
+        "pdp_badge_position": {
+          "label": "Tähtien sijainti tuotesivulla",
+          "info": "Missä tähtiarvio ja arvostelujen määrä näkyvät tuotesivuilla.",
+          "options__1": {
+            "label": "Suoraan otsikon alla"
+          },
+          "options__2": {
+            "label": "Iskulauseen alla"
+          }
+        },
+        "pdp_badge_selector": {
+          "label": "Tähtien sijoittelu (CSS-valitsin, valinnainen)",
+          "info": "Edistynyt: tähdet lisätään ensimmäisen tätä valitsinta vastaavan elementin jälkeen, mikä ohittaa sijaintivalinnan."
+        },
         "enable_badges": {
           "label": "Näytä tähtimerkit tuotekorteissa koko sivustolla",
           "info": "Lisää tähtiarviot tuotenimien viereen etusivulla, kokoelmissa ja hakutuloksissa tuotteille, joilla on julkaistuja arvosteluja."

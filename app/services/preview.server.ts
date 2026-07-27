@@ -1,9 +1,18 @@
 /**
- * Cellexia Reviews — tokenized live-theme preview URL builder (SPEC-1.2).
+ * Cellexia Reviews — tokenized live-theme preview URL builder
+ * (SPEC-1.2, SPEC-1.10 §5 fix B).
  *
  * While a store is not live, the merchant can preview the widget on their real
  * live theme through a tokenized link only they know (`?cx_preview=<token>`).
- * This module picks the best product page to open the preview on:
+ *
+ * v1.10 makes the preview multi-destination: `getPreviewUrls` returns one
+ * tokenized URL per storefront surface — the product page (full widget), the
+ * home page (Overall reviews block + card badges) and the `/collections/all`
+ * collection page (card badges; the `all` collection always exists on
+ * Shopify) — so merchants can open the preview directly on any page instead
+ * of having to navigate there from a tokenized product page.
+ *
+ * Product-page choice (unchanged from SPEC-1.2):
  *   1. the shop's most-reviewed product (Review table) that has a handle,
  *   2. any review with a product handle,
  *   3. the first active product from the Admin API,
@@ -66,6 +75,48 @@ export async function getPreviewUrl(admin: AdminClient, shop: string): Promise<s
   return `https://${shop}/products/${encodeURIComponent(handle)}?cx_preview=${encodeURIComponent(
     token,
   )}`;
+}
+
+/**
+ * The three tokenized preview destinations (SPEC-1.10 §5 fix B).
+ *
+ * `product` is null when the store has no product page to preview on — the
+ * admin disables that menu item only; home and collection are always
+ * available (`/collections/all` exists on every Shopify store).
+ */
+export interface PreviewUrls {
+  product: string | null;
+  home: string;
+  collection: string;
+}
+
+/**
+ * Returns the tokenized preview URLs for every preview destination:
+ * `https://{shop}/products/{handle}?cx_preview={t}` (or null without a
+ * product), `https://{shop}/?cx_preview={t}` and
+ * `https://{shop}/collections/all?cx_preview={t}`.
+ */
+export async function getPreviewUrls(admin: AdminClient, shop: string): Promise<PreviewUrls> {
+  const [handle, settings] = await Promise.all([
+    findPreviewProductHandle(admin, shop),
+    getSettings(shop),
+  ]);
+
+  // getSettings lazily generates and persists the token, so it is present in
+  // practice; the fallback only narrows the nullable column type. An empty
+  // token degrades to plain storefront URLs (the not-live gating simply shows
+  // nothing) — it never breaks the Dashboard.
+  const token = settings.previewToken;
+  const query = `?cx_preview=${encodeURIComponent(token ?? "")}`;
+  const base = `https://${shop}`;
+
+  return {
+    // Same corner-case semantics as getPreviewUrl: no handle OR no token ⇒ null.
+    product:
+      handle && token ? `${base}/products/${encodeURIComponent(handle)}${query}` : null,
+    home: `${base}/${query}`,
+    collection: `${base}/collections/all${query}`,
+  };
 }
 
 /* ------------------------------------------------------------------------- *

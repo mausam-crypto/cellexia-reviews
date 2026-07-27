@@ -7,7 +7,12 @@
   v1.2 live/preview gating (SPEC-1.2): when the app-synced `cellexia.live` SHOP
   metafield is explicitly false (and we are not in the theme editor), the badge
   wrapper ships hidden with data-cx-live="false", plus one tiny inline script that
-  un-hides it when sessionStorage.cx_preview_token is set (tokenized admin preview).
+  un-hides it when ?cx_preview= is in the URL or sessionStorage.cx_preview_token
+  is set (tokenized admin preview). The URL check mirrors discoverPreviewToken()
+  so direct entry from a v1.10 §5A preview link works on the FIRST load — this
+  inline script runs at parse time, before the deferred JS has captured the URL
+  token into sessionStorage. Reading the URL here is safe: the script is emitted
+  only when the store is not live, so no live-store URL-trust is introduced.
   SSR-only block: the aggregate numbers are non-sensitive, server-verified data
   never flows here. Absent metafield counts as live (upgrade-neutral).
 {% endcomment %}
@@ -51,7 +56,7 @@
   {%- endif -%}
 </div>
 {%- unless cx_b_show -%}
-<script>try{if(sessionStorage.cx_preview_token)document.currentScript.previousElementSibling.hidden=!1}catch(e){}</script>
+<script>try{if(new URLSearchParams(location.search).get("cx_preview")||sessionStorage.cx_preview_token)document.currentScript.previousElementSibling.hidden=!1}catch(e){}</script>
 {%- endunless -%}
 {%- endif -%}
 {%- endif -%}

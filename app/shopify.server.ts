@@ -11,6 +11,7 @@ import {
   ensureMetafieldDefinitions,
   syncShopSettingsMetafields,
 } from "~/services/metafields.server";
+import { syncShopRating } from "~/services/brand.server";
 import { kickRunner, recoverStaleJobs } from "~/services/jobs.server";
 import { probeProxySubpath } from "~/services/proxyhealth.server";
 import { getSettings } from "~/services/settings.server";
@@ -54,6 +55,17 @@ const shopify = shopifyApp({
             console.error("[cellexia] afterAuth proxy subpath probe failed", error);
           },
         );
+
+        // SPEC-1.10 §5 fix C: seed/refresh the brand-wide "Overall reviews"
+        // shop metafields (cellexia.shop_rating / shop_top_reviews) so a
+        // freshly deployed store's Overall block has data without waiting for
+        // a moderation event or the manual Refresh button. Best-effort and
+        // deliberately NOT awaited — it makes Admin API calls, and OAuth must
+        // never wait on (or fail because of) a storefront-content sync. The
+        // service itself never throws; the catch is belt-and-braces.
+        void syncShopRating(session.shop, admin).catch((error: unknown) => {
+          console.error("[cellexia] afterAuth shop rating sync failed", error);
+        });
       } catch (error) {
         // Metafield definitions/sync are re-attempted on the next auth; never
         // block the OAuth callback on this.

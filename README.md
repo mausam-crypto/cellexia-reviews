@@ -24,11 +24,16 @@ extension — no theme code edits, uninstall-safe.
 - **Safe install, private preview, explicit go-live**: installing changes nothing on the live
   storefront — a new install starts **Not live**, so visitors see no widget, no review data and
   no JSON-LD until you click **Go live** on the Dashboard. Before (and after) that,
-  **Preview on your store** opens a tokenized preview of the widget on the real live theme that
-  only you can see, and the theme editor always shows the full widget — with real review data,
-  because the preview token is mirrored to the theme in design mode only — so you can place and
-  configure the blocks. Enforced server-side: while not live, the storefront API rejects
-  requests without a valid preview token.
+  **Preview on your store** opens a tokenized preview on the real live theme that only you can
+  see — a three-destination menu since 1.10.0 (**Product page**, **Home page**,
+  **Collection page**), covering every surface: widget, card badges and the Overall reviews
+  block. The preview follows you across pages in the same tab (the token is captured on any
+  page with a Cellexia surface and remembered by the tab), the ribbon and **Exit preview**
+  work on every page, and an expired token says so instead of going silently blank. The theme
+  editor always shows the full widget — with real review data, because the preview token is
+  mirrored to the theme in design mode only — so you can place and configure the blocks.
+  Enforced server-side: while not live, the storefront API rejects requests without a valid
+  preview token.
 - **Self-verifying install**: a **Storefront connection** card at the top of the Dashboard tests
   the whole storefront pipeline on demand — app proxy reachable (and on which subpath), preview
   token round-trip, theme-extension activity, review data, metafield sync, database persistence,
@@ -45,7 +50,10 @@ extension — no theme code edits, uninstall-safe.
 - **App embed with site-wide star badges**: for themes that don't accept app blocks on product
   templates, one toggle in the theme editor (Theme settings → App embeds) mounts the full
   widget on every product page automatically — with an optional CSS-selector placement
-  override — and can show stars under the product page's own title. It also injects **star
+  override — and can show stars under the product page's own title, positioned **directly
+  under the title** (the default) or **under the tagline**, with its own CSS-selector
+  override for exact placement (safe fallbacks: a missing tagline or unmatched selector
+  falls back to under the title, never a missing row). It also injects **star
   badges next to product names on product cards across the whole store** (home, collections,
   search, featured sections) for products with published reviews: one batched, cached request
   per page, automatic card detection with an advanced selector override, all three design
@@ -64,7 +72,11 @@ extension — no theme code edits, uninstall-safe.
   order with auto backfill, a **Refresh homepage data** button, and a one-click **Feature on
   homepage** action on each review's page. Deliberately emits **no JSON-LD** (Google ignores
   self-serving organization ratings — see `docs/SEO.md`); same not-live/preview gating as
-  everything else, and a shop with zero published reviews renders nothing at all.
+  everything else. For shoppers, a shop with zero published reviews renders nothing at all —
+  while merchants (theme editor or preview) never get a silent blank since 1.10.0: before the
+  first metafield sync the block renders itself from live data client-side, a genuinely
+  zero-review store shows a merchant-only note instead, and the app re-syncs the shop
+  snapshot best-effort on every (re)authentication.
 - **Review display order** (new **Display order** page in the admin navigation): control which
   reviews shoppers see first. A store-wide default ranking chosen from six systems — the
   Amazon-style helpfulness ranking (still the default, and exactly the previous behavior),
@@ -105,7 +117,13 @@ extension — no theme code edits, uninstall-safe.
 - **Synthetic QA review generator**: AI-generated realistic test reviews for QA of the widget
   and the design versions — fully parameterized (count — uncapped since 1.7.0 — target average
   rating with a derived star distribution, verified %, languages, merchant-reply %, helpful
-  votes, backdated date range, variants, structured attributes). Generation runs as
+  votes, backdated date range, variants, structured attributes — and, since 1.10.0,
+  per-language and per-variant **percentage share editors**: even-split prefill, a live
+  "Total: N%" check that must reach 100%, deterministic exact counts interleaved across the
+  batch; the pre-1.10 jittered defaults apply only when an editor is not shown, while a visible
+  editor's percentages are applied exactly as displayed). Generated text ships with no em/en dashes — a
+  telltale of AI writing that real shoppers rarely type — scrubbed at every layer since
+  1.10.0, hyphens untouched. Generation runs as
   **server-side background jobs**: leave the page or close the tab, run several jobs at once,
   and follow progress from any admin page via a global activity banner. An optional
   **Estimate cost** button predicts token usage, USD cost and duration before a run (durations
@@ -253,4 +271,4 @@ Full production installation, hosting and store setup: **[docs/INSTALL.md](docs/
 
 ## Version
 
-Current version: **1.9.0** — see [CHANGELOG.md](CHANGELOG.md).
+Current version: **1.10.0** — see [CHANGELOG.md](CHANGELOG.md).

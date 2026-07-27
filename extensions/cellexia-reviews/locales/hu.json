@@ -152,6 +152,7 @@
       "error_body": "Ezt az üzenetet csak Ön látja az előnézet ideje alatt.",
       "empty_merchant": "Még nincsenek értékelések – importálja az értékeléseit, vagy hozzon létre tesztadatokat az alkalmazásban.",
       "empty_pending": "Még nincsenek közzétett értékelések – [[count]] jóváhagyásra vár az alkalmazásban.",
+      "overall_pending": "Az összesített értékelések itt jelennek meg, amint az értékelési adatok szinkronizálva lettek. Nyissa meg az alkalmazás “Display order” oldalát, és nyomja meg a(z) “Refresh homepage data” gombot.",
       "retry": "Újrapróbálkozás"
     },
     "form": {

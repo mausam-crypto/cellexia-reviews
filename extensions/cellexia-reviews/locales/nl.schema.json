@@ -47,6 +47,20 @@
         "show_pdp_title_badge": {
           "label": "Sterren onder de producttitel tonen"
         },
+        "pdp_badge_position": {
+          "label": "Positie van de sterren op de productpagina",
+          "info": "Waar de sterrenbeoordeling en het aantal op productpagina's verschijnen.",
+          "options__1": {
+            "label": "Direct onder de titel"
+          },
+          "options__2": {
+            "label": "Onder de tagline"
+          }
+        },
+        "pdp_badge_selector": {
+          "label": "Plaatsing van de sterren (CSS-selector, optioneel)",
+          "info": "Geavanceerd: de sterren worden ingevoegd na het eerste element dat met deze selector overeenkomt, waarmee de positiekeuze wordt overschreven."
+        },
         "enable_badges": {
           "label": "Sterrenbadges op productkaarten in de hele webshop tonen",
           "info": "Voegt sterbeoordelingen toe naast productnamen op de homepage, in collecties en in zoekresultaten voor producten met gepubliceerde beoordelingen."

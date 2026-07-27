@@ -152,6 +152,7 @@
       "error_body": "Este mensaje solo es visible para usted durante la vista previa.",
       "empty_merchant": "Todavía no hay opiniones — importe sus opiniones o genere datos de prueba en la aplicación.",
       "empty_pending": "Todavía no hay opiniones publicadas — [[count]] pendientes de aprobación en la aplicación.",
+      "overall_pending": "Las opiniones generales aparecerán aquí una vez que se sincronicen los datos de opiniones. Abra la página “Display order” de la aplicación y pulse “Refresh homepage data”.",
       "retry": "Inténtelo de nuevo"
     },
     "form": {

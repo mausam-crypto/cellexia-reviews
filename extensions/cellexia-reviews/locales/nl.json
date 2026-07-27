@@ -152,6 +152,7 @@
       "error_body": "Dit bericht is alleen voor u zichtbaar tijdens het bekijken van het voorbeeld.",
       "empty_merchant": "Nog geen beoordelingen — importeer uw beoordelingen of genereer testgegevens in de app.",
       "empty_pending": "Nog geen gepubliceerde beoordelingen — [[count]] wachten op goedkeuring in de app.",
+      "overall_pending": "De algemene beoordelingen verschijnen hier zodra de beoordelingsgegevens zijn gesynchroniseerd. Open de pagina “Display order” in de app en druk op “Refresh homepage data”.",
       "retry": "Opnieuw proberen"
     },
     "form": {

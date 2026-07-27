@@ -9,8 +9,14 @@
   read-more toggles, the carousel prev/next buttons and the distribution-bar
   star filter (GET /brand-reviews).
 
-  Nil-guards everywhere; when `shop_rating.count` is 0 (or the metafield is
-  absent/invalid) the block renders NOTHING at all — no empty frame, no assets.
+  Nil-guards everywhere. v1.10 (SPEC-1.10 §5C): when `shop_rating.count` is 0
+  (or the metafield is absent/invalid — every fresh install before its first
+  syncShopRating) the block no longer vanishes: it renders a HIDDEN data-less
+  shell (`data-cx-overall-empty="true"`, always `hidden`) plus assets + i18n.
+  In merchant contexts (design mode or a valid preview token) the JS fills it
+  client-side from GET /brand-reviews — so preview works BEFORE any metafield
+  sync — and shows the merchant-only `notice.overall_pending` when the shop
+  genuinely has zero reviews. Shoppers on a live store still see nothing.
 
   Live/preview gating is identical to blocks/reviews.liquid (SPEC-1.2/1.6):
   only an explicit `cellexia.live == false` means "not live"; the theme editor
@@ -34,7 +40,6 @@
     assign cx_o_count = cx_o_stats.count | default: 0 | times: 1
   endif
 -%}
-{%- if cx_o_count > 0 -%}
 {{ 'cellexia-reviews.css' | asset_url | stylesheet_tag }}
 {%- liquid
   assign cx_o_avg = cx_o_stats.average | default: 0 | times: 1.0
@@ -118,8 +123,14 @@
   data-cx-skin="{{ cx_skin }}"
   data-cx-live="{{ cx_show_full }}"
   {% if cx_editor_token != blank %}data-cx-editor-token="{{ cx_editor_token | escape }}"{% endif %}
-  {% unless cx_show_full %}hidden{% endunless %}
+  {% comment %}
+    v1.10 §5C: with SSR data the shell hides only when not live (unchanged);
+    a data-less shell ships hidden ALWAYS — only the merchant-context JS
+    render (design mode / valid preview token) un-hides it.
+  {% endcomment %}
+  {% if cx_o_count > 0 %}{% unless cx_show_full %}hidden{% endunless %}{% else %}data-cx-overall-empty="true" hidden{% endif %}
 >
+  {%- if cx_o_count > 0 -%}
   <div class="cx-overall__header">
     {%- if cx_o_heading != blank -%}
     <h2 class="cx-overall__heading">{{ cx_o_heading | escape }}</h2>
@@ -160,9 +171,10 @@
     {%- endfor -%}
   </div>
   {%- endif -%}
+  {%- endif -%}
 
   <div class="cx-overall__cards cx-overall__cards--{{ cx_o_layout }}" data-cx-overall-cards aria-live="polite">
-    {%- if cx_o_top_size > 0 -%}
+    {%- if cx_o_count > 0 and cx_o_top_size > 0 -%}
     {%- for cx_r in cx_o_top limit: cx_o_max -%}
     {%- liquid
       assign cx_r_author = cx_r.author | default: ''
@@ -211,7 +223,6 @@
 
 {% render 'cx-i18n' %}
 <script src="{{ 'cellexia-reviews.js' | asset_url }}" defer></script>
-{%- endif -%}
 
 {% schema %}
 {

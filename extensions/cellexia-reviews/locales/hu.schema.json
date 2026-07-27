@@ -47,6 +47,20 @@
         "show_pdp_title_badge": {
           "label": "Csillagok megjelenítése a termék címe alatt"
         },
+        "pdp_badge_position": {
+          "label": "A csillagok helye a termékoldalon",
+          "info": "Hol jelenjen meg a csillagos értékelés és a darabszám a termékoldalakon.",
+          "options__1": {
+            "label": "Közvetlenül a cím alatt"
+          },
+          "options__2": {
+            "label": "A szlogen alatt"
+          }
+        },
+        "pdp_badge_selector": {
+          "label": "A csillagok elhelyezése (CSS-szelektor, nem kötelező)",
+          "info": "Haladó: a csillagok az ennek a szelektornak megfelelő első elem után kerülnek beszúrásra, felülbírálva a pozíció kiválasztását."
+        },
         "enable_badges": {
           "label": "Csillagjelvények megjelenítése a termékkártyákon az egész webhelyen",
           "info": "Csillagos értékeléseket ad a terméknevek mellé a kezdőlapon, a kollekciókban és a keresési találatokban a közzétett értékeléssel rendelkező termékeknél."

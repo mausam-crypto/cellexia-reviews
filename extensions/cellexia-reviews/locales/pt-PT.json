@@ -152,6 +152,7 @@
       "error_body": "Esta mensagem só está visível para si durante a pré-visualização.",
       "empty_merchant": "Ainda não existem avaliações — importe as suas avaliações ou gere dados de teste na aplicação.",
       "empty_pending": "Ainda não existem avaliações publicadas — [[count]] a aguardar aprovação na aplicação.",
+      "overall_pending": "As avaliações globais aparecerão aqui assim que os dados das avaliações forem sincronizados. Abra a página “Display order” da aplicação e prima “Refresh homepage data”.",
       "retry": "Tentar novamente"
     },
     "form": {

@@ -8,6 +8,13 @@
  * synthetic.server.ts, and the assigned star rating always outranks the
  * persona: a 2-star review from an enthusiastic persona reads as let-down
  * enthusiasm, not as praise.
+ *
+ * v1.10 (SPEC-1.10 §4): every string handed to the model (briefs, tones,
+ * quirks) is written WITHOUT em (—) or en (–) dashes, so the prompts never
+ * exemplify the character real shoppers rarely type. STYLE_RULES (below) is
+ * appended to the chunk generation prompt, and scrubDashes (below) is the
+ * deterministic last-resort sanitizer applied to every parsed title/body/
+ * reply. Regular hyphens (-) are fine everywhere.
  */
 
 export type LengthBand = "one_liner" | "short" | "medium" | "long";
@@ -44,7 +51,7 @@ export const PERSONA_BRIEFS: readonly PersonaBrief[] = [
   {
     key: "ingredient_nerd",
     brief:
-      "A reader of ingredient lists who knows their actives. Reference the kind of ingredients this product plausibly contains (from the product description only — never invent specific percentages). Judge the formula like a knowledgeable amateur, not a chemist.",
+      "A reader of ingredient lists who knows their actives. Reference the kind of ingredients this product plausibly contains (from the product description only, never invent specific percentages). Judge the formula like a knowledgeable amateur, not a chemist.",
     tone: "analytical, precise",
     length: "medium",
   },
@@ -92,7 +99,7 @@ export const PERSONA_BRIEFS: readonly PersonaBrief[] = [
   {
     key: "comparison_shopper",
     brief:
-      "Has tried many competitors in this category (never name real brands — say 'a department-store cream' or 'my old serum'). Positions this product against those experiences.",
+      "Has tried many competitors in this category (never name real brands, say 'a department-store cream' or 'my old serum'). Positions this product against those experiences.",
     tone: "evaluative",
     length: "medium",
   },
@@ -113,7 +120,7 @@ export const PERSONA_BRIEFS: readonly PersonaBrief[] = [
   {
     key: "texture_obsessed",
     brief:
-      "Cares about feel above all: how it spreads, sinks in, layers under sunscreen or makeup, whether it pills. Barely mentions results — it's all sensory detail.",
+      "Cares about feel above all: how it spreads, sinks in, layers under sunscreen or makeup, whether it pills. Barely mentions results. It's all sensory detail.",
     tone: "sensory, vivid",
     length: "short",
   },
@@ -176,7 +183,7 @@ export const PERSONA_BRIEFS: readonly PersonaBrief[] = [
   {
     key: "esl_phrasing",
     brief:
-      "Written by a non-native speaker: grammar slightly off in natural ways (article slips, unusual word order), vocabulary simple, sincerity high. Never mock — it reads earnest.",
+      "Written by a non-native speaker: grammar slightly off in natural ways (article slips, unusual word order), vocabulary simple, sincerity high. Never mock. It reads earnest.",
     tone: "earnest, simple",
     length: "short",
     quirks: "light grammatical imperfections throughout, no typos-for-comedy",
@@ -186,15 +193,15 @@ export const PERSONA_BRIEFS: readonly PersonaBrief[] = [
     brief: "Upbeat reviewer who uses one or two emoji naturally (not more). Short bursts of enthusiasm with a concrete detail.",
     tone: "bubbly",
     length: "short",
-    quirks: "exactly 1–2 emoji",
+    quirks: "exactly 1 or 2 emoji",
   },
   {
     key: "caps_then_calm",
     brief:
-      "Opens with a short all-caps exclamation (2–4 words), then immediately settles into two calm, informative sentences.",
+      "Opens with a short all-caps exclamation (2 to 4 words), then immediately settles into two calm, informative sentences.",
     tone: "explosive then composed",
     length: "short",
-    quirks: "first 2–4 words uppercase",
+    quirks: "first 2 to 4 words uppercase",
   },
   {
     key: "verified_repeat_buyer",
@@ -227,7 +234,7 @@ export const PERSONA_BRIEFS: readonly PersonaBrief[] = [
   {
     key: "weekend_only_user",
     brief:
-      "Uses it as a weekend treat rather than daily. Reviews it as a small ritual — the experience matters as much as the outcome.",
+      "Uses it as a weekend treat rather than daily. Reviews it as a small ritual. The experience matters as much as the outcome.",
     tone: "indulgent, relaxed",
     length: "short",
   },
@@ -320,3 +327,41 @@ export const PERSONA_BRIEFS: readonly PersonaBrief[] = [
 
 /** Guard used by tests/reviewers: SPEC-1.4 requires ≥ 36 distinct briefs. */
 export const PERSONA_COUNT: number = PERSONA_BRIEFS.length;
+
+/* ------------------------------------------------------------------------- *
+ * Em/en-dash hygiene (SPEC-1.10 §4)
+ * ------------------------------------------------------------------------- */
+
+/**
+ * Style rule appended to every chunk generation prompt (SPEC-1.10 §4).
+ * Deliberately written WITHOUT em/en dashes: the rule must not itself
+ * exemplify the character it bans. scrubDashes below is the deterministic
+ * backstop for model output that disobeys anyway.
+ */
+export const STYLE_RULES =
+  "Never use em dashes or en dashes anywhere in titles, bodies, or replies. Use commas, periods, or parentheses instead. Real shoppers rarely type dashes.";
+
+const EM_EN_DASH = /[–—]/;
+
+/**
+ * Deterministic em/en-dash sanitizer (SPEC-1.10 §4), applied to every parsed
+ * title/body/reply in the chunk parsing path (synthetic.server.ts):
+ *   - every run of em (—, U+2014) or en (–, U+2013) dashes, together with any
+ *     surrounding spaces, becomes ", ";
+ *   - doubled commas / double spaces the replacement can create are collapsed;
+ *   - a comma stranded at a line edge (the dash opened or closed the line) is
+ *     dropped, and the edges are trimmed;
+ *   - regular hyphens (-) are never touched.
+ * Pure and idempotent — safe to run on already-clean text.
+ */
+export function scrubDashes(text: string): string {
+  if (!EM_EN_DASH.test(text)) return text;
+  let out = text.replace(/[ \t]*[–—]+[ \t]*/g, ", ");
+  // Collapse ",,", ", ," … into a single ", ".
+  out = out.replace(/,[ \t]*(?:,[ \t]*)+/g, ", ");
+  out = out.replace(/[ \t]{2,}/g, " ");
+  // Commas stranded at line edges read wrong — drop them (newlines are kept).
+  out = out.replace(/^[ \t]*,[ \t]*/gm, "");
+  out = out.replace(/[ \t]*,[ \t]*$/gm, "");
+  return out.trim();
+}

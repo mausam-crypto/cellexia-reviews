@@ -7,9 +7,15 @@
  *   2. Fail-fast banner when the AI provider is off / the key is missing.
  *   3. Config card — every knob: product (resourcePicker with a Select
  *      fallback), number of reviews (uncapped since v1.7), target average
- *      rating (with a live distribution preview), verified %, languages,
- *      replies %, max helpful votes, date range, variants toggle,
- *      structured-attributes toggle, status at creation. Next to Generate sits
+ *      rating (with a live distribution preview), verified %, languages
+ *      (with a per-language share editor when more than one is selected —
+ *      SPEC-1.10 §2), replies %, max helpful votes, date range, variants
+ *      toggle (with a per-variant share editor incl. a "No variant" row —
+ *      SPEC-1.10 §3), structured-attributes toggle, status at creation.
+ *      Share editors prefill (even split / the default variant weighting),
+ *      show a live "Total: N%" with a ±1 tolerance, and ship
+ *      languageWeights / variantWeights in the config; the server normalizes
+ *      them to exact counts by largest remainder. Next to Generate sits
  *      an optional "Estimate cost" button that renders an inline banner with
  *      token counts, USD and an "about X minutes" duration (auto-refreshed,
  *      debounced 600 ms, when the review count changes while an estimate is
@@ -632,6 +638,85 @@ function todayIso(): string {
 }
 
 /**
+ * MIRROR of VARIANT_NONE_KEY in synthetic.server.ts (a .server constant
+ * cannot be used in the browser bundle — keep in sync): the reserved
+ * variantWeights key for the "No variant" editor row (SPEC-1.10 §3).
+ */
+const VARIANT_NONE_KEY = "__none__";
+
+/** Share editors accept totals of 100 ± this tolerance (SPEC-1.10 §2/§3). */
+const SHARE_TOTAL_TOLERANCE = 1;
+
+/**
+ * Integer percentages summing to exactly 100 — even split with the leftover
+ * points handed to the first slots (largest remainder for equal weights).
+ * Prefill for the language share editor (SPEC-1.10 §2).
+ */
+function evenSplitPercents(count: number): number[] {
+  const base = Math.floor(100 / count);
+  const leftover = 100 - base * count;
+  return Array.from({ length: count }, (_, i) => base + (i < leftover ? 1 : 0));
+}
+
+/**
+ * Prefill for the variant share editor (SPEC-1.10 §3), mirroring the
+ * pre-1.10 default weighting: ~22% of reviews get no variant, the rest
+ * spreads across the real variants. Returns [noVariant, ...variants],
+ * integers summing to exactly 100.
+ */
+function defaultVariantPercents(variantCount: number): number[] {
+  const none = 22;
+  const rest = 100 - none;
+  const base = Math.floor(rest / variantCount);
+  const leftover = rest - base * variantCount;
+  return [none, ...Array.from({ length: variantCount }, (_, i) => base + (i < leftover ? 1 : 0))];
+}
+
+/** Splits `items` into rows of ≤ `size` for FormLayout.Group rendering. */
+function chunkArray<T>(items: readonly T[], size: number): T[][] {
+  const rows: T[][] = [];
+  for (let i = 0; i < items.length; i += size) rows.push(items.slice(i, i + size));
+  return rows;
+}
+
+/**
+ * Sums the share fields for `keys`. `invalid` = any missing/blank field or a
+ * non-numeric/negative value (the live total still reflects the parseable
+ * entries so the merchant sees what the editor currently adds up to).
+ */
+function sharesTotal(
+  shares: Record<string, string>,
+  keys: readonly string[],
+): { total: number; invalid: boolean } {
+  let total = 0;
+  let invalid = false;
+  for (const key of keys) {
+    const raw = (shares[key] ?? "").trim();
+    if (raw === "") {
+      invalid = true;
+      continue;
+    }
+    const n = Number(raw);
+    if (!Number.isFinite(n) || n < 0) {
+      invalid = true;
+      continue;
+    }
+    total += n;
+  }
+  return { total, invalid };
+}
+
+function shareTotalOk(result: { total: number; invalid: boolean }): boolean {
+  return !result.invalid && Math.abs(result.total - 100) <= SHARE_TOTAL_TOLERANCE;
+}
+
+/** "Total: N%" formatting — decimals only when the merchant typed some. */
+function formatShareTotal(total: number): string {
+  const rounded = Math.round(total * 10) / 10;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+}
+
+/**
  * MIRROR of `deriveStarDistribution` in app/services/synthetic.server.ts for
  * the live client-side "Distribution preview" (a .server module cannot be
  * imported into the browser bundle, and file ownership forbids a shared
@@ -913,6 +998,10 @@ export default function QaGeneratorRoute() {
   const [structuredAttrs, setStructuredAttrs] = useState(true);
   const [status, setStatus] = useState<"PUBLISHED" | "PENDING">("PUBLISHED");
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
+  // SPEC-1.10 §2/§3 — share editor fields (percent strings, keyed by locale /
+  // variant title + VARIANT_NONE_KEY). Prefilled by the effects below.
+  const [langShares, setLangShares] = useState<Record<string, string>>({});
+  const [variantShares, setVariantShares] = useState<Record<string, string>>({});
 
   /* ---- Estimate / confirm / modal state ---------------------------------- */
   const [estimateView, setEstimateView] = useState<EstimateView | null>(null);
@@ -1075,6 +1164,67 @@ export default function QaGeneratorRoute() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contextFetcher.state, contextFetcher.data]);
 
+  /* ---- Share editors (SPEC-1.10 §2/§3) ------------------------------------ */
+
+  // Selection in SHOP_LOCALES order — matches both the checkbox list and the
+  // server's stable ordering of config.languages.
+  const orderedLanguages = useMemo(
+    () => (SHOP_LOCALES as readonly string[]).filter((l) => languages.includes(l)),
+    [languages],
+  );
+  const showLanguageShares = orderedLanguages.length > 1;
+
+  // Re-prefill the language editor with an even split whenever the SET of
+  // selected languages changes (documented in the editor's helptext) — a
+  // changed selection invalidates any hand-tuned split anyway.
+  const languagesKey = orderedLanguages.join("|");
+  useEffect(() => {
+    if (orderedLanguages.length <= 1) {
+      setLangShares({});
+      return;
+    }
+    const split = evenSplitPercents(orderedLanguages.length);
+    const next: Record<string, string> = {};
+    orderedLanguages.forEach((lang, i) => {
+      next[lang] = String(split[i]);
+    });
+    setLangShares(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [languagesKey]);
+
+  const variantShareKeys = useMemo(
+    () =>
+      product && product.variants.length > 0 ? [VARIANT_NONE_KEY, ...product.variants] : [],
+    [product],
+  );
+  const showVariantShares = assignVariants && variantShareKeys.length > 0;
+
+  // Re-prefill the variant editor with the default weighting whenever the
+  // product / its variant list changes or the toggle turns on.
+  const variantsKey = `${assignVariants ? "1" : "0"}|${product?.id ?? ""}|${(product?.variants ?? []).join("|")}`;
+  useEffect(() => {
+    if (!showVariantShares) {
+      setVariantShares({});
+      return;
+    }
+    const split = defaultVariantPercents(variantShareKeys.length - 1);
+    const next: Record<string, string> = {};
+    variantShareKeys.forEach((key, i) => {
+      next[key] = String(split[i]);
+    });
+    setVariantShares(next);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [variantsKey]);
+
+  const langShareState = useMemo(
+    () => sharesTotal(langShares, orderedLanguages),
+    [langShares, orderedLanguages],
+  );
+  const variantShareState = useMemo(
+    () => sharesTotal(variantShares, variantShareKeys),
+    [variantShares, variantShareKeys],
+  );
+
   /* ---- Config assembly & validation -------------------------------------- */
 
   const countNumber = useMemo(() => {
@@ -1125,6 +1275,37 @@ export default function QaGeneratorRoute() {
     if (!errors.dateStart && !errors.dateEnd && dateStart > dateEnd) {
       errors.dateEnd = "The end date must be on or after the start date";
     }
+
+    // SPEC-1.10 §2/§3 — the share editors must add up to 100% (±1) before a
+    // config can carry weights. The server normalizes valid weights to exact
+    // review counts by largest remainder.
+    let languageWeights: Record<string, number> | null = null;
+    if (showLanguageShares) {
+      if (langShareState.invalid) {
+        errors.languageShares = "Enter a percentage of 0 or more for every language";
+      } else if (!shareTotalOk(langShareState)) {
+        errors.languageShares = `Language shares must total 100% — currently ${formatShareTotal(langShareState.total)}%`;
+      } else {
+        languageWeights = {};
+        for (const lang of orderedLanguages) {
+          languageWeights[lang] = Number((langShares[lang] ?? "").trim());
+        }
+      }
+    }
+    let variantWeights: Record<string, number> | null = null;
+    if (showVariantShares) {
+      if (variantShareState.invalid) {
+        errors.variantShares = "Enter a percentage of 0 or more for every row";
+      } else if (!shareTotalOk(variantShareState)) {
+        errors.variantShares = `Variant shares must total 100% — currently ${formatShareTotal(variantShareState.total)}%`;
+      } else {
+        variantWeights = {};
+        for (const key of variantShareKeys) {
+          variantWeights[key] = Number((variantShares[key] ?? "").trim());
+        }
+      }
+    }
+
     if (Object.keys(errors).length > 0 || !product) {
       return { errors, configJson: null, total: 0 };
     }
@@ -1148,6 +1329,8 @@ export default function QaGeneratorRoute() {
       assignVariants,
       structuredAttrs,
       status,
+      ...(languageWeights ? { languageWeights } : {}),
+      ...(variantWeights ? { variantWeights } : {}),
     };
     return { errors, configJson: JSON.stringify(config), total: countNumber };
   };
@@ -1705,10 +1888,62 @@ export default function QaGeneratorRoute() {
                       <InlineError message={formErrors.languages} fieldID="qa-languages" />
                     ) : null}
                     <Text as="p" variant="bodySm" tone="subdued">
-                      Reviews split evenly across the selected languages (with a little
-                      jitter). Reviewer names, text and replies follow the assignment.
+                      {showLanguageShares
+                        ? "Reviews follow the language shares below. Reviewer names, text and replies follow the assignment."
+                        : "Reviews split evenly across the selected languages (with a little jitter). Reviewer names, text and replies follow the assignment."}
                     </Text>
                   </BlockStack>
+
+                  {/* ---- Language distribution (SPEC-1.10 §2) ------------- */}
+                  {showLanguageShares ? (
+                    <Box background="bg-surface-secondary" padding="300" borderRadius="200">
+                      <BlockStack gap="200">
+                        <InlineStack gap="200" blockAlign="center" wrap>
+                          <Text as="span" variant="bodySm" fontWeight="semibold">
+                            Language distribution
+                          </Text>
+                          <Text
+                            as="span"
+                            variant="bodySm"
+                            tone={shareTotalOk(langShareState) ? "subdued" : "critical"}
+                          >
+                            Total: {formatShareTotal(langShareState.total)}%
+                          </Text>
+                        </InlineStack>
+                        <FormLayout>
+                          {chunkArray(orderedLanguages, 4).map((row) => (
+                            <FormLayout.Group condensed key={row.join("|")}>
+                              {row.map((lang) => (
+                                <TextField
+                                  key={lang}
+                                  label={LOCALE_LABELS[lang] ?? lang}
+                                  type="number"
+                                  min={0}
+                                  suffix="%"
+                                  autoComplete="off"
+                                  value={langShares[lang] ?? ""}
+                                  onChange={(value) =>
+                                    setLangShares((prev) => ({ ...prev, [lang]: value }))
+                                  }
+                                />
+                              ))}
+                            </FormLayout.Group>
+                          ))}
+                        </FormLayout>
+                        {formErrors.languageShares ? (
+                          <InlineError
+                            message={formErrors.languageShares}
+                            fieldID="qa-language-shares"
+                          />
+                        ) : null}
+                        <Text as="p" variant="bodySm" tone="subdued">
+                          Prefilled with an even split (changing the selection resets it).
+                          The total must be 100% — being off by 1 is fine; the exact review
+                          counts are matched to the shares automatically.
+                        </Text>
+                      </BlockStack>
+                    </Box>
+                  ) : null}
 
                   <FormLayout.Group>
                     <TextField
@@ -1742,7 +1977,9 @@ export default function QaGeneratorRoute() {
                       helpText={
                         (product?.variants.length ?? 0) === 0
                           ? "This product has no variants"
-                          : "Weighted randomly across the real variants; some reviews get none"
+                          : showVariantShares
+                            ? "Reviews follow the variant shares below"
+                            : "Weighted randomly across the real variants; some reviews get none"
                       }
                     />
                     <Checkbox
@@ -1752,6 +1989,57 @@ export default function QaGeneratorRoute() {
                       helpText="Age, skin concerns, time using and results seen — coherent with each rating"
                     />
                   </FormLayout.Group>
+
+                  {/* ---- Variant distribution (SPEC-1.10 §3) --------------- */}
+                  {showVariantShares ? (
+                    <Box background="bg-surface-secondary" padding="300" borderRadius="200">
+                      <BlockStack gap="200">
+                        <InlineStack gap="200" blockAlign="center" wrap>
+                          <Text as="span" variant="bodySm" fontWeight="semibold">
+                            Variant distribution
+                          </Text>
+                          <Text
+                            as="span"
+                            variant="bodySm"
+                            tone={shareTotalOk(variantShareState) ? "subdued" : "critical"}
+                          >
+                            Total: {formatShareTotal(variantShareState.total)}%
+                          </Text>
+                        </InlineStack>
+                        <FormLayout>
+                          {chunkArray(variantShareKeys, 4).map((row) => (
+                            <FormLayout.Group condensed key={row.join("|")}>
+                              {row.map((key) => (
+                                <TextField
+                                  key={key}
+                                  label={key === VARIANT_NONE_KEY ? "No variant" : key}
+                                  type="number"
+                                  min={0}
+                                  suffix="%"
+                                  autoComplete="off"
+                                  value={variantShares[key] ?? ""}
+                                  onChange={(value) =>
+                                    setVariantShares((prev) => ({ ...prev, [key]: value }))
+                                  }
+                                />
+                              ))}
+                            </FormLayout.Group>
+                          ))}
+                        </FormLayout>
+                        {formErrors.variantShares ? (
+                          <InlineError
+                            message={formErrors.variantShares}
+                            fieldID="qa-variant-shares"
+                          />
+                        ) : null}
+                        <Text as="p" variant="bodySm" tone="subdued">
+                          Prefilled with the default weighting (about 1 in 5 reviews mentions
+                          no variant). The total must be 100% — being off by 1 is fine; the
+                          exact review counts are matched to the shares automatically.
+                        </Text>
+                      </BlockStack>
+                    </Box>
+                  ) : null}
 
                   <Select
                     label="Status at creation"

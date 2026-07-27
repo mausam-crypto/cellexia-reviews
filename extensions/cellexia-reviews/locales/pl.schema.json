@@ -47,6 +47,20 @@
         "show_pdp_title_badge": {
           "label": "Pokaż gwiazdki pod tytułem produktu"
         },
+        "pdp_badge_position": {
+          "label": "Pozycja gwiazdek na stronie produktu",
+          "info": "Gdzie na stronach produktów pojawiają się ocena w gwiazdkach i liczba opinii.",
+          "options__1": {
+            "label": "Bezpośrednio pod tytułem"
+          },
+          "options__2": {
+            "label": "Pod sloganem"
+          }
+        },
+        "pdp_badge_selector": {
+          "label": "Umiejscowienie gwiazdek (selektor CSS, opcjonalnie)",
+          "info": "Zaawansowane: gwiazdki są wstawiane po pierwszym elemencie pasującym do tego selektora, co zastępuje wybór pozycji."
+        },
         "enable_badges": {
           "label": "Pokaż odznaki z gwiazdkami na kartach produktów w całej witrynie",
           "info": "Dodaje oceny w postaci gwiazdek obok nazw produktów na stronie głównej, w kolekcjach i w wynikach wyszukiwania dla produktów z opublikowanymi opiniami."

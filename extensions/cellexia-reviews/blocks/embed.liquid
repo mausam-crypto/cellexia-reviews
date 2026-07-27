@@ -9,7 +9,13 @@
     Blocks win: if the reviews app block is also on the page, the JS removes the
     embed root so nothing double-renders.
   - all pages: emits a #cx-embed-config JSON script the JS reads for the sitewide
-    star-badge injector and the PDP title badge.
+    star-badge injector and the PDP title badge, plus the #cx-i18n dictionary
+    (unconditional — the v1.10 §5A preview ribbon can mount on ANY tokenized
+    not-live page, even with every widget/badge surface switched off, and must
+    never render raw preview.* keys). v1.10 (SPEC-1.10 §1) adds
+    pdp_badge_position (under_title — byte-identical default — or under_tagline)
+    and pdp_badge_selector (advanced CSS-selector override), both carried in the
+    config settings and honored by the title-badge code in the JS.
 
   Same live/preview gating as blocks/reviews.liquid (SPEC-1.2): the app-synced
   boolean SHOP metafield `cellexia.live` — only an explicit false means "not live";
@@ -134,7 +140,9 @@
     "enable_badges": {{ block.settings.enable_badges | json }},
     "badge_style": {{ block.settings.badge_style | default: 'stars_count' | json }},
     "badge_selector": {{ block.settings.badge_selector | default: '' | json }},
-    "show_pdp_title_badge": {{ block.settings.show_pdp_title_badge | json }}
+    "show_pdp_title_badge": {{ block.settings.show_pdp_title_badge | json }},
+    "pdp_badge_position": {{ block.settings.pdp_badge_position | default: 'under_title' | json }},
+    "pdp_badge_selector": {{ block.settings.pdp_badge_selector | default: '' | json }}
   },
   "skin": {{ cx_skin | json }},
   "live": {{ cx_is_live | json }},
@@ -155,6 +163,16 @@
   {%- endif %}
 }
 </script>
+{%- comment -%}
+  v1.10 §5A: the i18n dictionary rides with the config script on EVERY page —
+  previewBootstrap() mounts the preview ribbon on any tokenized not-live page,
+  including pages where the widget, badges and PDP title badge are all disabled,
+  and t() must find preview.* there. Small and cached. Shopify's app-snippet
+  comment wrapper (SPEC-1.8 §5) lands OUTSIDE the emitted <script id="cx-i18n">
+  tag, so getElementById is unaffected; a second #cx-i18n from a reviews block
+  on the same page is harmless (getElementById takes the first, same content).
+{%- endcomment -%}
+{% render 'cx-i18n' %}
 {%- if cx_is_product -%}
 {%- if block.settings.enable_product_widget -%}
 {%- comment -%}
@@ -162,7 +180,7 @@
   but id="cellexia-reviews-embed" + data-cx-embed="true" and ALWAYS hidden.
   The JS relocates it (placement_selector or heuristics), reveals it per gating
   and builds every container itself (no SSR content in embed mode). The i18n
-  dictionary rides inside the root, like the block's not-live shell.
+  dictionary is emitted unconditionally next to #cx-embed-config above.
 {%- endcomment -%}
 <div
   id="cellexia-reviews-embed"
@@ -186,15 +204,7 @@
   data-cx-live="{{ cx_show_full }}"
   {% if cx_editor_token != blank %}data-cx-editor-token="{{ cx_editor_token | escape }}"{% endif %}
   hidden
->
-  {% render 'cx-i18n' %}
-</div>
-{%- elsif block.settings.enable_badges or block.settings.show_pdp_title_badge -%}
-{%- comment -%}
-  Product widget disabled but badge features on: the JS still needs the
-  a11y/i18n strings (no widget root to carry them).
-{%- endcomment -%}
-{% render 'cx-i18n' %}
+></div>
 {%- endif -%}
 {%- if cx_is_live -%}
 {%- comment -%}
@@ -203,14 +213,6 @@
   never two Product JSON-LD payloads from this app (SPEC-1.5 §3.6).
 {%- endcomment -%}
 {% render 'cx-jsonld', product: product, marker: 'embed' %}
-{%- endif -%}
-{%- else -%}
-{%- if block.settings.enable_badges -%}
-{%- comment -%}
-  Non-product page with badges enabled: only the config script above plus the
-  i18n dictionary (badges compose their a11y labels from it) — no widget root.
-{%- endcomment -%}
-{% render 'cx-i18n' %}
 {%- endif -%}
 {%- endif -%}
 
@@ -266,6 +268,29 @@
       "id": "show_pdp_title_badge",
       "label": "t:cellexia.embed_block.settings.show_pdp_title_badge.label",
       "default": true
+    },
+    {
+      "type": "select",
+      "id": "pdp_badge_position",
+      "label": "t:cellexia.embed_block.settings.pdp_badge_position.label",
+      "info": "t:cellexia.embed_block.settings.pdp_badge_position.info",
+      "options": [
+        {
+          "value": "under_title",
+          "label": "t:cellexia.embed_block.settings.pdp_badge_position.options__1.label"
+        },
+        {
+          "value": "under_tagline",
+          "label": "t:cellexia.embed_block.settings.pdp_badge_position.options__2.label"
+        }
+      ],
+      "default": "under_title"
+    },
+    {
+      "type": "text",
+      "id": "pdp_badge_selector",
+      "label": "t:cellexia.embed_block.settings.pdp_badge_selector.label",
+      "info": "t:cellexia.embed_block.settings.pdp_badge_selector.info"
     }
   ]
 }

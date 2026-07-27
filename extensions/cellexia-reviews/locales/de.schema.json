@@ -47,6 +47,20 @@
         "show_pdp_title_badge": {
           "label": "Sterne unter dem Produkttitel anzeigen"
         },
+        "pdp_badge_position": {
+          "label": "Position der Sterne auf der Produktseite",
+          "info": "Wo Sternebewertung und Anzahl auf Produktseiten erscheinen.",
+          "options__1": {
+            "label": "Direkt unter dem Titel"
+          },
+          "options__2": {
+            "label": "Unter der Tagline"
+          }
+        },
+        "pdp_badge_selector": {
+          "label": "Platzierung der Sterne (CSS-Selektor, optional)",
+          "info": "Erweitert: Die Sterne werden nach dem ersten Element eingefügt, das diesem Selektor entspricht — dies überschreibt die Positionswahl."
+        },
         "enable_badges": {
           "label": "Sterne-Badges auf Produktkarten im gesamten Shop anzeigen",
           "info": "Fügt Sternebewertungen neben Produktnamen auf der Startseite, in Kategorien und in Suchergebnissen hinzu — für Produkte mit veröffentlichten Rezensionen."

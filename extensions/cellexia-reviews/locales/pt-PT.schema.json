@@ -47,6 +47,20 @@
         "show_pdp_title_badge": {
           "label": "Mostrar estrelas abaixo do título do produto"
         },
+        "pdp_badge_position": {
+          "label": "Posição das estrelas na página de produto",
+          "info": "Onde a classificação por estrelas e o número de avaliações aparecem nas páginas de produto.",
+          "options__1": {
+            "label": "Diretamente abaixo do título"
+          },
+          "options__2": {
+            "label": "Abaixo do slogan"
+          }
+        },
+        "pdp_badge_selector": {
+          "label": "Posicionamento das estrelas (seletor CSS, opcional)",
+          "info": "Avançado: as estrelas são inseridas após o primeiro elemento que corresponda a este seletor, substituindo a escolha da posição."
+        },
         "enable_badges": {
           "label": "Mostrar emblemas de estrelas nos cartões de produto em todo o site",
           "info": "Adiciona classificações por estrelas junto aos nomes dos produtos na página inicial, nas coleções e nos resultados de pesquisa para produtos com avaliações publicadas."

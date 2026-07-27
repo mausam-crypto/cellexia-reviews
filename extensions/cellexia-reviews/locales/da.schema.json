@@ -47,6 +47,20 @@
         "show_pdp_title_badge": {
           "label": "Vis stjerner under produkttitlen"
         },
+        "pdp_badge_position": {
+          "label": "Stjernernes position på produktsiden",
+          "info": "Hvor stjernebedømmelsen og antallet vises på produktsider.",
+          "options__1": {
+            "label": "Direkte under titlen"
+          },
+          "options__2": {
+            "label": "Under taglinen"
+          }
+        },
+        "pdp_badge_selector": {
+          "label": "Placering af stjerner (CSS-selektor, valgfri)",
+          "info": "Avanceret: stjernerne indsættes efter det første element, der matcher denne selektor, og tilsidesætter positionsvalget."
+        },
         "enable_badges": {
           "label": "Vis stjernebadges på produktkort på hele webstedet",
           "info": "Tilføjer stjernebedømmelser ved siden af produktnavne på forsiden, i kollektioner og i søgeresultater for produkter med offentliggjorte anmeldelser."

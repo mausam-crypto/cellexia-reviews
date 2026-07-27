@@ -47,6 +47,20 @@
         "show_pdp_title_badge": {
           "label": "Mostra le stelle sotto il titolo del prodotto"
         },
+        "pdp_badge_position": {
+          "label": "Posizione delle stelle nella pagina prodotto",
+          "info": "Dove compaiono la valutazione a stelle e il numero di recensioni nelle pagine prodotto.",
+          "options__1": {
+            "label": "Direttamente sotto il titolo"
+          },
+          "options__2": {
+            "label": "Sotto lo slogan"
+          }
+        },
+        "pdp_badge_selector": {
+          "label": "Posizionamento delle stelle (selettore CSS, facoltativo)",
+          "info": "Avanzato: le stelle vengono inserite dopo il primo elemento corrispondente a questo selettore, ignorando la scelta della posizione."
+        },
         "enable_badges": {
           "label": "Mostra i badge a stelle sulle schede prodotto in tutto il sito",
           "info": "Aggiunge le valutazioni a stelle accanto ai nomi dei prodotti nella home page, nelle collezioni e nei risultati di ricerca per i prodotti con recensioni pubblicate."

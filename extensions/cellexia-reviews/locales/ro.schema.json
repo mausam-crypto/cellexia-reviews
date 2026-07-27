@@ -47,6 +47,20 @@
         "show_pdp_title_badge": {
           "label": "Afișează stelele sub titlul produsului"
         },
+        "pdp_badge_position": {
+          "label": "Poziția stelelor pe pagina de produs",
+          "info": "Unde apar evaluarea cu stele și numărul de recenzii pe paginile de produs.",
+          "options__1": {
+            "label": "Direct sub titlu"
+          },
+          "options__2": {
+            "label": "Sub slogan"
+          }
+        },
+        "pdp_badge_selector": {
+          "label": "Plasarea stelelor (selector CSS, opțional)",
+          "info": "Avansat: stelele sunt inserate după primul element care corespunde acestui selector, ignorând alegerea poziției."
+        },
         "enable_badges": {
           "label": "Afișează insigne cu stele pe cardurile de produs din întregul site",
           "info": "Adaugă evaluări cu stele lângă numele produselor pe pagina principală, în colecții și în rezultatele căutării pentru produsele cu recenzii publicate."

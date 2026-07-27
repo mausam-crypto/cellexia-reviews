@@ -4,6 +4,101 @@ All notable changes to Cellexia Reviews are documented here. The version number 
 `package.json` and stamped into the release ZIP built by `npm run package`
 (`dist/cellexia-reviews-v<version>.zip`).
 
+## 1.10.0 — 2026-07-28
+
+The "preview works everywhere" release. Previewing was honest but half-blind: it could show
+you a product page, and nothing else reliably. This release makes the private preview work on
+the home page and collections exactly as it does on product pages, explains below — honestly —
+why it didn't before, adds a position choice for the product-page stars, and gives the QA
+generator per-language and per-variant distribution controls.
+
+### Fixed
+
+- **Previewing the home page or a collection page showed no badges and no Overall reviews
+  block — even with everything configured correctly.** Two real causes, both in the app, both
+  now fixed:
+  1. **Preview had exactly one entry point: a product page.** The Dashboard's
+     **Preview on your store** button only ever built a product-page link — and the small
+     piece of code that captures the private token from that link and stores it in the
+     browser tab lived inside the product-page review widget's start-up code, so it only ran
+     on pages where that widget exists. Navigating *from* a previewed product page to the
+     home page in the same tab did carry the preview along — but opening the home page or a
+     collection **directly** (a new tab, a typed address, the theme editor's "view" link)
+     gave that page no token, and the not-live rules then did exactly what they are designed
+     to do for shoppers: hide everything, silently. Which is precisely how merchants
+     naturally test those pages. Now a shared preview bootstrap runs on **every** page that
+     contains any Cellexia surface (widget, card badges, or the Overall block): it captures
+     the token wherever it arrives, shares it with all three surfaces, shows the preview
+     ribbon on every previewed page while the store is not live, and **Exit preview** works
+     from any page. And the Dashboard button is now a small menu with three destinations —
+     **Product page**, **Home page**, **Collection page** — so every page type has a direct,
+     tokenized way in (the collection link uses the built-in "all" collection every Shopify
+     store has).
+  2. **The Overall reviews block rendered literally nothing until its homepage data had been
+     synced.** The block paints from a shop-level data snapshot that, in 1.9.0, was only
+     written after a review changed status or after pressing **Refresh homepage data** — so
+     on a freshly deployed store the block showed nothing at all, even in the theme editor
+     and in preview, with no hint of why. Now, in merchant contexts (theme editor or a valid
+     preview), the block fetches your live review data on the spot and renders the full
+     section **before any sync has happened**; if the store genuinely has zero published
+     reviews, it shows a note only you can see — "Overall reviews will appear here once
+     review data is synced. Open the app's Display order page and press Refresh homepage
+     data." — instead of blank space. The app also refreshes the snapshot by itself, best
+     effort, each time it (re)authenticates after a deploy, so real stores converge without
+     anyone pressing Refresh. Shoppers on a live store see exactly what they saw before.
+- **An expired preview no longer goes silently blank on badge pages.** When a home or
+  collection page carries a preview token that has expired (or was invalidated with
+  **Regenerate preview link**), the page now shows the existing "Preview session expired"
+  notice — visible only to you, once per page — instead of quietly showing nothing and
+  leaving you to guess which of the two it was.
+
+### Added
+
+- **Product-page stars position** (app embed): the star row under the product page's own
+  title can now sit under the tagline instead. Two new embed settings, next to **Show stars
+  under the product title**:
+  - **Product-page stars position** — "Directly under the title" (the default: byte-identical
+    to the previous behavior) or "Under the tagline". The tagline is found automatically
+    (the theme's tagline/subtitle element, or the first paragraph after the title); when a
+    theme has none, the stars fall back to under the title rather than not appearing.
+  - **Stars placement (CSS selector, optional)** — advanced: the stars are inserted after
+    the first element matching the selector, overriding the position choice — same pattern
+    as the card-badge selector override.
+- **QA generator: language distribution.** When more than one language is selected, the
+  configuration card shows one percentage share field per selected language, prefilled with
+  an even split, with a live "Total: N%" readout that must come to 100% (an off-by-one
+  percent from rounding is tolerated and normalized to the exact review count). Review
+  counts per language are derived deterministically from the shares and interleaved across
+  the batch. When only one language is selected the editor does not render and the previous
+  behavior (even split with natural jitter) applies; a visible editor's percentages are always
+  sent and normalized exactly, so an untouched editor yields a precise even split.
+- **QA generator: variant distribution.** The same share editor for product variants when
+  **Assign product variants** is on: one row per variant title plus a "No variant" row, the
+  same 100% rule, the same deterministic assignment. With the variants toggle off the editor
+  does not render and the previous default weighting applies; a visible editor's shares are
+  always applied exactly as displayed.
+
+### Changed
+
+- **Generated reviews no longer contain em or en dashes.** AI-written test reviews had a
+  telltale: dashes (— and –) that real shoppers rarely type. The generator's persona briefs
+  and style rules were rewritten dash-free, the model is explicitly instructed to avoid
+  them, and a deterministic scrub cleans any that slip through in titles, bodies and replies
+  (ordinary hyphens, as in "anti-aging", are untouched).
+
+### Notes
+
+- **Live-store shopper behavior is byte-identical to 1.9.0**, with one intended exception:
+  the new stars-position option, when a merchant selects it. Preview tokens and merchant
+  notices remain invisible to shoppers, as always.
+- No database migration, no new dependencies, no new app permissions. One new storefront
+  string (the merchant-only Overall-block note) translated in all 17 languages; the two new
+  embed settings translated in all 17 theme-editor (schema) locales.
+- Documentation updated: `docs/CONFIGURATION.md` §2 ("Going live & previewing") rewritten
+  around the three preview destinations and how preview follows you across pages; the app
+  embed section documents the stars-position settings; the QA data section documents the
+  distribution editors; the Overall reviews section documents the pre-sync preview behavior.
+
 ## 1.9.0 — 2026-07-27
 
 The "your whole brand's reviews, on your home page" release: one new, optional theme block

@@ -152,6 +152,7 @@
       "error_body": "Diese Meldung ist nur für Sie in der Vorschau sichtbar.",
       "empty_merchant": "Noch keine Bewertungen — importieren Sie Ihre Bewertungen oder erzeugen Sie Testdaten in der App.",
       "empty_pending": "Noch keine veröffentlichten Bewertungen — [[count]] warten in der App auf Freigabe.",
+      "overall_pending": "Die Gesamtbewertungen erscheinen hier, sobald die Bewertungsdaten synchronisiert sind. Öffnen Sie in der App die Seite “Display order” und klicken Sie auf “Refresh homepage data”.",
       "retry": "Erneut versuchen"
     },
     "form": {

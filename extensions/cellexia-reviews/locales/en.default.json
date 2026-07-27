@@ -152,6 +152,7 @@
       "error_body": "This message is only visible to you while previewing.",
       "empty_merchant": "No reviews yet — import your reviews or generate test data in the app.",
       "empty_pending": "No published reviews yet — [[count]] awaiting approval in the app.",
+      "overall_pending": "Overall reviews will appear here once review data is synced. Open the app's Display order page and press Refresh homepage data.",
       "retry": "Try again"
     },
     "form": {

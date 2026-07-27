@@ -50,7 +50,7 @@ The seven checks, and what each one means for you:
 | Check | What it proves | Typical fix when it isn't a pass |
 | --- | --- | --- |
 | **App proxy reachable** | Your storefront can actually reach the app, over the address Shopify forwards to it — and the app's secret key matched, so the connection is genuinely yours. The detail line shows the detected address. | A failure here is a developer task: the app's proxy settings weren't deployed, or another app is using the same address. Send your developer `docs/INSTALL.md` §6 and §11. Everything else on this list depends on this check. |
-| **Preview token round-trip** | The private link behind **Preview on your store** works end to end — which is also what lets the **theme editor** show your real reviews. | **Settings → Data → Regenerate preview link**, then run the test again. |
+| **Preview token round-trip** | The private token behind **Preview on your store** works end to end — the same token powers all three preview destinations (product page, home page, collection page — see §2) and lets the **theme editor** show your real reviews. | **Settings → Data → Regenerate preview link**, then run the test again. |
 | **Theme extension active** | A real storefront page has loaded the widget recently (within the last 7 days). | A warning here usually means the widget isn't on your theme yet: theme editor → **Theme settings → App embeds** → switch **Cellexia Reviews** on (§5), or add the block (§4). A brand-new install warns until the first storefront page loads — that is normal. |
 | **Review data** | How many reviews the app itself holds (published, pending, and on how many products). | A warning at zero published is the single most common reason for "no stars anywhere": the storefront cannot show stars that don't exist yet. Import your existing reviews (§10), add them by hand (§11), or generate test data (§12). Reviews still held by a previous review app are **not** visible to this app until you import them. |
 | **Metafield sync** | The ratings stored in your theme match the ratings in the app. This is what draws the stars under the product title, the star badges on product cards and the Google star data. | A warning offers **Re-sync all products** — press it, then re-run the test. |
@@ -86,12 +86,48 @@ Your storefront is always in one of two states:
   **Preview on your store** and **Go live**.
 - Live: "Live — visitors can see the review widget." with **Preview link** and **Switch off**.
 
-**Previewing**: **Preview on your store** opens one of your product pages in a new tab with the
-widget fully working on your real live theme. Only you see it — the link carries a private
-token that your browser remembers, and a ribbon at the bottom of the page reads "Preview mode —
-Only you can see this — the widget is not live for visitors." with an **Exit preview** button.
-The preview works whether the store is live or not. If the button is disabled, the store has no
-products to preview on yet.
+### Previewing — the three destinations
+
+**Preview on your store** (or **Preview link**, while live) opens a small menu with three
+destinations, so you can check every kind of page the app touches, on your real live theme:
+
+- **Product page** — one of your product pages: the full review widget, the stars under the
+  title, and card badges on any related-product sections. (This entry needs at least one
+  product in the store.)
+- **Home page** — your home page: the card badges on featured products and, if you added it,
+  the **Cellexia Overall Reviews** block (§6).
+- **Collection page** — a collection grid with its card badges. The link uses the built-in
+  "All products" collection, which every Shopify store has.
+
+Whichever you open, only you see it: the link carries a private token, and while the store is
+not live, a ribbon at the bottom of every previewed page reads "Preview mode — Only you can
+see this — the widget is not live for visitors." with an **Exit preview** button. The preview
+works whether the store is live or not.
+
+**How the preview follows you across pages.** Any of the three links opens its page with your
+private token in the address. The first Cellexia element on that page stores the token in that
+browser tab's memory. From then on, every page you *navigate to in the same tab* — click into
+a product, back to the home page, through a collection, anywhere — is previewed too, without
+the token in the address: the widget, the badges, the Overall block and the ribbon all pick up
+the remembered token as you browse. You can effectively walk your whole store as a preview
+from any one of the three links.
+
+**Why a directly opened page shows nothing.** The token lives only in the tab that received
+it. A page opened *directly* — a new tab, a typed or bookmarked address, a link from somewhere
+else — arrives with no token in the address and no token remembered, so the store correctly
+treats you as a shopper and, while not live, shows nothing at all. That is not a fault; it is
+the same rule that protects your shoppers. To preview such a page, open it through one of the
+three preview links, or navigate to it in a tab you already opened from one.
+
+**Ending the preview**: press **Exit preview** on the ribbon — it works from any page, forgets
+the token in that tab, and reloads the page as a visitor would see it. If your preview session
+has expired instead (an old link, or one invalidated with **Regenerate preview link** — see
+below), the page says so with a "Preview session expired" note that only you can see.
+
+**Before version 1.10.0**, the preview button opened a product page only, and only product
+pages captured the token — so home and collection pages opened directly showed no badges and
+no Overall block, however correct the setup was. If previewing those pages seems broken, check
+that you are on 1.10.0 or later first.
 
 **Before you go live**: if you generated synthetic test reviews (§12, "QA data"), delete every
 batch first. Published synthetic reviews are indistinguishable from real ones on the
@@ -109,8 +145,9 @@ preserved, and you can go live again whenever you want.
 
 **Regenerating the preview link**: shared a preview link with someone (an agency, a colleague)
 and want to cut their access? **Settings → Data → Regenerate preview link**. Old links stop
-working immediately; the Dashboard's preview button always uses the current link. A toast
-confirms: "Preview link regenerated — old links no longer work." Anyone opening an old link now
+working immediately; the Dashboard's preview menu always builds its three links from the
+current token. A toast confirms: "Preview link regenerated — old links no longer work."
+Anyone opening an old link now
 gets a clear "Preview session expired" note telling them to reopen the preview from the app —
 and shoppers, as always, see nothing at all.
 
@@ -321,9 +358,30 @@ Expand the embed's row (▸) under App embeds to reach them:
 | Show the review widget on product pages | On | Mounts the full review widget on every product page automatically — no app block needed. It appears right after the product information / add-to-cart area (see the placement setting below to override). |
 | Widget placement (CSS selector, optional) | empty | Leave empty for automatic placement below the product information. Enter a CSS selector to mount the widget after a specific element instead — the widget is inserted after the first match. See "Finding a CSS selector" below. |
 | Show stars under the product title | On | A compact star row with the review count under the product page's own title, linking down to the widget — the same idea as the Cellexia Star Badge block, and skipped automatically when that block is already on the page. Shows nothing while the product has no published reviews. |
+| Product-page stars position | Directly under the title | Where that star row sits on the product page — the two choices are explained under "Positioning the product-page stars" below. |
+| Stars placement (CSS selector, optional) | empty | Advanced: the stars are inserted after the **first** element matching this selector, overriding the position choice above. See "Finding a CSS selector" below. |
 | Show star badges on product cards site-wide | On | Adds star ratings next to product names on the home page, collections, and search results for products with published reviews. |
 | Badge style | Stars and review count | **Stars and review count** shows the stars followed by the number of reviews in parentheses; **Stars only** drops the number. |
 | Card title element (CSS selector, optional) | empty | Advanced: only needed if badges don't find your theme's product card titles automatically — enter the selector of the card-title element and badges attach right after it. |
+
+### Positioning the product-page stars
+
+The **Product-page stars position** setting decides where the star row sits on your product
+pages (it only matters while **Show stars under the product title** is on):
+
+- **"Directly under the title"** (the default) — right after the product title, exactly where
+  the stars have always been. Leaving the setting on its default changes nothing at all.
+- **"Under the tagline"** — after the short tagline / subtitle many themes show beneath the
+  title, so the reading order becomes title → tagline → stars. The app finds the tagline
+  automatically (it knows the common theme patterns, and otherwise takes the first paragraph
+  following the title); on a theme that has no tagline at all, the stars simply stay under the
+  title — the row never fails to appear because of this setting.
+
+For full control, **Stars placement (CSS selector, optional)** overrides the choice entirely:
+enter any CSS selector and the stars are inserted right after the first matching element —
+the same mechanism as the card-badge selector, including the same safety net: a selector that
+never matches falls back to the automatic behavior instead of breaking anything. Changing the
+position never duplicates the row — the stars appear exactly once per page whatever you pick.
 
 ### How badges pick your products up automatically
 
@@ -337,13 +395,17 @@ picked up too. The badge inherits the card's own text size and follows your desi
 (§3, "Design") — Amazon-orange, Cellexia-ink or Luxe-gold stars, automatically.
 
 While the store is **not live**, the badges do nothing at all for visitors — no badges, no
-requests — exactly like the widget (§2).
+requests — exactly like the widget (§2). To see them yourself on the home page or a
+collection, use the **Home page** / **Collection page** preview destinations (§2). If your
+preview session has expired on such a page, it now says so — a small "Preview session
+expired" note only you can see — rather than silently showing no badges.
 
-### Finding a CSS selector (for the two optional overrides)
+### Finding a CSS selector (for the three optional overrides)
 
-You only need this if the automatic placement or the automatic card detection doesn't suit
-your theme. In Chrome/Edge/Firefox: right-click the element on your storefront (the element
-the widget should follow, or a product card's title) → **Inspect** → read the highlighted
+You only need this if the automatic widget placement, the automatic stars position or the
+automatic card detection doesn't suit your theme. In Chrome/Edge/Firefox: right-click the
+element on your storefront (the element
+the widget or the star row should follow, or a product card's title) → **Inspect** → read the highlighted
 element's class in the panel, e.g. `product-info__blocks` or `card__heading`, and enter it
 with a leading dot (`.product-info__blocks`, `.card__heading`). Your theme's developer can
 supply these in seconds if in doubt — and if a selector never matches, the app quietly falls
@@ -374,10 +436,22 @@ What shoppers see (all of it painted instantly, with no waiting on scripts):
   linking straight to that product's review section plus a "Read 6,214 reviews" link.
 - Optionally, a button of your choice at the end (e.g. "Shop bestsellers").
 
-If your store has **no published reviews yet**, the block renders nothing at all — no empty
-frame — and the usual visibility rules apply unchanged: while the store is **Not live** (§2),
-visitors see nothing and no data is served; the theme editor and your private preview show
-the block fully.
+If your store has **no published reviews yet**, the block renders nothing at all for
+visitors — no empty frame — and the usual visibility rules apply unchanged: while the store
+is **Not live** (§2), visitors see nothing and no data is served; the theme editor and your
+private preview show the block fully.
+
+**What you see before the homepage data is synced (1.10.0).** The block paints for shoppers
+from a data snapshot synced to your theme. Right after installing or updating, that snapshot
+may not exist yet — and in 1.9.0 the block then showed nothing at all, even to you. Since
+1.10.0 the block no longer leaves you guessing: in the **theme editor** and in your **private
+preview** (§2), when the snapshot is missing it fetches your live review data on the spot and
+renders the full section anyway — so you can place and style the block before any sync has
+happened. Only when the store genuinely has zero published reviews does it show a note that
+only you can see instead of blank space: "Overall reviews will appear here once review data
+is synced. Open the app's Display order page and press Refresh homepage data." Shoppers on a
+live store are unaffected either way: they see the block only once the snapshot exists, and
+nothing before.
 
 ### Adding the block in the theme editor
 
@@ -431,7 +505,10 @@ removes it. The cap of 12 applies there too.
 ### Refreshing, and the one-minute note
 
 The block's numbers update **automatically** whenever your reviews change — approvals,
-imports, deletions, generation — batched so that even a large import re-syncs cheaply. When
+imports, deletions, generation — batched so that even a large import re-syncs cheaply. Since
+1.10.0 the app also refreshes the snapshot by itself, best effort, whenever it reconnects to
+your store (for example after a deploy) — so a freshly updated store converges on its own,
+without anyone pressing a button. When
 you want the theme updated *right now* (say, after picking new favorites), press **Refresh
 homepage data** on the same card; its help text states the contract: "updates automatically
 as reviews change; changes appear within a minute." As everywhere else in the app, the
@@ -690,7 +767,9 @@ most reviews get few), a **date range** the reviews are backdated into, whether 
 **product variants**, whether to fill the **structured answers** (coherently with each
 review's rating), and the **status** they are created with (Published to see them in the
 widget immediately, or Pending). Over 36 different reviewer personas keep the tone and length
-varied.
+varied. Since 1.10.0 the generated text also avoids one classic AI giveaway: titles, bodies
+and replies never contain em or en dashes (— –) — real shoppers rarely type those — while
+ordinary hyphens ("anti-aging") are kept.
 
 There is no longer an upper limit on the number of reviews (versions before 1.7.0 capped a
 batch at 200). Above **500** reviews the page shows an inline warning with the estimated cost
@@ -704,6 +783,28 @@ the tab entirely, and the reviews keep being created. The form stays filled, so 
 a second, different job right away — for the same product or another one. Several jobs run
 simultaneously: the app works on up to two at a time for your store and queues the rest in
 order.
+
+### Spreading reviews across languages and variants
+
+Two of the knobs above grew precise controls in 1.10.0 — both optional, both invisible until
+they apply:
+
+- **Language shares.** As soon as you select **more than one language**, the configuration
+  card shows a percentage field per selected language, prefilled with an even split. Type
+  your own shares (say French 70%, English 30%): a live "Total: N%" readout follows your
+  edits, and the card flags the total inline unless it comes to **100%** (being one percent
+  off from rounding is tolerated — the app normalizes the shares to the exact number of
+  reviews). The per-language counts are derived exactly from the shares, and the languages
+  are interleaved across the batch rather than generated in blocks, so the result reads
+  naturally in the widget.
+- **Variant shares.** When **Assign product variants** is on, the same editor appears for
+  variants: one row per variant title, plus a **"No variant"** row for reviews that should
+  not name one. Same prefill, same live total, same 100% rule, same exact counts.
+
+With a single language selected (or variants off) nothing changes — the previous
+even-split-with-jitter and random variant weighting still apply. Once an editor is shown,
+its percentages are always honored exactly, so an untouched editor yields a precise even
+split (and a precise 22% no-variant share) rather than the old random jitter.
 
 ### Estimating cost and time first
 
@@ -794,10 +895,21 @@ remains.
   cards site-wide" setting is off (§5); the store isn't live yet (§2); or those products have
   no published reviews — badges only appear for reviewed products. Unusual theme? See
   "Card title element (CSS selector, optional)" in §5.
+- **No badges when I preview the home page or a collection** → make sure you are on
+  **1.10.0 or later** and open the page through the preview menu's **Home page** /
+  **Collection page** destination (§2). Before 1.10.0 the preview could only open a product
+  page and only product pages captured the private token — so home and collection pages
+  opened directly had no token and, correctly but confusingly, showed nothing. On 1.10.0+,
+  a previewed badge page that shows a "Preview session expired" note means exactly that:
+  reopen the preview from the Dashboard.
 - **The Overall reviews block shows nothing on my home page** → the store may not be live
-  yet (§2 — the theme editor and your private preview always show it), or the store has no
-  published reviews at all — the block deliberately renders nothing rather than an empty
-  frame (§6). Just changed the picks or imported reviews? Give it a minute, or press
+  yet (§2 — reach the home page through the preview menu's **Home page** destination, or the
+  theme editor, and the block shows fully), or the store has no published reviews at all —
+  for visitors the block deliberately renders nothing rather than an empty frame (§6). Since
+  1.10.0 the theme editor and your preview can no longer show you a silent blank: before the
+  first data sync they render the block from live data, and with zero published reviews they
+  show the merchant-only note instead (§6, "What you see before the homepage data is
+  synced"). Just changed the picks or imported reviews? Give it a minute, or press
   **Refresh homepage data** on the Display order page (§6).
 - **Reviews aren't in the order I set** → the storefront caches review data for 60 seconds,
   so give a display change up to a minute (§7). Also remember that featured reviews and your

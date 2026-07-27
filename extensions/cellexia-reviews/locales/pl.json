@@ -160,6 +160,7 @@
       "error_body": "Ta wiadomość jest widoczna tylko dla Ciebie podczas podglądu.",
       "empty_merchant": "Brak opinii — zaimportuj swoje opinie lub wygeneruj dane testowe w aplikacji.",
       "empty_pending": "Brak opublikowanych opinii — [[count]] oczekuje na zatwierdzenie w aplikacji.",
+      "overall_pending": "Ogólne opinie pojawią się tutaj po zsynchronizowaniu danych opinii. Otwórz stronę „Display order” w aplikacji i naciśnij „Refresh homepage data”.",
       "retry": "Spróbuj ponownie"
     },
     "form": {

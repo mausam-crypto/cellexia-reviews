@@ -152,6 +152,7 @@
       "error_body": "Tämä viesti näkyy vain sinulle esikatselun aikana.",
       "empty_merchant": "Ei vielä arvosteluja — tuo arvostelusi tai luo testidataa sovelluksessa.",
       "empty_pending": "Ei vielä julkaistuja arvosteluja — [[count]] odottaa hyväksyntää sovelluksessa.",
+      "overall_pending": "Kokonaisarvostelut näkyvät tässä, kun arvosteludata on synkronoitu. Avaa sovelluksen “Display order” -sivu ja paina “Refresh homepage data”.",
       "retry": "Yritä uudelleen"
     },
     "form": {

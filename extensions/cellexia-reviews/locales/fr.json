@@ -152,6 +152,7 @@
       "error_body": "Ce message n'est visible que par vous pendant l'aperçu.",
       "empty_merchant": "Aucun avis pour l'instant — importez vos avis ou générez des données de test dans l'application.",
       "empty_pending": "Aucun avis publié pour l'instant — [[count]] en attente d'approbation dans l'application.",
+      "overall_pending": "Les avis globaux apparaîtront ici une fois les données d'avis synchronisées. Ouvrez la page « Display order » de l'application et appuyez sur « Refresh homepage data ».",
       "retry": "Réessayer"
     },
     "form": {

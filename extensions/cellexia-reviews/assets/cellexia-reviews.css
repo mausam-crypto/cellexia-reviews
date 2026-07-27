@@ -754,6 +754,13 @@ a.cx.cx-badge-inline:is(:hover, :focus, :active) { text-decoration:none;color:va
 @media (prefers-reduced-motion:reduce) { .cx-overall__cards--carousel { scroll-behavior:auto !important;} }
 @media print { .cx-overall__nav, .cx-overall__reset { display:none !important;} }
 
+/* 19. v1.10 (SPEC-1.10 §5C/§5D) merchant-only surfaces, skin-neutral like §17:
+   the Overall block's pending placeholder centers under its header column;
+   .cx-page-notice wraps the expired-preview notice the badge injector mounts
+   at the top of <main> on badge-only pages (never rendered for shoppers). */
+.cx-overall .cx-notice { max-inline-size:640px;margin-inline:auto;}
+.cx.cx-page-notice { margin:12px auto;padding-inline:16px;max-inline-size:960px;}
+
 /* ===== Skin: cellexia ===== */
 /* v1.1 (SPEC-1.1) CSS-only skin, scoped to data-cx-skin="cellexia" (.cx roots +
    top-layer surfaces — the JS copies the attr on open, mirroring §1). No font

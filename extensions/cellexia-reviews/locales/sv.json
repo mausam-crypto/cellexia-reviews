@@ -152,6 +152,7 @@
       "error_body": "Detta meddelande visas endast för dig under förhandsgranskningen.",
       "empty_merchant": "Inga omdömen ännu — importera dina omdömen eller skapa testdata i appen.",
       "empty_pending": "Inga publicerade omdömen ännu — [[count]] väntar på godkännande i appen.",
+      "overall_pending": "De samlade omdömena visas här när omdömesdatan har synkroniserats. Öppna sidan “Display order” i appen och tryck på “Refresh homepage data”.",
       "retry": "Försök igen"
     },
     "form": {

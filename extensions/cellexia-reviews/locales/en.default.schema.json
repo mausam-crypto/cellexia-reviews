@@ -47,6 +47,20 @@
         "show_pdp_title_badge": {
           "label": "Show stars under the product title"
         },
+        "pdp_badge_position": {
+          "label": "Product-page stars position",
+          "info": "Where the star rating and count appear on product pages.",
+          "options__1": {
+            "label": "Directly under the title"
+          },
+          "options__2": {
+            "label": "Under the tagline"
+          }
+        },
+        "pdp_badge_selector": {
+          "label": "Stars placement (CSS selector, optional)",
+          "info": "Advanced: the stars are inserted after the first element matching this selector, overriding the position choice."
+        },
         "enable_badges": {
           "label": "Show star badges on product cards site-wide",
           "info": "Adds star ratings next to product names on the home page, collections, and search results for products with published reviews."

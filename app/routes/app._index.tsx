@@ -718,7 +718,7 @@ interface PreviewUrlsView {
 /**
  * The multi-destination preview menu (SPEC-1.10 §5 fix B): a Popover /
  * ActionList offering the tokenized preview on the product page, the home
- * page and the collection page (`/collections/all` — it exists on every
+ * page and the collection page (resolved to the store's real catalog collection, e.g. `shop-all` — falls back to `all`, which exists on every
  * Shopify store), each opening in a new tab exactly like the old
  * single-destination button did. When the store has no product page to
  * preview on (`previewUrls.product` is null) only the product item is

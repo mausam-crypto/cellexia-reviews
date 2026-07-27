@@ -375,17 +375,11 @@ var cfg = {
 var isLive = attr("cx-live", "true") !== "false";
 var designMode = inDesignMode();
 var isEmbed = root.getAttribute("data-cx-embed") === "true";
-// RC-A: the editor authenticates via token even though Liquid reports live
-// there. v1.6.1 §B: a LIVE store may carry a URL-only token too (the server
-// gates meta.pendingCount on a token IT validated); it is never persisted, so
-// a junk value handed to a visitor cannot follow them across the session.
+// RC-A: editor authenticates via token. v1.6.1 §B: LIVE stores carry a
+// URL-only token (never persisted; server validates before returning meta).
 var previewToken = getPreviewToken(root, readEmbedConfig()); // v1.10 §5A shared accessor, same rules
-// Decides the whole failure UX (§4); everyone else is a shopper and must
-// never see a notice, an error box or a token. A token holder counts as a
-// merchant on a LIVE store too (docs/CONFIGURATION.md §2 — the worst failures
-// leave no response to verify against; the ribbon uses the same rule). Safe:
-// notices carry NO shop data; merchant-only DATA stays gated on server proof
-// (readPendingCount trusts `meta`, returned for a validated token only).
+// §4 failure UX gate. Token holders are merchants on LIVE stores too (same
+// rule as the ribbon; notices carry no shop data — DATA stays server-gated).
 var isMerchantContext = designMode || !!previewToken;
 if (!isLive) {
  if (previewToken || designMode) {
@@ -2595,6 +2589,14 @@ function initBadges(cfgE, I) {
 function initOverall(root) {
  if (!root || root.getAttribute("data-cx-overall-init") === "true") return;
  sa(root, "data-cx-overall-init", "true");
+ // v1.10.2: sections on container-less themes are full-bleed — reuse the
+ // v1.5.1 gutter detection (re-applied on debounced resize).
+ applyGutters(root);
+ var gt = null;
+ on(window, "resize", function () {
+  if (gt) clearTimeout(gt);
+  gt = setTimeout(function () { themeMaxCache = null; root.style.removeProperty("--cx-embed-max"); applyGutters(root); }, 250);
+ }, { passive: true });
  function ga(n, d) { var v = root.getAttribute("data-" + n); return v === null || v === "" ? d : v; }
  function each(l, f) { Array.prototype.forEach.call(l, f); }
  var demo = ga("demo", "false") === "true";

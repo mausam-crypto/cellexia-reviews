@@ -4,6 +4,29 @@ All notable changes to Cellexia Reviews are documented here. The version number 
 `package.json` and stamped into the release ZIP built by `npm run package`
 (`dist/cellexia-reviews-v<version>.zip`).
 
+## 1.10.2 — 2026-07-28
+
+### Fixed
+
+- **Overall reviews block spacing on full-bleed themes.** On themes whose sections have no
+  inner container (like the Cellexia theme), the homepage Overall reviews block ran nearly
+  edge-to-edge on desktop and mobile. It now reuses the widget's gutter detection: when its
+  section is full-bleed it centers itself at the theme's measured content width with generous
+  side padding (24px on mobile up to 64px on desktop, matching the surrounding sections);
+  themes that already provide a container are untouched. Re-checked automatically on window
+  resize and rotation.
+
+## 1.10.1 — 2026-07-28
+
+### Fixed
+
+- **Collection preview opens the store's real catalog collection.** The Collection page entry
+  in the preview menu previously hardcoded Shopify's implicit `/collections/all`. It now
+  resolves the store's own catalog collection (preferring the handles `shop-all`, `all`,
+  `all-products`, `shop`, then the first published collection, with `/collections/all` as the
+  final fallback), so previewing lands on the page shoppers actually visit — on the Cellexia
+  store, `/collections/shop-all`. The result is cached for ten minutes.
+
 ## 1.10.0 — 2026-07-28
 
 The "preview works everywhere" release. Previewing was honest but half-blind: it could show

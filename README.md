@@ -25,7 +25,7 @@ extension — no theme code edits, uninstall-safe.
   storefront — a new install starts **Not live**, so visitors see no widget, no review data and
   no JSON-LD until you click **Go live** on the Dashboard. Before (and after) that,
   **Preview on your store** opens a tokenized preview on the real live theme that only you can
-  see — a three-destination menu since 1.10.0 (**Product page**, **Home page**,
+  see — a three-destination menu since 1.10.2 (**Product page**, **Home page**,
   **Collection page**), covering every surface: widget, card badges and the Overall reviews
   block. The preview follows you across pages in the same tab (the token is captured on any
   page with a Cellexia surface and remembered by the tab), the ribbon and **Exit preview**

@@ -667,6 +667,11 @@ a.cx.cx-badge-inline:is(:hover, :focus, :active) { text-decoration:none;color:va
   margin-block:clamp(28px, 5vw, 56px);
 }
 .cx.cx--in-container { margin-block:clamp(28px, 5vw, 56px);}
+/* v1.10.2: the homepage Overall block breathes more than the PDP widget —
+   larger padding floor on mobile (24px, matching the theme's airy sections)
+   and a wider clamp on desktop. Applies only when the block manages its own
+   gutters (full-bleed theme section); container-providing themes unaffected. */
+.cx-overall.cx--self-contained { padding-inline:clamp(24px, 5vw, 64px);}
 
 /* 17. v1.6 merchant notices (SPEC-1.6 §4) — the ONLY new component in this
    release. Skin-neutral by design (hairline border, muted 13px text,

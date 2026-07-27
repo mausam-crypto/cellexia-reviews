@@ -7,8 +7,8 @@
  *
  * v1.10 makes the preview multi-destination: `getPreviewUrls` returns one
  * tokenized URL per storefront surface — the product page (full widget), the
- * home page (Overall reviews block + card badges) and the `/collections/all`
- * collection page (card badges; the `all` collection always exists on
+ * home page (Overall reviews block + card badges) and the collection page
+ * (card badges; the handle is resolved to the store's real catalog collection,
  * Shopify) — so merchants can open the preview directly on any page instead
  * of having to navigate there from a tokenized product page.
  *
@@ -82,7 +82,8 @@ export async function getPreviewUrl(admin: AdminClient, shop: string): Promise<s
  *
  * `product` is null when the store has no product page to preview on — the
  * admin disables that menu item only; home and collection are always
- * available (`/collections/all` exists on every Shopify store).
+ * available (the collection handle resolves to the store's catalog collection,
+ * falling back to Shopify's implicit `all`).
  */
 export interface PreviewUrls {
   product: string | null;
@@ -94,11 +95,13 @@ export interface PreviewUrls {
  * Returns the tokenized preview URLs for every preview destination:
  * `https://{shop}/products/{handle}?cx_preview={t}` (or null without a
  * product), `https://{shop}/?cx_preview={t}` and
- * `https://{shop}/collections/all?cx_preview={t}`.
+ * `https://{shop}/collections/{resolved-handle}?cx_preview={t}` (see
+ * findPreviewCollectionHandle for the resolution order).
  */
 export async function getPreviewUrls(admin: AdminClient, shop: string): Promise<PreviewUrls> {
-  const [handle, settings] = await Promise.all([
+  const [handle, collectionHandle, settings] = await Promise.all([
     findPreviewProductHandle(admin, shop),
+    findPreviewCollectionHandle(admin, shop),
     getSettings(shop),
   ]);
 
@@ -115,8 +118,67 @@ export async function getPreviewUrls(admin: AdminClient, shop: string): Promise<
     product:
       handle && token ? `${base}/products/${encodeURIComponent(handle)}${query}` : null,
     home: `${base}/${query}`,
-    collection: `${base}/collections/all${query}`,
+    collection: `${base}/collections/${encodeURIComponent(collectionHandle)}${query}`,
   };
+}
+
+/**
+ * Picks the collection the merchant would actually call their catalog page.
+ *
+ * Merchants rarely use Shopify's implicit `/collections/all`; stores like
+ * Cellexia's use a hand-made "shop-all" collection, and previewing the
+ * implicit one shows a page shoppers never visit. Resolution order:
+ *   1. a published collection whose handle is one of PREFERRED_COLLECTION_HANDLES
+ *      (in that order);
+ *   2. the first published collection returned by the Admin API;
+ *   3. the literal `all` (always renderable on Shopify).
+ * Cached per shop for 10 minutes — the Dashboard calls this on every load.
+ */
+const PREFERRED_COLLECTION_HANDLES = ["shop-all", "all", "all-products", "shop"];
+const COLLECTION_CACHE_TTL_MS = 10 * 60 * 1000;
+const collectionCache = new Map<string, { handle: string; expires: number }>();
+
+const PREVIEW_COLLECTIONS_QUERY = `#graphql
+  query CellexiaPreviewCollections {
+    collections(first: 50, sortKey: UPDATED_AT, reverse: true) {
+      nodes {
+        handle
+        publishedOnCurrentPublication
+      }
+    }
+  }
+`;
+
+async function findPreviewCollectionHandle(admin: AdminClient, shop: string): Promise<string> {
+  const cached = collectionCache.get(shop);
+  if (cached && cached.expires > Date.now()) return cached.handle;
+
+  let handle = "all";
+  try {
+    const response = await admin.graphql(PREVIEW_COLLECTIONS_QUERY);
+    const json = (await response.json()) as {
+      data?: {
+        collections?: {
+          nodes?: Array<{ handle?: string; publishedOnCurrentPublication?: boolean }>;
+        };
+      };
+    };
+    const published = (json.data?.collections?.nodes ?? []).filter(
+      (node): node is { handle: string; publishedOnCurrentPublication?: boolean } =>
+        typeof node.handle === "string" &&
+        node.handle.length > 0 &&
+        node.publishedOnCurrentPublication !== false,
+    );
+    const preferred = PREFERRED_COLLECTION_HANDLES.map((wanted) =>
+      published.find((node) => node.handle === wanted),
+    ).find(Boolean);
+    handle = preferred?.handle ?? published[0]?.handle ?? "all";
+  } catch (error) {
+    console.error("[cellexia] preview collection lookup failed", error);
+  }
+
+  collectionCache.set(shop, { handle, expires: Date.now() + COLLECTION_CACHE_TTL_MS });
+  return handle;
 }
 
 /* ------------------------------------------------------------------------- *

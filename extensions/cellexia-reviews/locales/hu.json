@@ -11,6 +11,7 @@
         "one": "[[count]] csillag",
         "other": "[[count]] csillag"
       },
+      "see_reviews": "Vásárlói vélemények megtekintése",
       "percent": "[[percent]]%",
       "how_link": "Hogyan működnek a vásárlói értékelések és csillagok?",
       "how_body": "A vásárlói értékelések – beleértve a termékek csillagos értékeléseit – segítenek más vásárlóknak megismerni a terméket, és eldönteni, hogy megfelelő-e számukra. A csillagokat valódi vásárlói vélemények alapján számítjuk ki. Az értékeléseket közzététel előtt ellenőrizzük, a vásárlásokat pedig lehetőség szerint hitelesítjük.",
@@ -198,6 +199,7 @@
     },
     "a11y": {
       "stars_label": "[[rating]] az 5 csillagból",
+      "ratings_breakdown": "Értékelések megoszlása",
       "rating_input": "Válasszon csillagos értékelést",
       "open_gallery": "Vásárlói médiagaléria megnyitása",
       "open_media": "[[name]] médiatartalmának megtekintése",

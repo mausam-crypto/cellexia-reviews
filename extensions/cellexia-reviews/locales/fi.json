@@ -11,6 +11,7 @@
         "one": "[[count]] tähti",
         "other": "[[count]] tähteä"
       },
+      "see_reviews": "Katso asiakasarvostelut",
       "percent": "[[percent]] %",
       "how_link": "Näin asiakasarvostelut ja arviot toimivat",
       "how_body": "Asiakasarvostelut ja tuotteiden tähtiarviot auttavat muita ostajia saamaan lisätietoa tuotteesta ja päättämään, sopiiko se heille. Arviot lasketaan aitojen asiakasarvostelujen perusteella. Arvostelut tarkistetaan ennen julkaisua, ja ostot varmennetaan aina kun mahdollista.",
@@ -198,6 +199,7 @@
     },
     "a11y": {
       "stars_label": "[[rating]] / 5 tähteä",
+      "ratings_breakdown": "Arvostelujen jakauma",
       "rating_input": "Valitse tähtiarvio",
       "open_gallery": "Avaa asiakkaiden mediagalleria",
       "open_media": "Näytä asiakkaan [[name]] media",

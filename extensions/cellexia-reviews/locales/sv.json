@@ -11,6 +11,7 @@
         "one": "[[count]] stjärna",
         "other": "[[count]] stjärnor"
       },
+      "see_reviews": "Se kundrecensioner",
       "percent": "[[percent]] %",
       "how_link": "Så fungerar kundrecensioner och betyg",
       "how_body": "Kundrecensioner, inklusive produkternas stjärnbetyg, hjälper andra kunder att lära sig mer om produkten och avgöra om den passar dem. Betygen beräknas utifrån äkta kundrecensioner. Recensionerna granskas innan de publiceras, och köp verifieras när det är möjligt.",
@@ -198,6 +199,7 @@
     },
     "a11y": {
       "stars_label": "[[rating]] av 5 stjärnor",
+      "ratings_breakdown": "Fördelning av betyg",
       "rating_input": "Välj ett stjärnbetyg",
       "open_gallery": "Öppna galleriet med kundmedia",
       "open_media": "Visa media från [[name]]",

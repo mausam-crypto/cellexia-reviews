@@ -50,10 +50,16 @@ extension — no theme code edits, uninstall-safe.
 - **App embed with site-wide star badges**: for themes that don't accept app blocks on product
   templates, one toggle in the theme editor (Theme settings → App embeds) mounts the full
   widget on every product page automatically — with an optional CSS-selector placement
-  override — and can show stars under the product page's own title, positioned **directly
-  under the title** (the default) or **under the tagline**, with its own CSS-selector
-  override for exact placement (safe fallbacks: a missing tagline or unmatched selector
-  falls back to under the title, never a missing row). It also injects **star
+  override — and can show an **Amazon-exact rating badge under the product page's own
+  title** (since 1.12.0): the average ("4.6"), stars rounded to the nearest half exactly like
+  Amazon, a caret, and the review count as a link — with a **ratings-breakdown popover**
+  (stars + "4.6 out of 5", "1,936 global ratings", the 5→1 star meter rows, and "See customer
+  reviews") that opens on click or hover, closes via X / Escape / tapping outside, clamps
+  itself inside the viewport on mobile, and whose star rows jump to the review list filtered
+  to that rating. Positioned **directly under the title** (the default) or **under the
+  tagline**, with its own CSS-selector override for exact placement (safe fallbacks: a
+  missing tagline or unmatched selector falls back to under the title, never a missing row).
+  It also injects **star
   badges next to product names on product cards across the whole store** (home, collections,
   search, featured sections) for products with published reviews: one batched, cached request
   per page, automatic card detection with an advanced selector override, all three design
@@ -277,4 +283,4 @@ Full production installation, hosting and store setup: **[docs/INSTALL.md](docs/
 
 ## Version
 
-Current version: **1.11.0** — see [CHANGELOG.md](CHANGELOG.md).
+Current version: **1.12.0** — see [CHANGELOG.md](CHANGELOG.md).

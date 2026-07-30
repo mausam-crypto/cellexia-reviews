@@ -11,6 +11,7 @@
         "one": "[[count]] Stern",
         "other": "[[count]] Sterne"
       },
+      "see_reviews": "Kundenbewertungen ansehen",
       "percent": "[[percent]] %",
       "how_link": "So funktionieren Kundenbewertungen und -rezensionen",
       "how_body": "Kundenbewertungen, einschließlich der Produkt-Sternebewertungen, helfen anderen Kundinnen und Kunden, mehr über das Produkt zu erfahren und zu entscheiden, ob es das richtige für sie ist. Die Bewertungen werden aus echten Kundenrezensionen berechnet. Rezensionen werden vor der Veröffentlichung geprüft, und Käufe werden nach Möglichkeit verifiziert.",
@@ -198,6 +199,7 @@
     },
     "a11y": {
       "stars_label": "[[rating]] von 5 Sternen",
+      "ratings_breakdown": "Aufschlüsselung der Bewertungen",
       "rating_input": "Sternebewertung auswählen",
       "open_gallery": "Kundenmedien-Galerie öffnen",
       "open_media": "Medien von [[name]] ansehen",

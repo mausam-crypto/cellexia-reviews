@@ -11,6 +11,7 @@
         "one": "[[count]] étoile",
         "other": "[[count]] étoiles"
       },
+      "see_reviews": "Voir les avis clients",
       "percent": "[[percent]] %",
       "how_link": "Comment fonctionnent les avis et évaluations clients",
       "how_body": "Les avis clients, y compris les évaluations par étoiles des produits, aident les autres clients à mieux connaître le produit et à décider s'il leur convient. Les évaluations sont calculées à partir d'avis clients authentiques. Les avis sont vérifiés avant leur publication, et les achats sont contrôlés dans la mesure du possible.",
@@ -198,6 +199,7 @@
     },
     "a11y": {
       "stars_label": "[[rating]] étoiles sur 5",
+      "ratings_breakdown": "Détail des évaluations",
       "rating_input": "Sélectionnez une note en étoiles",
       "open_gallery": "Ouvrir la galerie de contenus clients",
       "open_media": "Voir le contenu de [[name]]",

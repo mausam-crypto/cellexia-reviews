@@ -104,11 +104,20 @@
   endcomment
   assign cx_rating = 0
   assign cx_count = 0
+  assign cx_dist = nil
   if cx_is_product
     assign cx_ns = product.metafields.cellexia
     if cx_ns.rating and cx_ns.rating_count
       assign cx_rating = cx_ns.rating.value | times: 1.0
       assign cx_count = cx_ns.rating_count.value | times: 1
+    endif
+    comment
+      SPEC-1.12 §5: star distribution for the PDP badge's ratings-breakdown
+      popover — instant SSR paint; absent metafield serializes as null and the
+      JS falls back to the first widget list load (cellexia:loaded).
+    endcomment
+    if cx_ns.distribution
+      assign cx_dist = cx_ns.distribution.value
     endif
   endif
 -%}
@@ -156,7 +165,8 @@
     "title": {{ product.title | json }},
     "url": {{ product.url | json }},
     "rating": {{ cx_rating | json }},
-    "ratingCount": {{ cx_count | json }}
+    "ratingCount": {{ cx_count | json }},
+    "distribution": {{ cx_dist | json }}
   }
   {%- else %}
   "product": null

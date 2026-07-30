@@ -4,6 +4,35 @@ All notable changes to Cellexia Reviews are documented here. The version number 
 `package.json` and stamped into the release ZIP built by `npm run package`
 (`dist/cellexia-reviews-v<version>.zip`).
 
+## 1.12.0 — 2026-07-30
+
+### Added
+
+- **Amazon-exact product-page rating badge with ratings-breakdown popover** (SPEC-1.12).
+  The badge under the product title now matches Amazon's anatomy exactly: the average
+  ("4.6") before stars rounded to the nearest half star like Amazon does, a small caret,
+  and the review count ("(1,936)", locale-formatted) as a link in Amazon's link blue that
+  scrolls to the reviews. Clicking or hovering the stars opens the ratings-breakdown
+  popover — stars + "4.6 out of 5", "1,936 global ratings", the 5→1 star meter rows
+  (white bars, orange fill, blue labels and percents, Amazon's exact colors), a divider and
+  "See customer reviews" — with a close X, Escape and tap-outside dismissal, and viewport
+  clamping so it renders perfectly on mobile. Clicking a star row jumps to the review list
+  filtered to that rating. The star distribution is served instantly from the product
+  metafield (with a fallback to the first widget load), all 17 languages are covered
+  (two new strings), and the cellexia/luxe design versions restyle the same structure
+  through their existing tokens. Card badges on home/collections keep their layout but
+  adopt the half-star display rounding and the blue count for visual parity.
+
+### Changed
+
+- **Asset byte-budget caps raised deliberately** (SPEC-1.12 §7): widget JS 112 KiB → 120 KiB,
+  CSS 55 KiB → 60 KiB, to make room for the popover. The packaging gate remains active
+  against accidental growth.
+- `npm run check:locales` now also verifies that every locale key the widget JS consumes is
+  actually emitted by the storefront dictionary snippet (`cx-i18n.liquid`) — a missing
+  snippet entry previously showed shoppers a raw key name and was invisible in demo
+  verification, which uses its own hand-written dictionary.
+
 ## 1.11.0 — 2026-07-30
 
 ### Changed

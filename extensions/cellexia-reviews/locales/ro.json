@@ -13,6 +13,7 @@
         "few": "[[count]] stele",
         "other": "[[count]] de stele"
       },
+      "see_reviews": "Vezi recenziile clienților",
       "percent": "[[percent]]%",
       "how_link": "Cum funcționează recenziile și evaluările clienților",
       "how_body": "Recenziile clienților, inclusiv evaluările cu stele ale produselor, îi ajută pe alți cumpărători să afle mai multe despre produs și să decidă dacă este potrivit pentru ei. Evaluările sunt calculate pe baza recenziilor autentice ale clienților. Recenziile sunt verificate înainte de publicare, iar achizițiile sunt confirmate ori de câte ori este posibil.",
@@ -203,6 +204,7 @@
     },
     "a11y": {
       "stars_label": "[[rating]] din 5 stele",
+      "ratings_breakdown": "Distribuția evaluărilor",
       "rating_input": "Selectați o evaluare cu stele",
       "open_gallery": "Deschide galeria media a clienților",
       "open_media": "Vezi conținutul media de la [[name]]",

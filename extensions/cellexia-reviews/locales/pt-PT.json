@@ -11,6 +11,7 @@
         "one": "[[count]] estrela",
         "other": "[[count]] estrelas"
       },
+      "see_reviews": "Ver avaliações de clientes",
       "percent": "[[percent]]%",
       "how_link": "Como funcionam as avaliações e classificações de clientes",
       "how_body": "As avaliações de clientes, incluindo as classificações por estrelas dos produtos, ajudam outros compradores a saber mais sobre o produto e a decidir se é o mais adequado para eles. As classificações são calculadas a partir de avaliações genuínas de clientes. As avaliações são verificadas antes da publicação e as compras são confirmadas sempre que possível.",
@@ -198,6 +199,7 @@
     },
     "a11y": {
       "stars_label": "[[rating]] em 5 estrelas",
+      "ratings_breakdown": "Distribuição das classificações",
       "rating_input": "Selecione uma classificação por estrelas",
       "open_gallery": "Abrir galeria de conteúdos de clientes",
       "open_media": "Ver conteúdo multimédia de [[name]]",

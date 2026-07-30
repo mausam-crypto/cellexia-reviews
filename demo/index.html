@@ -560,6 +560,8 @@
   "cellexia.form.error_media_size": "This file is too large.",
   "cellexia.form.error_media_count": "Too many files selected.",
   "cellexia.form.error_rate_limited": "Too many attempts. Please try again later.",
+  "cellexia.widget.see_reviews": "See customer reviews",
+  "cellexia.a11y.ratings_breakdown": "Ratings breakdown",
   "cellexia.a11y.stars_label": "[[rating]] out of 5 stars",
   "cellexia.a11y.rating_input": "Select a star rating",
   "cellexia.a11y.open_gallery": "Open customer media gallery",
@@ -580,10 +582,13 @@
       page it exists to switch on the site-wide badge injector for the
       product card grid below the widget; in demo mode the injector reads
       window.CellexiaDemoData.badges instead of calling
-      GET /apps/cellexia/api/badges. enable_product_widget and
-      show_pdp_title_badge are false because this page already mounts the
-      widget the block way (on real storefronts, too, blocks win over the
-      embed and nothing double-renders).
+      GET /apps/cellexia/api/badges. enable_product_widget is false because
+      this page already mounts the widget the block way (on real storefronts,
+      too, blocks win over the embed and nothing double-renders).
+      show_pdp_title_badge is true since v1.12: the Amazon-exact PDP badge
+      (SPEC-1.12 — average, half-rounded stars, caret, ratings-breakdown
+      popover) mounts under the demo page's product h1, with the star
+      distribution SSR'd below exactly like blocks/embed.liquid emits it.
     -->
     <script type="application/json" id="cx-embed-config">{
       "pageType": "product",
@@ -593,7 +598,9 @@
         "enable_badges": true,
         "badge_style": "stars_count",
         "badge_selector": "",
-        "show_pdp_title_badge": false
+        "show_pdp_title_badge": true,
+        "pdp_badge_position": "under_title",
+        "pdp_badge_selector": ""
       },
       "skin": "amazon",
       "live": true,
@@ -603,7 +610,14 @@
         "title": "Cellexia Régénérant Cellular Renewal Cream",
         "url": "/products/regenerant-cellular-renewal-cream",
         "rating": 4.6,
-        "ratingCount": 50506
+        "ratingCount": 50506,
+        "distribution": {
+          "5": { "count": 40910, "percent": 81 },
+          "4": { "count": 5051, "percent": 10 },
+          "3": { "count": 2525, "percent": 5 },
+          "2": { "count": 505, "percent": 1 },
+          "1": { "count": 1515, "percent": 3 }
+        }
       }
     }</script>
 

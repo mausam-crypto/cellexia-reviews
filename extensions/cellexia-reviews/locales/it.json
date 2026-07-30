@@ -11,6 +11,7 @@
         "one": "[[count]] stella",
         "other": "[[count]] stelle"
       },
+      "see_reviews": "Vedi le recensioni dei clienti",
       "percent": "[[percent]]%",
       "how_link": "Come funzionano le recensioni e le valutazioni dei clienti",
       "how_body": "Le recensioni dei clienti, incluse le valutazioni a stelle dei prodotti, aiutano gli altri acquirenti a saperne di più sul prodotto e a decidere se fa al caso loro. Le valutazioni sono calcolate a partire da recensioni autentiche dei clienti. Le recensioni vengono controllate prima della pubblicazione e gli acquisti vengono verificati ogni volta che è possibile.",
@@ -198,6 +199,7 @@
     },
     "a11y": {
       "stars_label": "[[rating]] stelle su 5",
+      "ratings_breakdown": "Distribuzione delle valutazioni",
       "rating_input": "Selezioni una valutazione a stelle",
       "open_gallery": "Apri la galleria multimediale dei clienti",
       "open_media": "Visualizza i contenuti di [[name]]",

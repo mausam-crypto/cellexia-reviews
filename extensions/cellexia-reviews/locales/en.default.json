@@ -11,6 +11,7 @@
         "one": "[[count]] star",
         "other": "[[count]] star"
       },
+      "see_reviews": "See customer reviews",
       "percent": "[[percent]]%",
       "how_link": "How customer reviews and ratings work",
       "how_body": "Customer reviews, including product star ratings, help other shoppers learn more about the product and decide whether it is right for them. Ratings are calculated from genuine customer reviews. Reviews are checked before publication, and purchases are verified whenever possible.",
@@ -198,6 +199,7 @@
     },
     "a11y": {
       "stars_label": "[[rating]] out of 5 stars",
+      "ratings_breakdown": "Ratings breakdown",
       "rating_input": "Select a star rating",
       "open_gallery": "Open customer media gallery",
       "open_media": "View media from [[name]]",

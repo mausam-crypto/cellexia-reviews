@@ -15,6 +15,7 @@
         "many": "[[count]] gwiazdek",
         "other": "[[count]] gwiazdki"
       },
+      "see_reviews": "Zobacz opinie klientów",
       "percent": "[[percent]]%",
       "how_link": "Jak działają opinie i oceny klientów",
       "how_body": "Opinie klientów, w tym oceny gwiazdkowe produktów, pomagają innym kupującym dowiedzieć się więcej o produkcie i zdecydować, czy jest dla nich odpowiedni. Oceny są obliczane na podstawie autentycznych opinii klientów. Opinie są sprawdzane przed publikacją, a zakupy są weryfikowane, gdy tylko jest to możliwe.",
@@ -208,6 +209,7 @@
     },
     "a11y": {
       "stars_label": "[[rating]] na 5 gwiazdek",
+      "ratings_breakdown": "Rozkład ocen",
       "rating_input": "Wybierz ocenę gwiazdkową",
       "open_gallery": "Otwórz galerię materiałów klientów",
       "open_media": "Zobacz materiały od [[name]]",

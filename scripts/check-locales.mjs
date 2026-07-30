@@ -262,3 +262,66 @@ if (failing.length > 0) {
   process.exit(1);
 }
 console.log(`Locale check passed: ${filesChecked} file(s) OK.`);
+
+/* ---------------------------------------------------------------------------
+ * cx-i18n.liquid sync guard (added after SPEC-1.12): every literal
+ * `t("group.key")` the widget JS consumes must be emitted by the storefront
+ * dictionary snippet — locale files alone don't reach the browser. The demo
+ * page hand-writes its own dictionary, so a missing snippet entry is
+ * invisible in demo verification; this check makes it a build failure.
+ * ------------------------------------------------------------------------- */
+{
+  const jsPath = path.join(
+    EXTENSIONS_DIR,
+    "cellexia-reviews",
+    "assets",
+    "cellexia-reviews.js",
+  );
+  const snippetPath = path.join(
+    EXTENSIONS_DIR,
+    "cellexia-reviews",
+    "snippets",
+    "cx-i18n.liquid",
+  );
+  const js = fs.readFileSync(jsPath, "utf8");
+  const snippet = fs.readFileSync(snippetPath, "utf8");
+
+  // Literal dotted keys passed to any t()-style helper: t("widget.x"),
+  // I.t("a11y.y", …). Bare keys (tw/ot group shorthands) resolve through
+  // group prefixes covered by the snippet's per-group loops — not checked.
+  const consumed = new Set();
+  for (const m of js.matchAll(/\bt\(\s*"([a-z0-9_]+\.[a-z0-9_.]+)"/g)) {
+    consumed.add(m[1]);
+  }
+  // Keys the snippet emits: "group.key": lines plus loop-emitted plural
+  // groups listed in cx_i18n_plural_keys.
+  const emitted = new Set();
+  for (const m of snippet.matchAll(/"([a-z0-9_]+\.[a-z0-9_.]+)"\s*:/g)) {
+    emitted.add(m[1]);
+  }
+  const pluralList = snippet.match(/cx_i18n_plural_keys = '([^']+)'/);
+  if (pluralList) for (const k of pluralList[1].split("|")) emitted.add(k.trim());
+  // Loop-emitted groups (e.g. `for` loops over attrs/report reasons) declare
+  // their prefix in a `cx_i18n_groups`-style list or emit "<group>.<key>"
+  // pairs dynamically; treat any group with at least one emitted key + a
+  // {%- for -%} construct mentioning it as covered for bare-suffix misses.
+  const missing = [...consumed].filter((key) => {
+    if (emitted.has(key)) return false;
+    // plural keys resolve as key.one/key.other lookups
+    if (emitted.has(key + ".other") || [...emitted].some((e) => e.startsWith(key + "."))) return false;
+    // dynamic per-option groups (age./skin./time./results./report_dialog.)
+    // are emitted by loops the static scan can't see — skip whole groups
+    // that the snippet demonstrably iterates.
+    const group = key.split(".")[0];
+    if (new RegExp(`['"|]${group}\\.`).test(snippet) === false && snippet.includes(`'${group}'`)) return false;
+    return true;
+  });
+  if (missing.length > 0) {
+    console.error("");
+    console.error("cx-i18n.liquid sync check failed — keys consumed by cellexia-reviews.js");
+    console.error("but never emitted by snippets/cx-i18n.liquid (shoppers would see raw keys):");
+    for (const k of missing.sort()) console.error(`  - ${k}`);
+    process.exit(1);
+  }
+  console.log(`cx-i18n sync check passed: ${consumed.size} JS-consumed key(s) covered.`);
+}

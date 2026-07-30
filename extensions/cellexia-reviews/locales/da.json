@@ -11,6 +11,7 @@
         "one": "[[count]] stjerne",
         "other": "[[count]] stjerner"
       },
+      "see_reviews": "Se kundeanmeldelser",
       "percent": "[[percent]]%",
       "how_link": "Sådan fungerer kundeanmeldelser og bedømmelser",
       "how_body": "Kundeanmeldelser, herunder produkternes stjernebedømmelser, hjælper andre kunder med at lære mere om produktet og finde ud af, om det er det rigtige for dem. Bedømmelser beregnes ud fra ægte kundeanmeldelser. Anmeldelser kontrolleres før offentliggørelse, og køb verificeres, når det er muligt.",
@@ -198,6 +199,7 @@
     },
     "a11y": {
       "stars_label": "[[rating]] ud af 5 stjerner",
+      "ratings_breakdown": "Fordeling af bedømmelser",
       "rating_input": "Vælg en stjernebedømmelse",
       "open_gallery": "Åbn galleri med kundemedier",
       "open_media": "Se medier fra [[name]]",

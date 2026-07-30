@@ -647,12 +647,74 @@ div.cx-filter-panel:not([hidden]) { animation:cx-slide-up .25s ease;}
 a.cx.cx-badge-inline { cursor:pointer;}
 a.cx.cx-badge-inline:is(:hover, :focus, :active) { text-decoration:none;color:var(--cx-text);}
 .cx-badge-inline .cx-stars { flex:none;line-height:1;}
-.cx-badge-inline__count { font-size:.85em;color:var(--cx-muted);white-space:nowrap;}
+/* SPEC-1.12 §1/§4: the count is an Amazon link — blue, underlined on hover. */
+.cx-badge-inline__count { font-size:.85em;color:var(--cx-link);white-space:nowrap;}
+a.cx-badge-inline__count { text-decoration:none;}
+a.cx-badge-inline__count:hover,
+a.cx.cx-badge-inline:hover .cx-badge-inline__count { color:var(--cx-link-hover);text-decoration:underline;}
 @media print { .cx-badge-inline { print-color-adjust:exact;-webkit-print-color-adjust:exact;} }
 /* v1.5.1 Fix 2: PDP title badge under the theme h1 (count inherits theme font) */
 .cx.cx-badge-inline--pdp { margin-block:6px 2px;}
 /* v1.5.1 Fix 3: card badges take their own flex row right after the title */
 .cx.cx-badge-inline--card { display:flex;}
+
+/* 15b. SPEC-1.12 — Amazon-exact PDP badge: avg number + half-rounded stars +
+   caret trigger + ratings-breakdown popover. Colors/radii ride the token
+   blocks so all three skins adapt; the amazon values are Amazon's own. */
+.cx.cx-badge--pop { position:relative;}
+.cx-badge__trigger {
+  display:inline-flex;align-items:center;gap:.35em;
+  margin:0;padding:0;border:0;background:none;cursor:pointer;
+  font:inherit;color:var(--cx-text);line-height:1;text-align:start;
+}
+.cx-badge__avg { font-size:.85em;color:var(--cx-text);} /* same size as the count (§1) */
+.cx-badge__caret { color:var(--cx-muted);flex:none;transition:transform .15s ease;}
+.cx-badge__trigger[aria-expanded="true"] .cx-badge__caret { transform:rotate(180deg);}
+@media (prefers-reduced-motion: reduce) { .cx-badge__caret { transition:none;} }
+.cx-badge__pop {
+  position:absolute;inset-block-start:calc(100% + 6px);inset-inline-start:0;
+  transform:translateX(var(--cx-pop-shift, 0px));
+  inline-size:min(340px, calc(100vw - 32px));box-sizing:border-box;
+  background:#fff;border:1px solid var(--cx-border);border-radius:var(--cx-radius);
+  box-shadow:0 4px 16px rgba(15,17,17,.16);
+  padding:16px;z-index:60;color:var(--cx-text);
+  font-family:"Amazon Ember", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+  font-size:14px;line-height:1.4;text-align:start;
+}
+.cx-badge__close {
+  position:absolute;inset-block-start:6px;inset-inline-end:6px;
+  display:flex;align-items:center;justify-content:center;
+  inline-size:34px;block-size:34px;padding:0;border:0;background:none;
+  color:var(--cx-text);cursor:pointer;border-radius:4px;
+}
+.cx-badge__close:hover { background:var(--cx-bg-soft);}
+/* §2.1: 44px touch target on coarse pointers (glyph stays 12px, corner-tight) */
+@media (pointer: coarse) {
+  .cx-badge__close { inline-size:44px;block-size:44px;inset-block-start:0;inset-inline-end:0;}
+}
+.cx-badge__pophead {
+  display:flex;align-items:center;gap:8px;
+  margin-block-end:4px;padding-inline-end:36px;
+}
+.cx-badge__pophead .cx-stars { --cx-star-size:18px;}
+.cx-badge__popavg { font-size:16px;font-weight:600;color:var(--cx-text);white-space:nowrap;}
+.cx-badge__popcount { font-size:14px;color:var(--cx-muted);margin-block-end:12px;}
+.cx-badge__pop .cx-dist { margin-block:0;gap:10px;}
+/* Mobile keeps the app-wide 44px touch rows; compact 32px only on desktop */
+@media (min-width:768px) { .cx-badge__pop .cx-dist__row { min-block-size:32px;} }
+.cx-badge__popfoot {
+  border-block-start:1px solid var(--cx-border-light);
+  margin-block-start:14px;padding-block-start:12px;text-align:center;
+}
+.cx-badge__seelink { font-size:14px;color:var(--cx-link);text-decoration:none;}
+.cx-badge__seelink:hover { color:var(--cx-link-hover);text-decoration:underline;}
+/* Skin typography/detail: cellexia's body font + softer radius; luxe rides
+   its token radius and porcelain surface. */
+[data-cx-skin="cellexia"] .cx-badge__pop {
+  font-family:"argumentum", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
+  border-radius:12px;border-color:rgba(29, 29, 27, .25); /* §3: ink-tinted */
+}
+[data-cx-skin="luxe"] .cx-badge__pop { background:#FDFBF8;}
 
 /* 16. v1.5.1 embed self-managed gutters (SPEC-1.5.1 Fix 1) — embed roots only,
    classes set by the JS after mount and again after any relocation. Full-bleed

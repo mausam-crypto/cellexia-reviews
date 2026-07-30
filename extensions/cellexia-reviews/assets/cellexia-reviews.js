@@ -712,6 +712,11 @@ var activeTerms = [];        // highlight terms of the active topic
 var translatedIds = {};      // reviewId -> true when showing translation
 var allTranslated = false;
 var firstLoadDone = false;
+// SPEC-1.12 §2: the PDP badge popover's star rows drive the widget filter.
+on(root, "cellexia:set-stars", (ev) => {
+ var n = ev && ev.detail ? Number(ev.detail.stars) : 0;
+ if (n >= 1 && n <= 5 && n !== state.stars) { state.stars = n; reload(); }
+});
 var SECTION_FALLBACKS = { // legacy container-name lookups
  "media-strip": ".cx-strip",
  "active-filters": ".cx-pills",
@@ -2002,10 +2007,11 @@ function renderAll() {
   firstLoadDone = true;
   root.dispatchEvent(new CustomEvent("cellexia:loaded", {
    bubbles: true,
-   detail: { // v1.5.1: PDP badge fallback data
+   detail: { // v1.5.1: PDP badge fallback data (+distribution, SPEC-1.12 §5)
     productId: cfg.productId, total: data.total,
     average: data.product ? Number(data.product.average) || 0 : 0,
-    count: data.product ? Number(data.product.count) || 0 : 0
+    count: data.product ? Number(data.product.count) || 0 : 0,
+    distribution: data.product ? data.product.distribution || null : null
    }
   }));
  } else {
@@ -2262,10 +2268,25 @@ function mountEmbed(root, settings) {
  on(window, "orientationchange", reGutter, { passive: true });
  return root;
 }
+/* SPEC-1.12 §1: Amazon displays star icons rounded to the nearest half. */
+function halfRound(r) { return Math.round(r * 2) / 2; }
+function scrollToTarget(tgt) {
+ var rm = false;
+ try { rm = window.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (e) {}
+ var y0 = window.pageYOffset;
+ try { tgt.scrollIntoView(rm ? {} : { behavior: "smooth" }); } catch (e) {}
+ if (rm) return;
+ // Engines with smooth scrolling unavailable no-op the call — fall back hard.
+ setTimeout(function () {
+  try {
+   if (window.pageYOffset === y0 && Math.abs(tgt.getBoundingClientRect().top) > 8) tgt.scrollIntoView();
+  } catch (e) {}
+ }, 400);
+}
 function buildInlineBadge(rating, count, style, skin, I, linkTargetId) {
  var badge = el(linkTargetId ? "a" : "span", "cx cx-badge-inline");
  sa(badge, "data-cx-skin", skin === "cellexia" || skin === "luxe" ? skin : "amazon");
- ap(badge, starRowCore(rating, 16, I.t("a11y.stars_label", { rating: I.NF1.format(rating) })));
+ ap(badge, starRowCore(halfRound(rating), 16, I.t("a11y.stars_label", { rating: I.NF1.format(rating) })));
  if (style !== "stars_only") {
   var c = el("span", "cx-badge-inline__count", "(" + I.fmtNum(count) + ")");
   al(c, I.t("widget.review_count", { count: count }));
@@ -2277,12 +2298,194 @@ function buildInlineBadge(rating, count, style, skin, I, linkTargetId) {
    var tgt = document.getElementById(linkTargetId);
    if (!tgt || tgt.hidden) return;
    ev.preventDefault();
-   var rm = false;
-   try { rm = window.matchMedia("(prefers-reduced-motion: reduce)").matches; } catch (e) {}
-   try { tgt.scrollIntoView(rm ? {} : { behavior: "smooth" }); } catch (e) {}
+   scrollToTarget(tgt);
   });
  }
  return badge;
+}
+/* SPEC-1.12 §1–2: the PDP title badge — Amazon's exact anatomy: average
+   number, half-rounded stars, caret trigger opening the ratings-breakdown
+   popover, count as a link to the widget. Distribution arrives SSR'd
+   (cfgE.product.distribution) or from the first widget load. */
+function buildPdpBadge(cfgE, I, widgetRootId, rating, count, dist) {
+ var skin = cfgE.skin === "cellexia" || cfgE.skin === "luxe" ? cfgE.skin : "amazon";
+ var wrap = el("span", "cx cx-badge-inline cx-badge--pop");
+ sa(wrap, "data-cx-skin", skin);
+ var distData = dist || null;
+ if (!distData) {
+  on(document, "cellexia:loaded", (ev) => {
+   try { if (ev.detail && ev.detail.distribution) distData = ev.detail.distribution; } catch (e) {}
+  }, { once: true });
+ }
+ function widgetEl() { return widgetRootId ? document.getElementById(widgetRootId) : null; }
+ var ratingLabel = I.t("a11y.stars_label", { rating: I.NF1.format(rating) });
+
+ var trig = el("button", "cx-badge__trigger");
+ sa(trig, "type", "button");
+ sa(trig, "aria-haspopup", "dialog");
+ sa(trig, "aria-expanded", "false");
+ al(trig, I.t("a11y.ratings_breakdown") + ": " + ratingLabel);
+ ap(trig, el("span", "cx-badge__avg", I.NF1.format(rating)));
+ ap(trig, starRowCore(halfRound(rating), 16, ratingLabel));
+ var car = ns("svg");
+ sa(car, "viewBox", "0 0 10 6"); sa(car, "class", "cx-badge__caret");
+ sa(car, "aria-hidden", "true"); sa(car, "width", "10"); sa(car, "height", "6");
+ var cp = ns("path");
+ sa(cp, "d", "M1 1l4 4 4-4"); sa(cp, "fill", "none");
+ sa(cp, "stroke", "currentColor"); sa(cp, "stroke-width", "1.6");
+ sa(cp, "stroke-linecap", "round"); sa(cp, "stroke-linejoin", "round");
+ ap(car, cp); ap(trig, car);
+ ap(wrap, trig);
+
+ if ((cfgE.settings || {}).badge_style !== "stars_only") {
+  var w0 = widgetEl();
+  var cnt = el(w0 ? "a" : "span", "cx-badge-inline__count", "(" + I.fmtNum(count) + ")");
+  al(cnt, I.t("widget.review_count", { count: count }));
+  if (w0) {
+   sa(cnt, "href", "#" + widgetRootId);
+   on(cnt, "click", (ev) => {
+    var tgt = widgetEl();
+    if (!tgt || tgt.hidden) return;
+    ev.preventDefault();
+    scrollToTarget(tgt);
+   });
+  }
+  ap(wrap, cnt);
+ }
+
+ var pop = el("div", "cx-badge__pop");
+ sa(pop, "role", "dialog");
+ al(pop, I.t("a11y.ratings_breakdown"));
+ pop.hidden = true;
+ ap(wrap, pop);
+ var isOpen = false, hoverT = null, closeT = null;
+ function clearT() {
+  if (hoverT) { clearTimeout(hoverT); hoverT = null; }
+  if (closeT) { clearTimeout(closeT); closeT = null; }
+ }
+ function fillPop() {
+  clear(pop);
+  var x = btn("cx-badge__close", null, () => closePop(true));
+  al(x, I.t("a11y.close_dialog"));
+  var xs = ns("svg");
+  sa(xs, "viewBox", "0 0 12 12"); sa(xs, "aria-hidden", "true");
+  sa(xs, "width", "12"); sa(xs, "height", "12");
+  var xp = ns("path");
+  sa(xp, "d", "M1 1l10 10M11 1L1 11"); sa(xp, "stroke", "currentColor");
+  sa(xp, "stroke-width", "1.5"); sa(xp, "stroke-linecap", "round");
+  ap(xs, xp); ap(x, xs); ap(pop, x);
+
+  var head = el("div", "cx-badge__pophead");
+  ap(head, starRowCore(halfRound(rating), 18, ratingLabel));
+  ap(head, el("span", "cx-badge__popavg", I.t("widget.rating_out_of", { rating: I.NF1.format(rating) })));
+  ap(pop, head);
+  ap(pop, el("div", "cx-badge__popcount", I.t("widget.global_ratings", { count: count })));
+
+  if (distData) {
+   var hasW = !!widgetEl();
+   var dist = el("div", "cx-dist");
+   for (var s5 = 5; s5 >= 1; s5--) {
+    ((sv) => {
+     var d = distData[String(sv)] || { count: 0, percent: 0 };
+     var row;
+     if (hasW) {
+      row = btn("cx-dist__row", null, () => {
+       closePop(false);
+       var tgt = widgetEl();
+       if (!tgt) return;
+       try {
+        tgt.dispatchEvent(new CustomEvent("cellexia:set-stars", { bubbles: true, detail: { stars: sv } }));
+       } catch (e) {}
+       scrollToTarget(tgt);
+      });
+      al(row, I.t("a11y.filter_row", { stars: sv }));
+     } else {
+      row = el("div", "cx-dist__row");
+     }
+     ap(row, el("span", "cx-dist__label", I.t("widget.star_row", { count: sv })));
+     var bar = el("span", "cx-dist__bar");
+     var f = el("span", "cx-dist__fill");
+     f.style.width = Math.max(0, Math.min(100, Number(d.percent) || 0)) + "%";
+     ap(bar, f); ap(row, bar);
+     ap(row, el("span", "cx-dist__percent", I.t("widget.percent", { percent: Number(d.percent) || 0 })));
+     ap(dist, row);
+    })(s5);
+   }
+   ap(pop, dist);
+  }
+  if (widgetEl()) {
+   var foot = el("div", "cx-badge__popfoot");
+   var see = el("a", "cx-badge__seelink", I.t("widget.see_reviews") + " ›");
+   sa(see, "href", "#" + widgetRootId);
+   on(see, "click", (ev) => {
+    var tgt = widgetEl();
+    if (!tgt) return;
+    ev.preventDefault();
+    closePop(false);
+    scrollToTarget(tgt);
+   });
+   ap(foot, see); ap(pop, foot);
+  }
+ }
+ function place() {
+  pop.style.removeProperty("--cx-pop-shift");
+  var r = pop.getBoundingClientRect();
+  var vw = window.innerWidth || document.documentElement.clientWidth;
+  var shift = 0;
+  if (r.right > vw - 16) shift = vw - 16 - r.right;
+  if (r.left + shift < 16) shift += 16 - (r.left + shift);
+  if (shift) pop.style.setProperty("--cx-pop-shift", shift.toFixed(1) + "px");
+ }
+ function openPop() {
+  if (isOpen) return;
+  isOpen = true;
+  fillPop();
+  pop.hidden = false;
+  sa(trig, "aria-expanded", "true");
+  place();
+ }
+ function closePop(focusBack) {
+  if (!isOpen) return;
+  isOpen = false;
+  pop.hidden = true;
+  sa(trig, "aria-expanded", "false");
+  if (focusBack) { try { trig.focus(); } catch (e) {} }
+ }
+ on(trig, "click", () => {
+  clearT();
+  if (isOpen) closePop(false); else openPop();
+ });
+ var canHover = false;
+ try { canHover = window.matchMedia("(hover: hover) and (pointer: fine)").matches; } catch (e) {}
+ if (canHover) {
+  // Mouse only: on hybrid touchscreens a tap synthesizes enter/leave pairs
+  // that would arm the close timer and self-dismiss the popover.
+  on(trig, "pointerenter", (ev) => {
+   if (ev.pointerType && ev.pointerType !== "mouse") return;
+   clearT();
+   if (!isOpen) hoverT = setTimeout(openPop, 100);
+  });
+  on(wrap, "pointerleave", (ev) => {
+   if (ev.pointerType && ev.pointerType !== "mouse") return;
+   clearT();
+   if (isOpen) closeT = setTimeout(() => closePop(false), 250);
+  });
+  on(wrap, "pointerenter", (ev) => {
+   if (ev.pointerType && ev.pointerType !== "mouse") return;
+   if (closeT) { clearTimeout(closeT); closeT = null; }
+  });
+ }
+ on(document, "pointerdown", (ev) => {
+  if (isOpen && !wrap.contains(ev.target)) closePop(false);
+ });
+ on(document, "keydown", (ev) => {
+  if (isOpen && (ev.key === "Escape" || ev.key === "Esc")) {
+   ev.stopPropagation();
+   closePop(true);
+  }
+ });
+ on(window, "resize", () => { if (isOpen) place(); }, { passive: true });
+ return wrap;
 }
 /* §3.3 PDP title badge (SPEC-1.5.1 Fix 2): badge_selector → .pdp__heading →
    block .product__title → h1.product-single__title → main h1 → visible h1. */
@@ -2332,7 +2535,7 @@ function findTagline(title) {
  }
  return null;
 }
-function renderPdpBadge(cfgE, I, widgetRootId, rating, count) {
+function renderPdpBadge(cfgE, I, widgetRootId, rating, count, dist) {
  if (document.querySelector(".cx.cx-badge-inline--pdp")) return; // v1.5.1 audit: match the class the badge actually gets
  var s = cfgE.settings || {};
  var target = null;
@@ -2347,7 +2550,7 @@ function renderPdpBadge(cfgE, I, widgetRootId, rating, count) {
   if (!target) return;
   if (s.pdp_badge_position === "under_tagline") target = findTagline(target) || target;
  }
- var badge = buildInlineBadge(rating, count, s.badge_style, cfgE.skin, I, widgetRootId);
+ var badge = buildPdpBadge(cfgE, I, widgetRootId, rating, count, dist);
  badge.className += " cx-badge-inline--pdp";
  if (insertAfter(badge, target)) sa(target, "data-cx-badged", "pdp");
 }
@@ -2357,13 +2560,16 @@ function pdpTitleBadge(cfgE, I, widgetRootId) {
  if (s.show_pdp_title_badge === false) return;
  var rating = Number(cfgE.product.rating) || 0;
  var count = Number(cfgE.product.ratingCount) || 0;
- if (count >= 1 && rating > 0) { renderPdpBadge(cfgE, I, widgetRootId, rating, count); return; }
+ if (count >= 1 && rating > 0) {
+  renderPdpBadge(cfgE, I, widgetRootId, rating, count, cfgE.product.distribution || null);
+  return;
+ }
  // Fix 2 fallback: first list load fills it (no extra fetch).
  on(document, "cellexia:loaded", (ev) => {
   try {
    var d = (ev && ev.detail) || {};
    if (Number(d.count) > 0 && Number(d.average) > 0) {
-    renderPdpBadge(cfgE, I, widgetRootId, Number(d.average), Number(d.count));
+    renderPdpBadge(cfgE, I, widgetRootId, Number(d.average), Number(d.count), d.distribution || null);
    }
   } catch (e) {}
  }, { once: true });

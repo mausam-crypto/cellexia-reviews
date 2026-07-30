@@ -11,6 +11,7 @@
         "one": "[[count]] ster",
         "other": "[[count]] sterren"
       },
+      "see_reviews": "Bekijk klantenreviews",
       "percent": "[[percent]]%",
       "how_link": "Hoe klantbeoordelingen en waarderingen werken",
       "how_body": "Klantbeoordelingen, waaronder sterwaarderingen van producten, helpen andere klanten meer te weten te komen over het product en te beslissen of het bij hen past. Waarderingen worden berekend op basis van echte klantbeoordelingen. Beoordelingen worden vóór publicatie gecontroleerd en aankopen worden waar mogelijk geverifieerd.",
@@ -198,6 +199,7 @@
     },
     "a11y": {
       "stars_label": "[[rating]] van 5 sterren",
+      "ratings_breakdown": "Verdeling van beoordelingen",
       "rating_input": "Selecteer een sterwaardering",
       "open_gallery": "Galerij met klantmedia openen",
       "open_media": "Media van [[name]] bekijken",

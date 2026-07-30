@@ -4,6 +4,44 @@ All notable changes to Cellexia Reviews are documented here. The version number 
 `package.json` and stamped into the release ZIP built by `npm run package`
 (`dist/cellexia-reviews-v<version>.zip`).
 
+## 1.11.0 — 2026-07-30
+
+### Changed
+
+- **Review translations read like a shopper wrote them.** The Claude translation prompt now
+  instructs the translator to keep each reviewer's casual register (quirks, slang, small
+  imperfections), never to polish or embellish, to avoid AI-flavored wording (stiff connectors,
+  brochure superlatives), and never to use em or en dashes — restructuring with commas, periods
+  or parentheses instead, even when the original review used a dash.
+- **Deterministic dash scrub on every served translation.** Regardless of provider (Anthropic,
+  DeepL, Google) and regardless of when the translation was cached, em/en dashes are stripped
+  from translated titles, bodies and brand replies before they reach the storefront or the
+  cache — so translations cached before 1.11.0 come out clean too, with no migration needed.
+  The scrub is locale-aware: Japanese gets the ideographic comma (、), Arabic the Arabic comma
+  (،), everything else ", ". It is also meaning-preserving: a dash between numbers is a range
+  ("results in 2–3 weeks") and becomes a plain hyphen ("2-3 weeks"), never a comma; commas and
+  spacing on parts of the text the dash never touched are left exactly as written; and adjacent
+  commas of any script collapse so the result never doubles up. Reviews displayed in their
+  original language are never altered — a human reviewer's own dash stays. A review whose body
+  is nothing but dashes is served untranslated instead of being re-sent to the paid translation
+  provider on every page load. The QA generator's scrub now uses the same locale-aware
+  replacement for its non-English reviews.
+
+## 1.10.3 — 2026-07-27
+
+### Fixed
+
+- **Collection preview really resolves `shop-all` now.** The 1.10.1 resolver filtered
+  collections on the deprecated `publishedOnCurrentPublication` field, which actually means
+  "published to the calling app's own sales channel" — this app is not a sales channel, so
+  every collection (including `shop-all`) looked unpublished, the list came back empty and the
+  preview link fell through to the `/collections/all` fallback on every store. The resolver now
+  uses Shopify's documented search filter (`published_status:published`, retrying unfiltered if
+  that errors or matches nothing), scans up to 250 collections instead of 50, and caches a
+  fallback result for only 60 seconds (a real resolution still caches for ten minutes), so a
+  transient API hiccup can't pin the wrong link. Verified against the real service code with a
+  six-scenario mocked Admin API test, including a replay of the Cellexia store's exact case.
+
 ## 1.10.2 — 2026-07-28
 
 ### Fixed

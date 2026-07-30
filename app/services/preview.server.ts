@@ -128,57 +128,81 @@ export async function getPreviewUrls(admin: AdminClient, shop: string): Promise<
  * Merchants rarely use Shopify's implicit `/collections/all`; stores like
  * Cellexia's use a hand-made "shop-all" collection, and previewing the
  * implicit one shows a page shoppers never visit. Resolution order:
- *   1. a published collection whose handle is one of PREFERRED_COLLECTION_HANDLES
+ *   1. a collection whose handle is one of PREFERRED_COLLECTION_HANDLES
  *      (in that order);
- *   2. the first published collection returned by the Admin API;
+ *   2. the first collection returned by the Admin API (most recently updated);
  *   3. the literal `all` (always renderable on Shopify).
- * Cached per shop for 10 minutes — the Dashboard calls this on every load.
+ *
+ * Published-ness is filtered with the documented search syntax
+ * `published_status:published` (v1.10.3). Do NOT filter on the
+ * `publishedOnCurrentPublication` field: it is deprecated and means "published
+ * to the calling app's own sales channel" — this app is not a sales channel,
+ * so the field is false for every collection and the v1.10.1 filter discarded
+ * all of them, sending every merchant to the `/collections/all` fallback.
+ * If the filtered query errors or returns nothing (e.g. an API version that
+ * rejects the filter), it retries unfiltered rather than giving up.
+ *
+ * Cached per shop — 10 minutes for a real resolution, 60 seconds when we fell
+ * back to `all`, so a transient API hiccup can't pin the wrong link.
  */
 const PREFERRED_COLLECTION_HANDLES = ["shop-all", "all", "all-products", "shop"];
 const COLLECTION_CACHE_TTL_MS = 10 * 60 * 1000;
+const COLLECTION_FALLBACK_TTL_MS = 60 * 1000;
 const collectionCache = new Map<string, { handle: string; expires: number }>();
 
 const PREVIEW_COLLECTIONS_QUERY = `#graphql
-  query CellexiaPreviewCollections {
-    collections(first: 50, sortKey: UPDATED_AT, reverse: true) {
+  query CellexiaPreviewCollections($query: String) {
+    collections(first: 250, query: $query, sortKey: UPDATED_AT, reverse: true) {
       nodes {
         handle
-        publishedOnCurrentPublication
       }
     }
   }
 `;
 
+interface PreviewCollectionsResult {
+  data?: {
+    collections?: {
+      nodes?: Array<{ handle?: string | null }>;
+    };
+  };
+  errors?: unknown;
+}
+
+async function fetchCollectionHandles(admin: AdminClient, query: string | null): Promise<string[]> {
+  const response = await admin.graphql(PREVIEW_COLLECTIONS_QUERY, {
+    variables: { query },
+  });
+  const json = (await response.json()) as PreviewCollectionsResult;
+  if (json.errors) {
+    console.error("[cellexia] preview collections query errors:", json.errors);
+    return [];
+  }
+  return (json.data?.collections?.nodes ?? [])
+    .map((node) => node.handle?.trim() ?? "")
+    .filter((handle) => handle.length > 0);
+}
+
 async function findPreviewCollectionHandle(admin: AdminClient, shop: string): Promise<string> {
   const cached = collectionCache.get(shop);
   if (cached && cached.expires > Date.now()) return cached.handle;
 
-  let handle = "all";
+  let handle: string | undefined;
   try {
-    const response = await admin.graphql(PREVIEW_COLLECTIONS_QUERY);
-    const json = (await response.json()) as {
-      data?: {
-        collections?: {
-          nodes?: Array<{ handle?: string; publishedOnCurrentPublication?: boolean }>;
-        };
-      };
-    };
-    const published = (json.data?.collections?.nodes ?? []).filter(
-      (node): node is { handle: string; publishedOnCurrentPublication?: boolean } =>
-        typeof node.handle === "string" &&
-        node.handle.length > 0 &&
-        node.publishedOnCurrentPublication !== false,
-    );
-    const preferred = PREFERRED_COLLECTION_HANDLES.map((wanted) =>
-      published.find((node) => node.handle === wanted),
-    ).find(Boolean);
-    handle = preferred?.handle ?? published[0]?.handle ?? "all";
+    let handles = await fetchCollectionHandles(admin, "published_status:published");
+    if (handles.length === 0) {
+      handles = await fetchCollectionHandles(admin, null);
+    }
+    handle =
+      PREFERRED_COLLECTION_HANDLES.find((wanted) => handles.includes(wanted)) ?? handles[0];
   } catch (error) {
     console.error("[cellexia] preview collection lookup failed", error);
   }
 
-  collectionCache.set(shop, { handle, expires: Date.now() + COLLECTION_CACHE_TTL_MS });
-  return handle;
+  const ttl = handle ? COLLECTION_CACHE_TTL_MS : COLLECTION_FALLBACK_TTL_MS;
+  const resolved = handle ?? "all";
+  collectionCache.set(shop, { handle: resolved, expires: Date.now() + ttl });
+  return resolved;
 }
 
 /* ------------------------------------------------------------------------- *

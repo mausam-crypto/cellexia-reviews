@@ -344,24 +344,48 @@ export const STYLE_RULES =
 const EM_EN_DASH = /[–—]/;
 
 /**
+ * Locale-appropriate pause mark the dash is replaced with. Japanese uses the
+ * ideographic comma with no following space; Arabic uses the Arabic comma.
+ * Every other SHOP_LOCALES language pauses with the ASCII comma.
+ */
+const DASH_REPLACEMENTS: Record<string, string> = {
+  ja: "、",
+  ar: "، ",
+};
+
+/**
  * Deterministic em/en-dash sanitizer (SPEC-1.10 §4), applied to every parsed
- * title/body/reply in the chunk parsing path (synthetic.server.ts):
- *   - every run of em (—, U+2014) or en (–, U+2013) dashes, together with any
- *     surrounding spaces, becomes ", ";
- *   - doubled commas / double spaces the replacement can create are collapsed;
- *   - a comma stranded at a line edge (the dash opened or closed the line) is
- *     dropped, and the edges are trimmed;
- *   - regular hyphens (-) are never touched.
+ * title/body/reply in the chunk parsing path (synthetic.server.ts) and to
+ * every served review translation (translate.server.ts):
+ *   - a dash run BETWEEN DIGITS is a range ("2–3 weeks") and becomes a plain
+ *     hyphen ("2-3 weeks") — a comma there would corrupt the meaning;
+ *   - every other run of em (—, U+2014) or en (–, U+2013) dashes, with any
+ *     surrounding spaces, becomes the locale's pause mark (", " by default,
+ *     "、" for ja, "، " for ar — pass the text's language as `locale`),
+ *     absorbing adjacent commas of any script so nothing doubles up;
+ *   - a dash that opened or closed a line is dropped together with the commas
+ *     it would strand there (newlines are kept);
+ *   - ONLY replacement sites are touched: commas, spacing and line edges the
+ *     dash never interacted with are preserved exactly (dash runs are first
+ *     swapped for a \u0000 sentinel and cleanup targets the sentinel);
+ *   - regular hyphens (-) are never touched, and neither is the katakana
+ *     prolonged sound mark ー (U+30FC), which only looks like a dash.
  * Pure and idempotent — safe to run on already-clean text.
  */
-export function scrubDashes(text: string): string {
+export function scrubDashes(text: string, locale?: string): string {
   if (!EM_EN_DASH.test(text)) return text;
-  let out = text.replace(/[ \t]*[–—]+[ \t]*/g, ", ");
-  // Collapse ",,", ", ," … into a single ", ".
-  out = out.replace(/,[ \t]*(?:,[ \t]*)+/g, ", ");
-  out = out.replace(/[ \t]{2,}/g, " ");
-  // Commas stranded at line edges read wrong — drop them (newlines are kept).
-  out = out.replace(/^[ \t]*,[ \t]*/gm, "");
-  out = out.replace(/[ \t]*,[ \t]*$/gm, "");
+  const sep = (locale && DASH_REPLACEMENTS[locale]) || ", ";
+  // The sentinel cannot occur in real review text; strip any stray one so
+  // cleanup only ever sees sentinels this function planted.
+  let out = text.replace(/\u0000/g, "");
+  // Digit–digit dash runs are ranges — keep them as hyphens.
+  out = out.replace(/(\d)[ \t]*[–—]+[ \t]*(?=\d)/g, "$1-");
+  out = out.replace(/[ \t]*[–—]+[ \t]*/g, "\u0000");
+  // A dash at a line edge is dropped with the commas/spaces it strands there.
+  out = out.replace(/^(?:[ \t]*[,、،]*[ \t]*\u0000)+[ \t]*[,、،]*[ \t]*/gm, "");
+  out = out.replace(/[ \t]*[,、،]*[ \t]*(?:\u0000[ \t]*[,、،]*[ \t]*)+$/gm, "");
+  // Interior dashes become the pause mark, absorbing adjacent commas (ASCII
+  // or locale, mixed scripts included) so the result never doubles up.
+  out = out.replace(/[ \t]*[,、،]*[ \t]*(?:\u0000[ \t]*[,、،]*[ \t]*)+/g, sep);
   return out.trim();
 }

@@ -17,12 +17,22 @@
  * from cache first. Missing API keys, provider failures and unknown ids all
  * degrade gracefully — the function returns whatever it could translate and
  * never throws to the route.
+ *
+ * v1.11 dash/register hygiene: translated text must read like a shopper wrote
+ * it in the target language — the Claude system prompt bans em/en dashes and
+ * assistant-flavored wording, and scrubDashes (the same deterministic
+ * sanitizer the QA generator uses, shared from synthetic-prompts.server.ts)
+ * runs on EVERY served translation regardless of provider — including cache
+ * hits, so rows cached before v1.11 come out clean too. Same-language
+ * pass-throughs are the reviewer's original words, never a translation, and
+ * are deliberately not scrubbed.
  */
 import type { Review } from "@prisma/client";
 import prisma from "~/db.server";
 import { SHOP_LOCALES } from "~/types/cellexia";
 import { callClaude, extractJson } from "./ai.server";
 import { getSettings } from "./settings.server";
+import { scrubDashes } from "./synthetic-prompts.server";
 
 /** Per-review translation payload returned to the proxy route (§6). */
 export interface ReviewTranslation {
@@ -74,6 +84,10 @@ export async function translateReviews(
   for (const review of reviews) {
     if (review.language === target) {
       result[review.id] = { title: review.title, body: review.body, reply: review.reply };
+    } else if (!scrubDashes(review.body, target)) {
+      // Dash-only source body: no translation can survive the scrub, and
+      // retrying can never fix it — skip so the provider is never billed for
+      // it on every request (the widget simply shows the original).
     } else {
       toTranslate.push(review);
     }
@@ -88,8 +102,13 @@ export async function translateReviews(
   const missing: Review[] = [];
   for (const review of toTranslate) {
     const hit = cachedByReview.get(review.id);
-    if (hit && hit.body) {
-      result[review.id] = { title: hit.title, body: hit.body, reply: hit.reply };
+    // Cache rows written before v1.11 may carry em/en dashes — scrub on the
+    // way out so the guarantee holds without a cache migration.
+    const clean = hit && hit.body
+      ? scrubTranslation({ title: hit.title, body: hit.body, reply: hit.reply }, target)
+      : null;
+    if (clean) {
+      result[review.id] = clean;
     } else {
       missing.push(review);
     }
@@ -122,8 +141,13 @@ export async function translateReviews(
     translated = {};
   }
 
-  for (const [reviewId, translation] of Object.entries(translated)) {
-    if (!translation || !translation.body) continue;
+  for (const [reviewId, raw] of Object.entries(translated)) {
+    if (!raw || !raw.body) continue;
+    // Deterministic dash scrub for every provider (DeepL/Google faithfully
+    // reproduce source dashes; Claude is instructed not to but may slip).
+    // Scrub before caching so stored rows are clean too.
+    const translation = scrubTranslation(raw, target);
+    if (!translation) continue;
     result[reviewId] = translation;
     try {
       await prisma.translationCache.upsert({
@@ -149,6 +173,23 @@ export async function translateReviews(
   return result;
 }
 
+/**
+ * Applies the em/en-dash scrub to every field of a translation, with the
+ * target locale picking the pause mark (、 for ja, ، for ar, ", " otherwise).
+ * Returns null when the body scrubs down to nothing (dash-only string) — the
+ * caller treats that like a missing translation.
+ */
+function scrubTranslation(
+  translation: ReviewTranslation,
+  target: string,
+): ReviewTranslation | null {
+  const body = scrubDashes(translation.body, target);
+  if (!body) return null;
+  const title = translation.title ? scrubDashes(translation.title, target) || null : null;
+  const reply = translation.reply ? scrubDashes(translation.reply, target) || null : null;
+  return { title, body, reply };
+}
+
 /* ------------------------------------------------------------------------- *
  * Provider: Anthropic (Claude)
  * ------------------------------------------------------------------------- */
@@ -160,7 +201,11 @@ You receive a target locale and a JSON array of reviews: [{ "id": string, "title
 Respond with a single JSON object and NOTHING else:
 { "translations": { "<id>": { "title": string|null, "body": string, "reply": string|null } } }
 
-Rules: translate "title", "body" and "reply" into the target locale, preserving each reviewer's tone and meaning. Keep null values null. Do not add, remove or reorder reviews, and do not add commentary.`;
+Rules:
+- Translate "title", "body" and "reply" into the target locale, preserving each reviewer's meaning, tone and level of formality. Keep null values null. Do not add, remove or reorder reviews, and do not add commentary.
+- Write the way a real shopper in that language would write a review: everyday words, natural spoken rhythm. Keep the reviewer's quirks, slang and small imperfections whenever the target language can carry them. Never polish, formalize or embellish the text; a rough casual review must stay rough and casual.
+- Never use em dashes or en dashes anywhere in the translation, even when the original contains them. Restructure the sentence with commas, periods or parentheses instead. Regular hyphens inside words are fine.
+- Avoid wording that sounds machine translated or assistant written in the target language: stiff formal connectors, brochure superlatives, and dictionary words no shopper would actually say. When a plain everyday word and a fancy word both fit, always pick the plain one.`;
 
 async function translateWithAnthropic(
   apiKey: string | null,

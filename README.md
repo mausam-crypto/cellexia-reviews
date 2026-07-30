@@ -25,7 +25,7 @@ extension — no theme code edits, uninstall-safe.
   storefront — a new install starts **Not live**, so visitors see no widget, no review data and
   no JSON-LD until you click **Go live** on the Dashboard. Before (and after) that,
   **Preview on your store** opens a tokenized preview on the real live theme that only you can
-  see — a three-destination menu since 1.10.2 (**Product page**, **Home page**,
+  see — a three-destination menu since 1.10.0 (**Product page**, **Home page**,
   **Collection page**), covering every surface: widget, card badges and the Overall reviews
   block. The preview follows you across pages in the same tab (the token is captured on any
   page with a Cellexia surface and remembered by the tab), the ribbon and **Exit preview**
@@ -97,7 +97,13 @@ extension — no theme code edits, uninstall-safe.
   language appear: in their original language with a per-review Translate button (the default),
   or automatically translated into the shopper's language with a "Translated from …" note and
   **See original** / **See translation** toggles. Translations are created once per language,
-  cached, and shared by every later visitor. All AI features degrade gracefully when no key is
+  cached, and shared by every later visitor. Translated text is kept in a real shopper's
+  register: the translator is instructed to preserve each reviewer's casual tone and to avoid
+  AI-flavored wording, and every served translation passes a deterministic em/en-dash scrub
+  (locale-aware — ideographic comma for Japanese, Arabic comma for Arabic; number ranges like
+  "2–3 weeks" become plain hyphens, "2-3 weeks") regardless of provider, including
+  translations cached before 1.11.0. Reviews shown in their original language are never
+  altered. All AI features degrade gracefully when no key is
   configured — automatic mode simply falls back to the original language, never an error.
 - **Moderation**: pending/published/rejected/spam workflow, bulk actions, report auto-remoderation,
   brand replies, per-review translation preview for the merchant.
@@ -271,4 +277,4 @@ Full production installation, hosting and store setup: **[docs/INSTALL.md](docs/
 
 ## Version
 
-Current version: **1.10.0** — see [CHANGELOG.md](CHANGELOG.md).
+Current version: **1.11.0** — see [CHANGELOG.md](CHANGELOG.md).

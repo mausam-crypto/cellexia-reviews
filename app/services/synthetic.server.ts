@@ -1219,16 +1219,18 @@ async function generateChunkTexts(
       // scrubDashes (SPEC-1.10 §4): even a disobedient model output ships
       // without em/en dashes. Scrub BEFORE the length slice (the ", "
       // replacement can lengthen the text), and re-check emptiness after (a
-      // dash-only string scrubs down to nothing).
+      // dash-only string scrubs down to nothing). The spec's language picks
+      // the locale-appropriate pause mark (、 for ja, ، for ar).
+      const lang = specs[index].language;
       const body =
-        typeof record.body === "string" ? scrubDashes(record.body.trim()).slice(0, 5000) : "";
+        typeof record.body === "string" ? scrubDashes(record.body.trim(), lang).slice(0, 5000) : "";
       if (!body) return;
       const titleClean =
-        typeof record.title === "string" ? scrubDashes(record.title.trim()).slice(0, 150) : "";
+        typeof record.title === "string" ? scrubDashes(record.title.trim(), lang).slice(0, 150) : "";
       const title = titleClean || null;
       const replyClean =
         specs[index].wantsReply && typeof record.reply === "string"
-          ? scrubDashes(record.reply.trim()).slice(0, 5000)
+          ? scrubDashes(record.reply.trim(), lang).slice(0, 5000)
           : "";
       const reply = replyClean || null;
       byIndex.set(index, { title, body, reply });

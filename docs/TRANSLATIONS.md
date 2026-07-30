@@ -116,6 +116,11 @@ live on the storefront.
 - The translation provider is chosen in the app: **Settings → Translation** — Anthropic
   (default, uses the Claude API key), DeepL, Google, or Off (hides the links). Results are
   cached, so each review+language pair is paid for once.
+- Translations are kept in a real shopper's voice (since 1.11.0): the translator preserves the
+  reviewer's casual register and avoids AI-flavored wording, and every served translation —
+  whichever provider produced it, and even if it was cached before 1.11.0 — passes a
+  deterministic em/en-dash scrub (Japanese gets 、, Arabic gets ،, other languages ", ").
+  Reviews shown in their original language are never altered.
 - The AI "Customers say" summary is generated once in the store's default language and
   localized into other languages on demand, again cached per language.
 - The merchant can preview any review translated into their own language on the review's admin

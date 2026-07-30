@@ -1,7 +1,7 @@
 # Manual deploy guide — Cellexia Reviews
 
-For when a new update ZIP arrives and no one is available to run it through
-Claude. Follow this in order.
+For when a new update ZIP arrives and no automated assistant is available to
+run it through. Follow this in order.
 
 ## 0. Where everything lives
 

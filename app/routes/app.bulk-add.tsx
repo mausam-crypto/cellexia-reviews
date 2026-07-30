@@ -789,7 +789,7 @@ function StarPicker({
                 margin: 0,
                 cursor: disabled ? "default" : "pointer",
                 lineHeight: 0,
-                color: star <= value ? "#FFA41C" : "#D5D9D9",
+                color: star <= value ? "#FF6200" : "#D5D9D9",
               }}
             >
               <svg

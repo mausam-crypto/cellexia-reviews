@@ -283,4 +283,4 @@ Full production installation, hosting and store setup: **[docs/INSTALL.md](docs/
 
 ## Version
 
-Current version: **1.12.0** — see [CHANGELOG.md](CHANGELOG.md).
+Current version: **1.12.1** — see [CHANGELOG.md](CHANGELOG.md).

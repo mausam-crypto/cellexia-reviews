@@ -734,7 +734,7 @@ function StrategyExample({ rows }: { rows: ExampleRow[] }) {
         >
           <span
             style={{
-              color: "#FFA41C",
+              color: "#FF6200",
               fontSize: "11px",
               letterSpacing: "1px",
               whiteSpace: "nowrap",

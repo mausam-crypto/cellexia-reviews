@@ -5,7 +5,12 @@
 /* 1. Design tokens (SPEC §14 verbatim; grouped with top-layer dialog roots) */
 .cx, .cx-dialog, .cx-sheet, .cx-lightbox, .cx-filter-panel {
   --cx-text:#0F1111;--cx-muted:#565959;--cx-link:#007185;--cx-link-hover:#C7511F;
-  --cx-star:#FFA41C;--cx-star-stroke:#DE7921;--cx-bar:#FF9900;
+  /* Star/meter orange MEASURED from amazon.com's own AmazonUI sprite + CSS
+     (archived 2026-07-30): all shopper-visible rating stars are flat #FF6200
+     (empty stars white with the same #FF6200 outline, no darker border), the
+     histogram meter fill is #FF6200 on white with a #888C8C outline. The old
+     #FFA41C/#DE7921 pair survives only in Amazon's legacy large sprite cells. */
+  --cx-star:#FF6200;--cx-star-stroke:#FF6200;--cx-bar:#FF6200;--cx-meter-border:#888C8C;
   --cx-border:#D5D9D9;--cx-border-light:#E7E7E7;--cx-verified:#C45500;
   --cx-pos:#007600;--cx-neg:#C7511F;--cx-bg-soft:#F0F2F2;--cx-focus:#007185;
   --cx-radius:8px;--cx-radius-pill:100px;
@@ -116,7 +121,7 @@
 }
 .cx-dist__label { white-space:nowrap;}
 .cx-dist__percent { text-align:end;white-space:nowrap;}
-.cx-dist__bar { block-size:20px;background:#fff;border:1px solid var(--cx-border);border-radius:4px;overflow:hidden;}
+.cx-dist__bar { block-size:20px;background:#fff;border:1px solid var(--cx-meter-border, var(--cx-border));border-radius:4px;overflow:hidden;}
 .cx-dist__fill { display:block;block-size:100%;background:var(--cx-bar);border-radius:3px;}
 .cx-dist__row:hover .cx-dist__label,
 .cx-dist__row:hover .cx-dist__percent { color:var(--cx-link-hover);text-decoration:underline;}
@@ -840,6 +845,7 @@ a.cx.cx-badge-inline:hover .cx-badge-inline__count { color:var(--cx-link-hover);
   --cx-text:#1D1D1B;--cx-muted:#6B6B69;--cx-link:#1D1D1B;--cx-link-hover:#5B82B8;
   --cx-star:#1D1D1B;--cx-star-stroke:#1D1D1B;--cx-bar:#B1CDED;
   --cx-border:#D9D9D7;--cx-border-light:#E5E5E3;--cx-verified:#1D1D1B;
+  --cx-meter-border:#D9D9D7; /* keep the skin's soft bars; #888C8C is amazon-only */
   --cx-pos:#2E6B4F;--cx-neg:#A04B3C;--cx-bg-soft:#F4F4F3;--cx-focus:#5B82B8;
   --cx-radius:10px;--cx-shadow:none;
   font-family:"argumentum", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif;
@@ -865,7 +871,7 @@ a.cx.cx-badge-inline:hover .cx-badge-inline__count { color:var(--cx-link-hover);
 
 /* Stars (JS ones hardcode hexes): recolor full fills + first stop; partials OK */
 [data-cx-skin="cellexia"] svg.cx-star path { stroke:var(--cx-star-stroke);}
-[data-cx-skin="cellexia"] svg.cx-star path[fill="#FFA41C"] { fill:var(--cx-star);}
+[data-cx-skin="cellexia"] svg.cx-star path[fill="#FF6200"] { fill:var(--cx-star);}
 [data-cx-skin="cellexia"] svg.cx-star stop:first-child { stop-color:var(--cx-star);}
 
 /* Topic chips: outlined UPPERCASE pills, 8px gap, no pipes; neg/mixed = dashed */
@@ -956,6 +962,7 @@ a.cx.cx-badge-inline:hover .cx-badge-inline__count { color:var(--cx-link-hover);
   --cx-text:#211E1C;--cx-muted:#7A736B;--cx-link:#211E1C;--cx-link-hover:#8C6D2F;
   --cx-star:#C8A24B;--cx-star-stroke:#B08D3E;--cx-bar:#C8A24B;
   --cx-border:#D8D2C7;--cx-border-light:#E6DFD3;--cx-verified:#7A5F28;
+  --cx-meter-border:#D8D2C7; /* keep the skin's soft bars; #888C8C is amazon-only */
   --cx-pos:#4A6B4F;--cx-neg:#A0563C;--cx-bg-soft:#F5F1EA;--cx-focus:#8C6D2F;
   --cx-radius:10px;--cx-shadow:0 1px 3px rgba(33,30,28,.08);
 }
@@ -982,7 +989,7 @@ a.cx.cx-badge-inline:hover .cx-badge-inline__count { color:var(--cx-link-hover);
 
 /* Stars */
 [data-cx-skin="luxe"] svg.cx-star path { stroke:var(--cx-star-stroke);}
-[data-cx-skin="luxe"] svg.cx-star path[fill="#FFA41C"] { fill:var(--cx-star);}
+[data-cx-skin="luxe"] svg.cx-star path[fill="#FF6200"] { fill:var(--cx-star);}
 [data-cx-skin="luxe"] svg.cx-star stop:first-child { stop-color:var(--cx-star);}
 
 /* Topic chips */

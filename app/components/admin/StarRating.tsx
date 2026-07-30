@@ -62,7 +62,7 @@ export function StarRating({ rating, size = 16, showValue = false }: StarRatingP
             whiteSpace: "nowrap",
           }}
         >
-          <StarRow size={size} color="#FFA41C" />
+          <StarRow size={size} color="#FF6200" />
         </span>
       </span>
       {showValue ? (

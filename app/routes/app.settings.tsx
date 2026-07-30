@@ -255,7 +255,7 @@ function DesignPreviewSwatches({ theme }: { theme: DesignTheme }) {
     marginTop: "4px",
   };
   const starsStyle: CSSProperties = {
-    color: theme === "amazon" ? "#FFA41C" : theme === "luxe" ? "#C8A24B" : "#1D1D1B",
+    color: theme === "amazon" ? "#FF6200" : theme === "luxe" ? "#C8A24B" : "#1D1D1B",
     fontSize: "14px",
     letterSpacing: "1px",
     lineHeight: 1,

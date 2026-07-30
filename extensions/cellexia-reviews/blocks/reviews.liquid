@@ -141,7 +141,12 @@
   assign cx_accent = block.settings.accent_color | append: '' | downcase
   assign cx_style = ''
 -%}
-{%- if cx_accent != '' and cx_accent != blank and cx_accent != '#ffa41c' -%}
+{%- comment -%}
+  v1.12.1: #ff6200 is the new default (measured from amazon.com); #ffa41c was
+  the pre-1.12.1 default and stays sentinel-excluded so blocks saved with the
+  old default auto-upgrade instead of pinning the old amber inline.
+{%- endcomment -%}
+{%- if cx_accent != '' and cx_accent != blank and cx_accent != '#ffa41c' and cx_accent != '#ff6200' -%}
   {%- capture cx_style -%}--cx-star: {{ block.settings.accent_color }}; --cx-star-stroke: {{ block.settings.accent_color | color_darken: 12 }}; --cx-bar: {{ block.settings.accent_color }};{%- endcapture -%}
 {%- endif -%}
 {%- comment -%}
@@ -387,7 +392,7 @@
       "id": "accent_color",
       "label": "t:cellexia.reviews_block.settings.accent_color.label",
       "info": "t:cellexia.reviews_block.settings.accent_color.info",
-      "default": "#FFA41C"
+      "default": "#FF6200"
     }
   ]
 }

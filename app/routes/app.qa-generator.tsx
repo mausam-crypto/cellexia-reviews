@@ -1835,7 +1835,7 @@ export default function QaGeneratorRoute() {
                                 style={{
                                   width: `${Math.round((count / maxPreviewCount) * 100)}%`,
                                   height: "100%",
-                                  background: "#FFA41C",
+                                  background: "#FF6200",
                                   borderRadius: 6,
                                 }}
                               />

@@ -48,11 +48,11 @@ function starSvg(frac, size) {
  sa(s, "class", "cx-star");
  var p = ns("path");
  sa(p, "d", STAR_PATH);
- sa(p, "stroke", "#DE7921");
+ sa(p, "stroke", "#FF6200");
  sa(p, "stroke-width", "1");
  sa(p, "stroke-linejoin", "round");
  if (frac >= 0.95) {
-  sa(p, "fill", "#FFA41C");
+  sa(p, "fill", "#FF6200");
  } else if (frac <= 0.05) {
   sa(p, "fill", "#FFFFFF");
  } else {
@@ -64,7 +64,7 @@ function starSvg(frac, size) {
   sa(g, "y1", "0"); sa(g, "y2", "0");
   var pct = Math.round(frac * 100) + "%";
   var s1 = ns("stop");
-  sa(s1, "offset", pct); sa(s1, "stop-color", "#FFA41C");
+  sa(s1, "offset", pct); sa(s1, "stop-color", "#FF6200");
   var s2 = ns("stop");
   sa(s2, "offset", pct); sa(s2, "stop-color", "#FFFFFF");
   ap(g, s1); ap(g, s2); ap(defs, g);

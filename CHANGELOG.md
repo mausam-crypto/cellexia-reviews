@@ -4,6 +4,24 @@ All notable changes to Cellexia Reviews are documented here. The version number 
 `package.json` and stamped into the release ZIP built by `npm run package`
 (`dist/cellexia-reviews-v<version>.zip`).
 
+## 1.12.1 — 2026-07-30
+
+### Fixed
+
+- **Star orange now matches Amazon's current color exactly — measured, not eyeballed.**
+  The stars everywhere (product-page review widget, the rating badge under the product
+  title, collection/home card badges, the homepage Overall reviews block, the review form's
+  star picker and the ratings-breakdown popover bars) previously used #FFA41C with a darker
+  #DE7921 border — the palette of Amazon's *legacy* large star sprite. Amazon's current UI
+  (verified by downloading and pixel-sampling the star sprite and stylesheet that
+  amazon.com serves today) draws every shopper-visible rating star as flat **#FF6200** with
+  no darker border, empty stars as white with the same #FF6200 outline, and the histogram
+  meter bars as #FF6200 on white with a #888C8C outline. All of those values are now
+  applied in the amazon design version — one token change covers every surface — and the
+  admin's own star previews match. The Cellexia (ink/periwinkle) and Luxe (champagne)
+  design versions are untouched. A reviews *block* saved with the old default accent color
+  auto-upgrades to the new orange; a deliberately customized accent still wins.
+
 ## 1.12.0 — 2026-07-30
 
 ### Added

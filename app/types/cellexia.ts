@@ -130,6 +130,9 @@ export const RANKING_STRATEGIES = [
   "verified_first",
   "media_first",
   "balanced",
+  // v1.17 (SPEC-1.17): per-language AI-curated conversion order. Serving
+  // falls back to amazon_top wherever no curation exists.
+  "ai_curated",
 ] as const;
 
 /**
@@ -280,10 +283,30 @@ export interface TopicDTO {
   reviewIds?: string[];
 }
 
+/**
+ * v1.16 (SPEC-1.16 §3) — one supporting quote in a Q&A answer. `excerpt` is a
+ * VERBATIM substring of the review body (server-enforced); author/rating come
+ * from the Review row so the client renders attribution with no extra fetch.
+ */
+export interface AskQuoteDTO {
+  id: string;
+  excerpt: string;
+  author: string;
+  rating: number;
+}
+
+/** v1.16 — response of POST /api/ask. */
+export interface AskResponse {
+  answer: string;
+  quotes: AskQuoteDTO[];
+}
+
 export interface SummaryDTO {
   locale: string;
   text: string;
   topics: TopicDTO[];
+  /** v1.16 (SPEC-1.16 §3): suggested shopper questions for the Q&A box. */
+  questions?: string[];
 }
 
 export interface MediaGalleryItemDTO {
@@ -312,6 +335,8 @@ export interface ListResponse {
    */
   settings: {
     showTranslate: boolean;
+    /** v1.16 (SPEC-1.16 §3): effective Q&A visibility (opt-in AND provider configured). */
+    showQna: boolean;
     brandDisplayName: string;
     /** Active storefront design version, applied as `data-cx-skin`. */
     designTheme: DesignTheme;
@@ -422,6 +447,11 @@ export interface BrandReviewsResponse {
   per_page: number;
   total: number;
   total_pages: number;
+  /**
+   * v1.15 (SPEC-1.15 §2): the EFFECTIVE translation display mode (SPEC-1.8 §4
+   * collapse applied) the route rendered `reviews[].translated` under.
+   */
+  translationDisplay?: TranslationDisplay;
 }
 
 // ─── v1.7 background generation (SPEC-1.7 §1/§3/§4) ─────────────────────────

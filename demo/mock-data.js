@@ -662,6 +662,13 @@
   var summary = {
     locale: 'en',
     text: 'Customers say this cream delivers deep, long-lasting hydration with a silky texture that absorbs quickly and never feels greasy. Many with sensitive skin praise the gentle, fragrance-free formula, and most report smoother, firmer, more radiant skin within weeks. Some customers with combination or oily skin mention clogged pores or breakouts, and a few feel the price is high for the jar size.',
+    // v1.16 (SPEC-1.16 §3): suggested shopper questions for the Q&A box.
+    questions: [
+      'Does it absorb quickly?',
+      'Is it good for sensitive skin?',
+      'Does it feel greasy?',
+      'How long until I see results?'
+    ],
     topics: [
       {
         key: 'moisturizing',
@@ -1184,6 +1191,14 @@
      * section on the demo page, it is its own sample payload (the product
      * widget's 50,506-rating header, the badges map and this brand payload
      * are three independent mock datasets). */
-    brand: brand
+    brand: brand,
+    // v1.16 (SPEC-1.16 §3): canned Q&A answer so the demo box works offline.
+    qna: {
+      answer: 'Yes. Most of our customers say the cream sinks in within a minute or two and layers well under sunscreen or makeup, though a few with very oily skin prefer to use it only at night.',
+      quotes: [
+        { id: 'rev-1', excerpt: 'absorbs quickly and never feels greasy, even under makeup', author: 'Margaret', rating: 5 },
+        { id: 'rev-3', excerpt: 'sinks in fast, my skin drinks it up overnight', author: 'Sofia', rating: 4 }
+      ]
+    }
   };
 })();

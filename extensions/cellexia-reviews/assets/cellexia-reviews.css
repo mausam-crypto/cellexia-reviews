@@ -11,6 +11,7 @@
      histogram meter fill is #FF6200 on white with a #888C8C outline. The old
      #FFA41C/#DE7921 pair survives only in Amazon's legacy large sprite cells. */
   --cx-star:#FF6200;--cx-star-stroke:#FF6200;--cx-bar:#FF6200;--cx-meter-border:#888C8C;
+  --cx-pos-aspect:#067D62;--cx-qchip:#D9E9FC; /* v1.16: aspect arrow green + QA pill blue */
   --cx-border:#D5D9D9;--cx-border-light:#E7E7E7;--cx-verified:#C45500;
   --cx-pos:#007600;--cx-neg:#C7511F;--cx-bg-soft:#F0F2F2;--cx-focus:#007185;
   --cx-radius:8px;--cx-radius-pill:100px;
@@ -142,17 +143,31 @@
 
 /* 6. AI summary + topic chips + chip panel */
 .cx-summary { margin-block:20px;}
-.cx-summary__title { font-size:16px;font-weight:700;margin-block-end:8px;}
-.cx-summary__text { font-size:14px;}
-.cx-summary__disclaimer { font-size:12px;color:var(--cx-muted);margin-block-start:8px;}
+/* v1.16 §2: Amazon-measured (2026-08-01): title 20px/700 ink, text 14/1.5,
+   disclaimer 14px muted with a neutral AI mark drawn by ::before. */
+/* h3.-qualified: must outrank the element-level `.cx h3` 16px rule above. */
+h3.cx-summary__title, .cx-summary__title { font-size:20px;font-weight:700;color:var(--cx-text);margin-block-end:8px;}
+.cx-summary__text { font-size:14px;line-height:1.5;color:var(--cx-text);}
+.cx-summary__disclaimer { font-size:14px;color:var(--cx-muted);margin-block-start:8px;display:flex;align-items:center;gap:6px;}
+.cx-summary__disclaimer::before {
+  content:"AI";flex:none;inline-size:18px;block-size:14px;
+  border:1px solid var(--cx-muted);border-radius:3px;
+  font-size:9px;font-weight:700;line-height:12px;text-align:center;
+  letter-spacing:.5px;
+}
 
 .cx-chips { margin-block:14px 18px;}
 .cx-chips__title { display:block;font-weight:700;font-size:14px;margin-block-end:6px;}
 .cx-chip {
   display:inline-flex;align-items:center;gap:5px;vertical-align:middle;
-  color:var(--cx-link);font-size:15px;cursor:pointer;
+  color:var(--cx-link);font-size:14px;cursor:pointer;
   margin-inline-end:10px;margin-block:5px;padding-block:2px;
 }
+/* v1.16 §2: Amazon's aspect anatomy — green ↗ for positive, muted ~ for
+   mixed, count in ink. */
+.cx-chip:not(.cx-chip--neg) .cx-chip__icon { color:var(--cx-pos-aspect);}
+.cx-chip--neg .cx-chip__icon { color:var(--cx-muted);}
+.cx-chip__count { color:var(--cx-text);}
 /* Amazon-style pipe separators */
 .cx-chip + .cx-chip::before { content:"";inline-size:1px;block-size:15px;flex:none;background:#BBBFBF;margin-inline-end:10px;}
 .cx-chip:hover { color:var(--cx-link-hover);text-decoration:underline;}
@@ -174,6 +189,51 @@
 .cx-chip-panel__blurb { font-size:14px;margin-block-end:10px;}
 .cx-chip-panel__quote, .cx-chip-panel blockquote { font-size:14px;margin-block:8px;color:var(--cx-text);}
 .cx-chip-panel__close { position:absolute;inset-block-start:8px;inset-inline-end:8px;}
+
+
+/* 8b. v1.16 §3 — review Q&A ("Looking for specific info?") */
+.cx-qna { margin-block:18px 22px;}
+.cx-qna__head { display:flex;align-items:center;gap:8px;margin-block-end:10px;}
+.cx-qna__spark { color:var(--cx-link);inline-size:18px;block-size:18px;flex:none;}
+.cx-qna__title { font-size:16px;font-weight:700;color:var(--cx-text);margin:0;}
+.cx-qna__row { display:flex;align-items:center;gap:8px;}
+.cx-qna__input {
+  flex:1;min-inline-size:0;block-size:44px;padding-inline:18px;
+  border:1px solid #888C8C;border-radius:999px;background:#fff;
+  font-size:14px;color:var(--cx-text);
+}
+.cx-qna__input:focus { outline:2px solid var(--cx-focus);outline-offset:1px;}
+.cx-qna__submit {
+  flex:none;inline-size:36px;block-size:36px;border:0;border-radius:50%;
+  background:var(--cx-link);color:#fff;cursor:pointer;
+  display:inline-flex;align-items:center;justify-content:center;
+}
+.cx-qna__submit:disabled { opacity:.4;cursor:default;}
+.cx-qna__submit svg { inline-size:16px;block-size:16px;}
+.cx-qna__pills { display:flex;flex-wrap:wrap;gap:10px;margin-block-start:12px;}
+.cx-qna__pill {
+  border:0;border-radius:999px;background:var(--cx-qchip);color:var(--cx-text);
+  font-size:14px;padding:10px 16px;cursor:pointer;
+}
+.cx-qna__pill:hover { filter:brightness(.96);}
+.cx-qna__loading, .cx-qna__error { font-size:14px;color:var(--cx-muted);margin-block-start:12px;}
+.cx-qna__answer {
+  background:var(--cx-bg-soft);border-radius:var(--cx-radius);
+  padding:14px 16px;margin-block-start:12px;
+}
+.cx-qna__answerhead { display:flex;align-items:flex-start;gap:8px;justify-content:space-between;margin-block-end:6px;}
+.cx-qna__q { font-size:14px;color:var(--cx-text);}
+.cx-qna__close {
+  flex:none;border:0;background:none;cursor:pointer;color:var(--cx-text);
+  font-size:14px;padding:4px 6px;border-radius:4px;
+}
+.cx-qna__close:hover { background:rgba(15, 17, 17, .06);}
+.cx-qna__a { font-size:14px;line-height:1.5;color:var(--cx-text);margin-block-end:8px;}
+.cx-qna__quote { margin-block:8px 0;}
+.cx-qna__quote .cx-quote-text { font-size:14px;color:var(--cx-text);}
+.cx-qna__attr { display:flex;align-items:center;gap:6px;margin-block-start:2px;font-size:13px;color:var(--cx-muted);}
+.cx-qna__disc { margin-block-start:10px;}
+@media (max-width:767.98px) { .cx-qna__pill { padding:9px 14px;} }
 
 /* 7. Media strip + play badge */
 .cx-strip { margin-block:20px;}

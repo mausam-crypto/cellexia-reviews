@@ -10,6 +10,10 @@
         "show_summary": {
           "label": "AI-összefoglaló és témák megjelenítése"
         },
+        "show_qna": {
+          "label": "Kérdés-válasz mező megjelenítése",
+          "info": "A vásárlók kérdeznek, és a véleményeire alapozott választ kapnak. Az alkalmazás beállításaiban a Q&A kapcsoló is szükséges."
+        },
         "show_media_strip": {
           "label": "Vásárlói fotósáv megjelenítése"
         },
@@ -48,8 +52,8 @@
           "label": "Csillagok megjelenítése a termék címe alatt"
         },
         "pdp_badge_position": {
-          "label": "A csillagok helye a termékoldalon",
-          "info": "Hol jelenjen meg a csillagos értékelés és a darabszám a termékoldalakon.",
+          "label": "Csillagok helye (termékoldal és termékkártyák)",
+          "info": "Hol jelenjen meg az értékelés és a darabszám: közvetlenül a terméknév alatt vagy a rövid leírás alatt. Érvényes a termékoldalakon ÉS a terméknevek alatt a főoldalon és a kollekcióoldalakon.",
           "options__1": {
             "label": "Közvetlenül a cím alatt"
           },
@@ -115,6 +119,9 @@
     "defaults": {
       "heading": "Vásárlói értékelések",
       "overall_heading": "Ezt mondják vásárlóink"
+    },
+    "brand_page_block": {
+      "name": "Cellexia értékelési oldal"
     }
   }
 }

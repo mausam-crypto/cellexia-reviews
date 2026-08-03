@@ -375,7 +375,18 @@ export async function runStorefrontHealthCheck(
     ),
   );
   checks.push(await guard("database", "Database persistence", () => checkDatabase()));
-  checks.push(buildLiveStateCheck(settings?.isLive ?? false));
+  // v1.14: name the market scope in the live-state row so a scoped store is
+  // never mistaken for live-everywhere (or for broken in other markets).
+  let scopeNote: string | null = null;
+  if (settings?.liveScope === "markets") {
+    try {
+      const handles = JSON.parse(settings.liveMarkets || "[]");
+      scopeNote = Array.isArray(handles) && handles.length > 0 ? handles.join(", ") : "none selected";
+    } catch {
+      scopeNote = "none selected";
+    }
+  }
+  checks.push(buildLiveStateCheck(settings?.isLive ?? false, scopeNote));
 
   const status: HealthStatus = checks.some((check) => check.status === "fail")
     ? "fail"
@@ -971,13 +982,15 @@ async function checkDatabase(): Promise<HealthCheck> {
 
 // --- 7. Live state ----------------------------------------------------------
 
-function buildLiveStateCheck(isLive: boolean): HealthCheck {
+function buildLiveStateCheck(isLive: boolean, scopeNote?: string | null): HealthCheck {
   if (isLive) {
     return {
       id: "live_state",
       label: "Live state",
       status: "pass",
-      detail: "Live — shoppers can see the review widget, stars and badges.",
+      detail: scopeNote
+        ? `Live in selected markets only (${scopeNote}) — other markets see no change. (SPEC-1.14)`
+        : "Live — shoppers can see the review widget, stars and badges.",
       fix: null,
     };
   }

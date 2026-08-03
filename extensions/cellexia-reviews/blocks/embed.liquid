@@ -37,12 +37,19 @@
   endif
 
   comment
-    v1.2 (SPEC-1.2): only an explicit false on the `cellexia.live` SHOP metafield
-    means "not live" — absent/invalid values stay live so upgraded stores never
-    go dark. The theme editor always allows the full widget (data-cx-live="true").
+    v1.14 (SPEC-1.14 §3): live is now MARKET-AWARE — the cx-live snippet is
+    the single source of truth (cellexia.live master switch + optional
+    cellexia.live_markets scope vs localization.market.handle). Its render
+    output arrives wrapped in Shopify's app-snippet comments (SPEC-1.8 §5),
+    stripped before comparing. Anything but exactly "1" means not live here.
+    The theme editor still always allows the full widget.
   endcomment
+  capture cx_live_raw
+    render 'cx-live'
+  endcapture
+  assign cx_live_raw = cx_live_raw | remove: '<!-- BEGIN app snippet: cx-live -->' | remove: '<!-- END app snippet -->' | strip
   assign cx_is_live = true
-  if shop.metafields.cellexia.live.value == false
+  if cx_live_raw != '1'
     assign cx_is_live = false
   endif
   assign cx_show_full = cx_is_live
@@ -62,6 +69,32 @@
   if request.design_mode
     assign cx_editor_token = shop.metafields.cellexia.preview_token.value | default: '' | append: '' | strip
   endif
+
+  comment
+    v1.14 (SPEC-1.14 §4/§6): this request's market handle (rides the config
+    JSON so widget/badge fetches can report it — the observed-markets picker)
+    and the Stamped-takeover state. Selector list: the cellexia.
+    stamped_selectors json metafield when customized, else the shipped
+    defaults measured from the live theme. cx_sel_arr is iterated one CSS
+    rule per selector (a browser that rejects one selector — e.g. no :has()
+    — must not lose the others, which a comma-joined list would cause).
+  endcomment
+  assign cx_market_handle_cfg = ''
+  if localization.market and localization.market.handle
+    assign cx_market_handle_cfg = localization.market.handle
+  endif
+  assign cx_hide_stamped = false
+  if shop.metafields.cellexia.hide_stamped.value == true
+    assign cx_hide_stamped = true
+  endif
+  assign cx_sel_mf = shop.metafields.cellexia.stamped_selectors.value
+  if cx_sel_mf and cx_sel_mf.size > 0
+    assign cx_sel_arr = cx_sel_mf
+  else
+    assign cx_stamped_default = '#stamped-main-widget|:is(section, div):has(> #stamped-main-widget)|.pdp__reviews:has(.stamped-product-reviews-badge)|a.product-review-link:has(> .stamped-product-reviews-badge)|.stamped-product-reviews-badge'
+    assign cx_sel_arr = cx_stamped_default | split: '|'
+  endif
+  assign cx_stamped_selectors_json = cx_sel_arr | json
 
   assign cx_lang = request.locale.iso_code | split: '-' | first
 
@@ -155,6 +188,11 @@
   },
   "skin": {{ cx_skin | json }},
   "live": {{ cx_is_live | json }},
+  "market": {{ cx_market_handle_cfg | json }},
+  {%- if cx_hide_stamped %}
+  "hideStamped": true,
+  "stampedSelectors": {{ cx_stamped_selectors_json }},
+  {%- endif %}
   {%- if cx_editor_token != blank %}
   "editorToken": {{ cx_editor_token | json }},
   {%- endif %}
@@ -173,6 +211,24 @@
   {%- endif %}
 }
 </script>
+{%- comment -%}
+  v1.14 (SPEC-1.14 §4) — the Stamped takeover. This style tag is emitted ONLY
+  when BOTH hold on THIS request: the app is live in this request's market
+  (cx_is_live, market-aware via cx-live) AND the merchant enabled hiding.
+  In every other market this branch produces zero bytes — Stamped untouched
+  (SPEC-1.14 §0.1). CSS-only and reversible; one rule per selector; each
+  selector is re-guarded here against style-breaking characters even though
+  the app sanitizes on save (defense against out-of-band metafield edits).
+{%- endcomment -%}
+{%- if cx_is_live and cx_hide_stamped -%}
+<style id="cx-stamped-hide">
+{%- for cx_s in cx_sel_arr -%}
+{%- unless cx_s contains '<' or cx_s contains '{' or cx_s contains '}' or cx_s contains ';' or cx_s contains '@' or cx_s contains '/' -%}
+{{ cx_s }} { display: none !important; }
+{% endunless -%}
+{%- endfor -%}
+</style>
+{%- endif -%}
 {%- comment -%}
   v1.10 §5A: the i18n dictionary rides with the config script on EVERY page —
   previewBootstrap() mounts the preview ribbon on any tokenized not-live page,
@@ -205,7 +261,9 @@
   data-per-page="10"
   data-heading="{{ cx_heading | escape }}"
   {% if cx_brand != blank %}data-brand="{{ cx_brand | escape }}"{% endif %}
+  {% if cx_market_handle_cfg != blank %}data-market="{{ cx_market_handle_cfg | escape }}"{% endif %}
   data-show-summary="true"
+  data-show-qna="{{ block.settings.show_qna }}"
   data-show-media-strip="true"
   data-show-form="true"
   data-show-translate="{{ cx_show_translate }}"
@@ -272,6 +330,13 @@
       "id": "badge_selector",
       "label": "t:cellexia.embed_block.settings.badge_selector.label",
       "info": "t:cellexia.embed_block.settings.badge_selector.info"
+    },
+    {
+      "type": "checkbox",
+      "id": "show_qna",
+      "label": "t:cellexia.embed_block.settings.show_qna.label",
+      "info": "t:cellexia.embed_block.settings.show_qna.info",
+      "default": true
     },
     {
       "type": "checkbox",

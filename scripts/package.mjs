@@ -99,11 +99,18 @@ archive.pipe(output);
 // these gzipped, but the unminified caps keep growth deliberate — a failure
 // here means trim comments/code before shipping, not raise the number casually.
 // v1.12: caps raised deliberately (112→120 KiB JS, 55→60 KiB CSS) for the
-// Amazon-exact PDP badge + ratings popover (SPEC-1.12 §7). The gate remains
-// the guard against ACCIDENTAL growth — raise it only with a CHANGELOG note.
+// Amazon-exact PDP badge + ratings popover (SPEC-1.12 §7). v1.14: JS 120→124
+// KiB for market-scoped go-live + the preview Stamped-hide (SPEC-1.14). The
+// gate remains the guard against ACCIDENTAL growth — raise only with a
+// CHANGELOG note.
+// v1.16: JS 128→132 KiB + CSS 60→64 KiB for the review Q&A box and the
+// Amazon summary polish (recorded in CHANGELOG).
 const ASSET_BUDGETS = [
-  ["extensions/cellexia-reviews/assets/cellexia-reviews.js", 122880],
-  ["extensions/cellexia-reviews/assets/cellexia-reviews.css", 61440],
+  ["extensions/cellexia-reviews/assets/cellexia-reviews.js", 135168],
+  ["extensions/cellexia-reviews/assets/cellexia-reviews.css", 65536],
+  // v1.19 (SPEC-1.19 §9): the brand reviews page's own standalone assets.
+  ["extensions/cellexia-reviews/assets/cellexia-reviews-page.js", 49152],
+  ["extensions/cellexia-reviews/assets/cellexia-reviews-page.css", 24576],
 ];
 for (const [rel, cap] of ASSET_BUDGETS) {
   const size = fs.statSync(path.join(ROOT, rel)).size;

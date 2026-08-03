@@ -143,6 +143,27 @@ within about a minute (the state is synced to a shop metafield, like the design 
 store visitors? Your data is kept.") — reviews, settings, imports and replies are all
 preserved, and you can go live again whenever you want.
 
+**Going live in selected markets only** (since 1.14.0): the Dashboard card **"Markets — where
+your reviews go live"** lets you limit visibility to specific Shopify Markets. Pick **"Only
+selected markets"**, tick the market(s), and save; the Go live button then applies only there.
+The decision is made by Shopify itself when it renders each page (using that visitor's real
+market), so it can never leak: markets you did not select keep their storefront byte-for-byte
+unchanged. If the market list shows handles instead of names, either grant the app the
+optional `read_markets` permission (see UPDATE.md) or just open your storefront once in each
+market — its handle registers automatically — or type the handle from Shopify admin →
+Settings → Markets.
+
+**Replacing Stamped in the live market(s)** (since 1.14.0): the same card has **"Hide Stamped
+reviews in the market(s) where Cellexia Reviews is live"**. Switched on, it hides Stamped's
+product-page widget and its stars under product names (product, home and collection pages) —
+ONLY where your reviews are live. Every other market keeps Stamped exactly as it is; this is
+enforced by the same per-market page rendering as above, not by any browser-side guessing.
+The hiding is CSS-only and instantly reversible (switch it off and Stamped is back on the
+next page load; nothing is deleted). Use the preview link to see the swap before going live —
+the preview simulates it for your tab only. An advanced field lists exactly what gets hidden,
+pre-filled with values measured from your live theme; you never need to touch it unless
+Stamped changes its markup.
+
 **Regenerating the preview link**: shared a preview link with someone (an agency, a colleague)
 and want to cut their access? **Settings → Data → Regenerate preview link**. Old links stop
 working immediately; the Dashboard's preview menu always builds its three links from the
@@ -181,15 +202,30 @@ Powers the "Customers say" paragraph and the clickable topic chips on your produ
 | Setting | Default | What it does |
 | --- | --- | --- |
 | Provider | Anthropic | Anthropic or Off. Off hides the summary section entirely. |
-| Anthropic API key | empty | Paste your key here (see "Getting an Anthropic API key" below). Without a key, no summary is generated — the widget simply doesn't show that section. |
+| Anthropic (Claude) API key | empty | Paste your key here (see "Getting an Anthropic API key" below). Without a key, no summary is generated — the widget simply doesn't show that section. |
 | Model | claude-sonnet-5 | claude-sonnet-5 (better quality) or claude-haiku-4-5 (cheaper/faster). |
 | Auto-regenerate threshold | 5 | The summary refreshes automatically after this many new published reviews. |
 | Regenerate all now | — | Button: rebuild the summary for every product immediately. |
+| Review Q&A | off | The "Looking for specific info?" box under the summary (since 1.16.0): shoppers ask a question, the answer is generated from that product's reviews with verbatim customer quotes, speaking as your brand, in the shopper's language. Each distinct question per product is answered once then cached; visitors are rate-limited and fresh answers cap at 200/day. A theme-editor block setting can additionally hide it per surface. |
+
+**Summaries appear automatically since 1.16.0**: with a key saved, a product's first
+summary generates itself in the background the first time its page is viewed — no button
+press needed. Use **Regenerate all now** to build everything up front, or to refresh after
+big imports.
 
 **Getting an Anthropic API key**: go to **console.anthropic.com**, create an account, add a
 payment method under Billing, then open **API Keys → Create Key**. Copy the key (it is shown
 once) and paste it into this card. Usage is pay-per-use and for review summaries typically
 amounts to a few cents per product per regeneration.
+
+**Changing, testing or removing the key** (since 1.13.0): when a key is saved, the field
+shows its last four characters so you know which key is active — the full key is never sent
+back to the browser. To **change** it, paste the new key and press **Save** (the old key is
+replaced; leaving the field blank keeps the saved key). **Test key** checks the key in the
+field — or the saved one, if the field is blank — against the Anthropic API without billing
+anything, and tells you specifically whether the key is invalid, lacks permissions, or can't
+use the selected model. **Remove saved key** deletes the key; AI summaries, the QA generator
+and Claude translations pause gracefully until a new key is saved.
 
 ### Translation
 
@@ -538,9 +574,56 @@ Out of the box, nothing changes: the default system is the Amazon-style ranking 
 has always used, and no reviews are featured — you only need this page if you want something
 different.
 
-### The six ranking systems
+### The AI-curated order (since 1.17.0)
 
-The first card on the page — the default order for all products — offers six systems. Each
+The order list includes **"AI curated — conversion optimized (per language)"**. When you
+pick it, a skeptical AI agent reads the product's description and your **Overview** field
+(an Accentuate custom field — set its `namespace.key` in the AI-curation card, default
+`accentuate.overview`), works out what a prospect is likely doubtful about, and puts the
+most credible convincing reviews first. It ignores helpful-vote counts entirely, prefers a
+believable 4-star review with a small caveat over a hollow 5-star one, and covers different
+concerns rather than repeating one point.
+
+It runs **separately for every language**: each language has its own agent whose complete
+instructions are written in that language, judging the review texts shoppers of that
+language actually see (originals plus any existing translations). French shoppers get a
+French-curated order, German shoppers a German-curated one, and so on. Languages without
+enough reviews in that language use the English curation; anything without a curation at
+all shows the familiar Amazon-style order — so it can never break your widget.
+
+Everything is in the open in the **AI curation** card on the same page: press **Curate all
+products now** (or curate/re-curate a single product), and the table shows, per product and
+language, when curation ran, the model used, how many reviews it ordered, whether reviews
+changed since (a freshness badge), and the agent's full reasoning — written in that
+language — behind the order it chose. You can also give all agents your own guidance (e.g.
+"our buyers worry most about sensitive skin"). Curation uses your Claude API key (one AI
+call per product per language, capped at 300 per day), and your hand-picked featured
+reviews always stay on top of whatever the agent decides.
+
+**What the agents read (since 1.18.0).** By default each agent judges what its language's
+shoppers actually see: reviews written in that language plus existing translations, with
+untranslated foreign reviews included but marked as foreign — and languages without enough
+reviews in that language reuse the English curation. Switch the card's **"What the agents
+read"** select to **"All reviews, translated into each language"** and every agent instead
+reads the complete review set in its own language: reviews never translated before are
+translated at curation time with your translation provider and cached forever (each
+translation is billed once, ever), and every one of the 17 languages gets its own curation
+for any product with at least 3 reviews. If a review can't be translated (provider set to
+Off, or a provider error), it is still included marked with its original language — a run
+never fails because of translation.
+
+**Automatic refresh (since 1.18.0).** The **"Automatic refresh"** select decides what
+happens as new reviews arrive: **Manual only** (the default — nothing runs until you press
+Curate; the freshness badge tells you when a re-curate is worth it), **Daily**, or
+**Weekly**. With Daily/Weekly on, the app checks in the background about once an hour and
+re-runs ONLY curations whose reviews actually changed since they last ran, at most once
+per day/week per product and language. The first curation of a product is never automatic —
+you always start it yourself — and automatic runs respect the same 300-per-day cap and
+show up in the same status table and failure list as manual ones.
+
+### The six classic ranking systems
+
+The first card on the page — the default order for all products — also offers six systems. Each
 option comes with a one-line description and a small star-row example right on the page, so
 you can pick without memorizing this table:
 
@@ -600,6 +683,64 @@ You don't have to open the Display order page to pin a great review. On any revi
 (**Reviews** → open the review), the **Feature on product page** action adds it to its
 product's featured list in one click — **Unfeature** takes it back out. The same cap of 10
 per product applies there too.
+
+---
+
+## 7b. The "Cellexia Reviews" page (since 1.19.0)
+
+A dedicated brand-reviews knowledge page at **`/pages/cellexia-reviews`**, built to rank on
+Google for "cellexia reviews" and to be quoted by AI assistants (ChatGPT, Claude,
+Perplexity) when people ask about the brand's reviews. Everything a crawler needs is
+**server-rendered** — summaries, statistics, and full review text exist in the HTML with
+plain-link pagination; no crawler ever has to click a button or run JavaScript.
+
+**Setup (admin → Reviews page).** The checklist walks through five steps:
+
+1. **Create the page** — one click (the app creates `/pages/cellexia-reviews` via the
+   Admin API), or 30 seconds manually if the app lacks the pages scope. Because it's a
+   normal Shopify page, it is automatically in your sitemap.xml and can be added to menus.
+2. **Add the app section** — in the theme editor, on that page: Add section → Apps →
+   **Cellexia Reviews page**. This section renders the whole page.
+3. **Generate the review analysis** — the AI writes five short sections ("Are Cellexia
+   reviews positive?", results reported, common complaints, best products by skin concern,
+   how long results take). Every number in them is computed by the app from your real
+   reviews — the AI never invents a statistic — and every quote is verified
+   character-for-character against the source review, with a link to it.
+4. **Publish the page data** — writes everything the section renders. It also refreshes
+   automatically (about a minute after) whenever reviews are approved, rejected, imported
+   or deleted, so the page never goes stale.
+5. **Search engines & AI assistants** — copy-paste robots.txt guidance (allow
+   OAI-SearchBot, ClaudeBot, GPTBot, PerplexityBot) and a reminder to add the page to your
+   navigation and footer menus.
+
+**What the page shows** (all server-rendered, English prose with labels localized in all
+17 storefront languages): the H1 "Cellexia Reviews" with an opening paragraph carrying the
+live average, review count and date range; the full 5→1 star distribution with counts and
+percents; the five analysis sections with verbatim quotes; a best-product-by-skin-concern
+table; a per-product ratings table; ~36 evidence-rich review cards (product, rating, date,
+Verified Purchase, skin concerns, age range, usage duration, results seen, source, and
+your reply); a review-collection & moderation methodology section with counts by source;
+and links into the full archive. Critical reviews are always represented — both in the
+cards and in a dedicated "complaints" analysis section — because a page with only praise
+is neither credible to shoppers nor to AI systems. Synthetic QA reviews are **always**
+excluded from this page, whatever their status.
+
+**The archive.** Every published review is browsable at `/apps/<subpath>/reviews` —
+server-rendered pages of 24 reviews with plain-link pagination and crawlable filters by
+product, skin concern and star rating. Each review has a stable anchor the analysis
+quotes link to.
+
+**Structured data.** The page emits Organization (deliberately without a star rating —
+Google ignores self-serving organization ratings), WebPage, BreadcrumbList, and one
+Product entity per product with its real AggregateRating and up to three Review objects —
+all built from the same published data the page visibly shows, so the markup can never
+disagree with the content.
+
+**Interactive extras** (togglable on the admin screen; the page is complete without
+them): a filter bar, an "Ask our reviews a question" box, and a "Which product is right
+for me?" recommender that answers from reviews and links the recommended products. Both
+ask boxes share the product Q&A's rate limits and daily cap, and every quoted excerpt is
+server-verified verbatim.
 
 ---
 

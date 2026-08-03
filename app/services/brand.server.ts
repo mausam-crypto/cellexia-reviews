@@ -37,7 +37,7 @@
 import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
 import type { Prisma, Review } from "@prisma/client";
 import prisma from "~/db.server";
-import { MAX_OVERALL_TOP_REVIEWS, OVERALL_WIDGET_MODES } from "~/types/cellexia";
+import { MAX_OVERALL_TOP_REVIEWS, OVERALL_WIDGET_MODES, SKIN_CONCERNS } from "~/types/cellexia";
 import type {
   BrandReviewDTO,
   BrandReviewsResponse,
@@ -121,8 +121,17 @@ export function parseOverallWidget(raw: string | null | undefined): OverallWidge
  * purchases. An empty shop yields zeros everywhere (the block then renders
  * nothing at all).
  */
-export async function computeShopStats(shop: string): Promise<ShopStatsDTO> {
-  const where: Prisma.ReviewWhereInput = { shop, status: "PUBLISHED" };
+export async function computeShopStats(
+  shop: string,
+  options: { publicOnly?: boolean } = {},
+): Promise<ShopStatsDTO> {
+  // v1.19: the brand PAGE surface excludes synthetic QA rows; every other
+  // caller keeps the historical behavior (all published reviews).
+  const where: Prisma.ReviewWhereInput = {
+    shop,
+    status: "PUBLISHED",
+    ...(options.publicOnly ? { isSynthetic: false } : {}),
+  };
   const [grouped, verifiedCount] = await Promise.all([
     prisma.review.groupBy({
       by: ["rating"],
@@ -380,6 +389,12 @@ export interface BrandListParams {
   perPage?: number;
   /** Optional 1–5 star filter (applies before scoring). */
   stars?: number;
+  /** v1.19 (SPEC-1.19 §9): optional product-handle filter. */
+  product?: string;
+  /** v1.19 (SPEC-1.19 §9): optional SKIN_CONCERNS key filter. */
+  concern?: string;
+  /** v1.19: exclude synthetic QA rows (the brand PAGE always sets this). */
+  publicOnly?: boolean;
 }
 
 /**
@@ -406,14 +421,29 @@ export async function listBrandReviews(
       ? params.stars
       : undefined;
 
+  const productHandle =
+    typeof params.product === "string" && /^[a-z0-9-]{1,120}$/.test(params.product)
+      ? params.product
+      : undefined;
+  const concern =
+    typeof params.concern === "string" && (SKIN_CONCERNS as readonly string[]).includes(params.concern)
+      ? params.concern
+      : undefined;
+
   const where: Prisma.ReviewWhereInput = {
     shop,
     status: "PUBLISHED",
     ...(stars !== undefined ? { rating: stars } : {}),
+    ...(productHandle ? { productHandle } : {}),
+    // skinConcerns is a JSON array string — substring match on the quoted key
+    // is exact because keys are a fixed whitelist with no overlaps.
+    ...(concern ? { skinConcerns: { contains: `"${concern}"` } } : {}),
+    ...(params.publicOnly ? { isSynthetic: false } : {}),
   };
+  const filtered = stars !== undefined || productHandle || concern;
 
   const [stats, scored, settings] = await Promise.all([
-    computeShopStats(shop),
+    computeShopStats(shop, { publicOnly: params.publicOnly === true }),
     fetchScoredCandidates(where),
     getSettings(shop),
   ]);
@@ -425,7 +455,7 @@ export async function listBrandReviews(
   const byId = new Map(scored.map((candidate) => [candidate.id, candidate] as const));
   let orderedIds: string[];
   const config = parseOverallWidget(settings.overallWidget);
-  if (stars === undefined && config.mode === "picked" && config.pickedIds.length > 0) {
+  if (!filtered && config.mode === "picked" && config.pickedIds.length > 0) {
     const picked = config.pickedIds.filter((id) => byId.has(id));
     const pickedSet = new Set(picked);
     orderedIds = [

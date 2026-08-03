@@ -42,6 +42,14 @@ npm run deploy
 Order matters: deploy the backend and the extension in the same maintenance window — the
 extension's JS talks to the backend's JSON API and the two are versioned together.
 
+**Optional scope since 1.14.0 — `read_markets`**: the "go live in selected markets" picker
+can list your Shopify Markets by name. That needs the `read_markets` access scope, which
+this app historically shipped without. To grant it: add `read_markets` to the `scopes` line
+of your `shopify.app.toml` (the example file already includes it), run
+`npm run deploy`, and re-approve the app when Shopify prompts in the admin. **This is
+optional** — without it the picker still works: market handles register automatically when
+you open your storefront in a market, and can also be typed manually.
+
 Note on step 3: the container also runs `prisma migrate deploy` on every start
 (`npm run docker-start`), so migrations shipped in the release are applied automatically when
 the backend restarts. Running it locally first (against a copy) is still the safe way to spot a

@@ -50,6 +50,7 @@ import { recomputeProduct } from "~/services/aggregates.server";
 import { isVerifiedPurchase } from "~/services/verified.server";
 import { resolveMediaUrls, uploadReviewMedia } from "~/services/files.server";
 import { getSettings } from "~/services/settings.server";
+import { recordObservedMarket } from "~/services/markets.server";
 
 type AdminClient = Awaited<ReturnType<typeof unauthenticated.admin>>["admin"];
 
@@ -89,6 +90,19 @@ export async function loader({ request }: LoaderFunctionArgs) {
   }
 
   const params = new URL(request.url).searchParams;
+
+  // v1.14 (SPEC-1.14 §6): merchant-driven market discovery — recorded ONLY
+  // when the request carries the shop's current preview token, so anonymous
+  // storefront traffic can never poison the picker.
+  const previewTokenParam = (params.get("preview_token") ?? "").trim();
+  const marketParam = params.get("market");
+  if (previewTokenParam && marketParam) {
+    const settingsForMarket = await getSettings(shop);
+    if (settingsForMarket.previewToken && previewTokenParam === settingsForMarket.previewToken) {
+      recordObservedMarket(shop, marketParam);
+    }
+  }
+
   const errors: Record<string, string> = {};
 
   const productId = (params.get("product_id") ?? "").trim();

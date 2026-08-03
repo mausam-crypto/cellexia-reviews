@@ -10,6 +10,7 @@
 import prisma from "~/db.server";
 import { recomputeProduct } from "~/services/aggregates.server";
 import { scheduleShopRatingSync } from "~/services/brand.server";
+import { invalidateAskAnswers } from "~/services/qna.server";
 
 /** Admin API context type as declared by the services layer (SPEC §7). */
 export type AdminApi = Parameters<typeof recomputeProduct>[2];
@@ -29,6 +30,11 @@ export type AdminApi = Parameters<typeof recomputeProduct>[2];
 export async function syncProductData(shop: string, productId: string, admin: AdminApi) {
   const stats = await recomputeProduct(shop, productId, admin);
   scheduleShopRatingSync(shop, admin);
+  // v1.19 (SPEC-1.19 §6): the brand reviews page SSRs from its own shop
+  // metafield — refresh it on the same debounced cadence so the public page
+  // never serves stale counts after moderation/import changes.
+  const { scheduleBrandPagePublish } = await import("~/services/brand-page.server");
+  scheduleBrandPagePublish(shop, admin);
   return stats;
 }
 
@@ -57,6 +63,9 @@ export async function updateReviewStatuses(
   const productIds = [...new Set(rows.map((r) => r.productId))];
   for (const productId of productIds) {
     await syncProductData(shop, productId, admin);
+    // v1.16 review fix: cached Q&A answers may quote reviews whose status or
+    // existence just changed — drop them; they regenerate on demand.
+    void invalidateAskAnswers(shop, productId);
   }
   return rows.length;
 }
@@ -86,6 +95,9 @@ export async function deleteReviews(
   const productIds = [...new Set(rows.map((r) => r.productId))];
   for (const productId of productIds) {
     await syncProductData(shop, productId, admin);
+    // v1.16 review fix: cached Q&A answers may quote reviews whose status or
+    // existence just changed — drop them; they regenerate on demand.
+    void invalidateAskAnswers(shop, productId);
   }
   return rows.length;
 }

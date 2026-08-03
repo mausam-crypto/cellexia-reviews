@@ -46,7 +46,13 @@ import type {
   SummaryDTO,
   TranslationDisplay,
 } from "~/types/cellexia";
-import { parseStoredTopics, topicsToDTO } from "./ai.server";
+import {
+  maybeScheduleFirstGeneration,
+  parseStoredQuestions,
+  parseStoredTopics,
+  topicsToDTO,
+} from "./ai.server";
+import { ensureCurationScheduler } from "./curation-scheduler.server";
 import { fetchRankedPage, getEffectiveDisplay } from "./ranking.server";
 import { getSettings } from "./settings.server";
 import { translateReviews } from "./translate.server";
@@ -143,6 +149,10 @@ export type ReviewWithMedia = Prisma.ReviewGetPayload<{ include: { media: true }
  * ------------------------------------------------------------------------- */
 
 export async function listReviews(shop: string, params: ListParams): Promise<ListResponse> {
+  // v1.18 (SPEC-1.18 §2): storefront traffic keeps the curation auto-refresh
+  // scheduler armed on shops whose admin rarely opens. Arming is an
+  // idempotent no-op once armed; NO sweep ever runs inline on this path.
+  ensureCurationScheduler();
   const settings = await getSettings(shop);
   const productId = String(params.productId);
   const page = clampInt(params.page ?? 1, 1, 100000);
@@ -230,8 +240,16 @@ export async function listReviews(shop: string, params: ListParams): Promise<Lis
     // v1.8 (SPEC-1.8 §2): rank via the display config. With the out-of-the-box
     // config (amazon_top, no boosts, no pins) fetchRankedPage returns the
     // historical "top" orderBy and this degenerates to the pre-1.8 query.
-    const effective = filtered ? { ...display, pinnedIds: [] } : display;
-    const ranked = await fetchRankedPage(shop, productId, effective, page, perPage, where);
+    // v1.17: ai_curated applies only to the unfiltered top view (same rule
+    // as pins) — filtered/searched views drop to amazon_top.
+    const effective = filtered
+      ? {
+          ...display,
+          pinnedIds: [],
+          strategy: display.strategy === "ai_curated" ? "amazon_top" : display.strategy,
+        }
+      : display;
+    const ranked = await fetchRankedPage(shop, productId, effective, page, perPage, where, params.locale);
     if (ranked.ids === null) {
       rows = await prisma.review.findMany({
         where,
@@ -267,6 +285,13 @@ export async function listReviews(shop: string, params: ListParams): Promise<Lis
   const summary = settings.showSummary
     ? await findSummaryDTO(shop, productId, params.locale)
     : null;
+  // v1.16 §1 (review fix): the widget only ever calls /summary when a summary
+  // ALREADY exists, so the lazy first generation must hang off the list load —
+  // the request every product page actually makes. Debounced/capped/backed-off
+  // inside; no-op when a summary exists or reviews are absent.
+  if (settings.showSummary && summary === null && total > 0) {
+    maybeScheduleFirstGeneration(shop, productId);
+  }
   const mediaGallery =
     page === 1 && settings.showMediaStrip ? await loadMediaGallery(shop, productId) : [];
 
@@ -306,6 +331,12 @@ export async function listReviews(shop: string, params: ListParams): Promise<Lis
       brandDisplayName: settings.brandDisplayName,
       designTheme: settings.designTheme,
       translationDisplay,
+      // v1.16 (SPEC-1.16 §3): the Q&A box — effective only when the merchant
+      // opted in AND an AI provider is actually configured.
+      showQna:
+        settings.showQna &&
+        settings.aiProvider === "anthropic" &&
+        Boolean(settings.anthropicApiKey),
     },
   } as ListResponse;
 
@@ -490,7 +521,7 @@ export async function reportReview(
 ): Promise<void> {
   const review = await prisma.review.findFirst({
     where: { id: reviewId, shop },
-    select: { id: true, status: true },
+    select: { id: true, status: true, productId: true },
   });
   if (!review) throw new Error("review_not_found");
 
@@ -510,15 +541,32 @@ export async function reportReview(
     where: { reviewId: review.id, type: "REPORT" },
   });
 
+  const autoUnpublished = distinctReports >= 3 && review.status === "PUBLISHED";
   await prisma.review.update({
     where: { id: review.id },
     data: {
       reportCount: distinctReports,
-      ...(distinctReports >= 3 && review.status === "PUBLISHED"
-        ? { status: "PENDING" }
-        : {}),
+      ...(autoUnpublished ? { status: "PENDING" } : {}),
     },
   });
+  if (autoUnpublished) {
+    // v1.16/v1.19: cached Q&A answers may quote this review (product cache
+    // plus the brand-page sentinels) — drop them so an unpublished review is
+    // never quoted back to a shopper.
+    const { invalidateAskAnswers } = await import("./qna.server");
+    await invalidateAskAnswers(shop, review.productId);
+    // The brand page SSRs review cards from its own metafield — an
+    // auto-unpublished review must stop being served there too. Offline
+    // session: this runs on a storefront path with no admin context.
+    try {
+      const { unauthenticated } = await import("~/shopify.server");
+      const { admin } = await unauthenticated.admin(shop);
+      const { scheduleBrandPagePublish } = await import("./brand-page.server");
+      scheduleBrandPagePublish(shop, admin);
+    } catch (error) {
+      console.error("[cellexia] brand-page refresh after auto-unpublish failed", error);
+    }
+  }
 }
 
 /* ------------------------------------------------------------------------- *
@@ -577,7 +625,7 @@ export function toReviewDTO(review: ReviewWithMedia): ReviewDTO {
  * original text + Translate button — never an error. Mutates the DTOs in
  * place.
  */
-async function attachTranslations(
+export async function attachTranslations(
   shop: string,
   reviews: ReviewDTO[],
   locale: string | undefined,
@@ -629,6 +677,9 @@ async function findSummaryDTO(
     locale: row.locale,
     text: row.text,
     topics: topicsToDTO(parseStoredTopics(row.topics)),
+    // v1.16 review fix: without questions here, the Q&A pills never rendered
+    // on the main (default-locale) path.
+    questions: parseStoredQuestions(row.suggestedQuestions),
   } as SummaryDTO;
 }
 

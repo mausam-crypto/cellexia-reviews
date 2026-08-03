@@ -227,13 +227,39 @@ function makeI18n(locale) {
   if (!tag) return;
   var parsed;
   try { parsed = JSON.parse(tag.textContent); } catch (e) { return; }
+  // v1.15: decode HTML entities (Translate & Adapt overrides smuggle them
+  // in; textContent would show "&#39;" literally). SINGLE pass so decoded
+  // output is never rescanned ("&#38;amp;" stays the literal "&amp;",
+  // review fix). Named table = the typographic set translation tools emit;
+  // unknown entities pass through untouched.
+  var ENTS = { quot: '"', apos: "'", nbsp: "\u00A0", lt: "<", gt: ">", amp: "&",
+   rsquo: "\u2019", lsquo: "\u2018", rdquo: "\u201D", ldquo: "\u201C",
+   hellip: "\u2026", ndash: "\u2013", mdash: "\u2014", middot: "\u00B7",
+   laquo: "\u00AB", raquo: "\u00BB", deg: "\u00B0", euro: "\u20AC",
+   eacute: "\u00E9", egrave: "\u00E8", ecirc: "\u00EA", euml: "\u00EB",
+   agrave: "\u00E0", acirc: "\u00E2", ccedil: "\u00E7", icirc: "\u00EE",
+   iuml: "\u00EF", ocirc: "\u00F4", ugrave: "\u00F9", ucirc: "\u00FB",
+   uuml: "\u00FC", ouml: "\u00F6", auml: "\u00E4", aring: "\u00E5",
+   aelig: "\u00E6", oslash: "\u00F8", szlig: "\u00DF", ntilde: "\u00F1" };
+  function deent(s) {
+   if (s.indexOf("&") === -1) return s;
+   return s.replace(/&(?:#(\d{1,7})|#x([0-9a-f]{1,6})|([a-z]{2,10}));/gi, function (m, d, h, nm) {
+    try {
+     if (d) return String.fromCodePoint(+d);
+     if (h) return String.fromCodePoint(parseInt(h, 16));
+     var v = ENTS[nm.toLowerCase()];
+     return v === undefined ? m : v;
+    } catch (e) { return m; }
+   });
+  }
+
   (function flatten(obj, prefix) {
    for (var k in obj) {
     if (!own(obj, k)) continue;
     var v = obj[k];
     var p = prefix ? prefix + "." + k : k;
     if (v !== null && typeof v === "object") flatten(v, p);
-    else STRINGS[p] = String(v);
+    else STRINGS[p] = deent(String(v));
    }
   })(parsed, "");
  })();
@@ -286,6 +312,7 @@ function renderPreviewBar(t) {
  ap(previewBar, el("span", "cx-preview-bar__note", t("preview.note")));
  ap(previewBar, btn("cx-preview-bar__exit", t("preview.exit"), () => {
   ssDel("cx_preview_token");
+  removeStampedHide(); // v1.14 §5: leaving preview restores Stamped instantly
   // Strip ?cx_preview before reloading or the reload re-enters preview.
   try {
    var u = new URL(window.location.href);
@@ -365,6 +392,11 @@ var cfg = {
  showTranslate: flag("show-translate", true),
  demo: attr("demo", "false") === "true",
  brand: attr("brand", "Cellexia"),
+ market: attr("market", ""), // v1.14 §6: Liquid-emitted market handle
+ // v1.16 §3: Q&A — server ride-along turns showQna on; the block attr can
+ // veto per-surface.
+ showQna: false,
+ showQnaBlock: flag("show-qna", true),
  // v1.8 §4: "original" (default) | "translated". Set only by the server
  // settings ride-along — demo mode never carries it, so demo is unchanged.
  translationDisplay: "original"
@@ -440,6 +472,9 @@ function svgIcon(pathD, viewBox, cls, filled) {
 }
 var ICON_SEARCH = "M8.5 3a5.5 5.5 0 0 1 4.38 8.82l3.65 3.65-1.06 1.06-3.65-3.65A5.5 5.5 0 1 1 8.5 3zm0 1.5a4 4 0 1 0 0 8 4 4 0 0 0 0-8z";
 var ICON_ARROW_UP = "M5 15 15 5m0 0H7m8 0v8";
+// v1.16 §3: Q&A icons — neutral sparkle + submit arrow (never Amazon's marks).
+var ICON_SPARK = "M10 2l1.8 4.7L17 8.5l-4.6 1.9L10 15l-1.8-4.6L3.6 8.5l5.2-1.8L10 2zm6 9l.9 2.3 2.1.9-2.1.9L16 17l-.9-1.9-2.1-.9 2.1-.9L16 11z";
+var ICON_ARROW_RIGHT = "M4 10h11m0 0l-4-4m4 4l-4 4";
 function starRow(rating, size) {
  return starRowCore(rating, size, t("a11y.stars_label", { rating: NF1.format(rating) }));
 }
@@ -643,6 +678,7 @@ function apiList(state) {
   results_seen: state.resultsSeen,
   topic: state.topic,
   q: state.q,
+  market: cfg.market, // v1.14 §6: observed-market source (recorded token-gated)
   locale: cfg.locale,
   preview_token: previewToken
  });
@@ -735,6 +771,7 @@ function section(name) {
 }
 var secHeader = section("header");
 var secSummary = section("summary");
+var secQna = section("qna"); // v1.16 §3 (auto-created; sits after summary)
 var secMedia = section("media-strip");
 var secControls = section("controls");
 var secList = section("list");
@@ -746,12 +783,24 @@ if (isEmbed && !root.querySelector(".cx-layout")) {
  var lay = ap(root, el("div", "cx-layout"));
  var rail = ap(lay, el("div", "cx-layout__rail"));
  var mainCol = ap(lay, el("div", "cx-layout__main"));
- [secHeader, secSummary, secWrite].forEach((s) => { ap(rail, s); });
+ [secHeader, secSummary, secQna, secWrite].forEach((s) => { ap(rail, s); });
  [secMedia, secControls, secFilters, secList, secPagination].forEach((s) => { ap(mainCol, s); });
 }
 if (secFilters.parentNode && secList.parentNode) { // pills sit above the list
  secList.parentNode.insertBefore(secFilters, secList);
 }
+// v1.16 §3: the Q&A box sits directly under the summary — unless the theme
+// block omitted the summary container entirely (show_summary unchecked), in
+// which case section() appended a stray summary div at the ROOT END and
+// anchoring there would sink the box to the bottom (review fix): detect the
+// misorder and anchor under the header instead.
+(function placeQna() {
+ var anchor = secSummary;
+ try {
+  if (secList && secSummary.compareDocumentPosition(secList) & 2) anchor = secHeader;
+ } catch (e) {}
+ if (anchor.parentNode) anchor.parentNode.insertBefore(secQna, anchor.nextSibling);
+})();
 // Snapshot reviews.liquid's SSR cards so a failed load restores them.
 var ssrCards = Array.prototype.filter.call(secList.children, (n) => {
  return n.nodeType === 1 && n.hasAttribute("data-cx-ssr");
@@ -868,6 +917,7 @@ function handleNotLive() {
   notLiveHandled = true; // a later filter change cannot strand a "Loading…" list
   if (currentDialogClose) currentDialogClose();
   removePreviewBar();
+  removeStampedHide(); // v1.14 §5: rejected token must not keep Stamped hidden
  }
  if (!isMerchantContext) { root.hidden = true; return; }
  root.hidden = false;
@@ -970,6 +1020,113 @@ function renderSummary() {
   if (active) ap(secSummary, buildTopicPanel(active));
  }
 }
+/* ---- v1.16 §3 review Q&A ("Looking for specific info?") ---- */
+var tq = (k, v) => t("qna." + k, v);
+var qnaState = { q: "", loading: false, answer: null, error: false, asked: "" };
+function renderQna() {
+ // Review fix: async re-renders (localization, reloads) must not eat the
+ // shopper's typing — preserve value + focus + caret across the rebuild.
+ var prevInput = secQna.querySelector(".cx-qna__input");
+ var hadFocus = prevInput && document.activeElement === prevInput;
+ if (prevInput) qnaState.q = prevInput.value;
+ clear(secQna);
+ var show = !!(cfg.showQnaBlock && (cfg.showQna || (cfg.demo && demoData().qna)));
+ secQna.hidden = !show;
+ if (!show) return;
+ var head = ap(secQna, el("div", "cx-qna__head"));
+ ap(head, svgIcon(ICON_SPARK, "0 0 20 20", "cx-qna__spark", true));
+ ap(head, el("h3", "cx-qna__title", tq("title")));
+
+ var row = ap(secQna, el("form", "cx-qna__row"));
+ var input = el("input", "cx-qna__input");
+ sa(input, "type", "text");
+ sa(input, "maxlength", "200");
+ sa(input, "placeholder", tq("placeholder"));
+ al(input, tq("placeholder"));
+ input.value = qnaState.q;
+ ap(row, input);
+ var sub = el("button", "cx-qna__submit");
+ sa(sub, "type", "submit");
+ al(sub, tq("ask"));
+ sub.disabled = !qnaState.q.trim();
+ ap(sub, svgIcon(ICON_ARROW_RIGHT, "0 0 20 20", "cx-qna__arrow", false));
+ ap(row, sub);
+ on(input, "input", () => { qnaState.q = input.value; sub.disabled = !input.value.trim(); });
+ on(row, "submit", (ev) => { ev.preventDefault(); askQuestion(input.value); });
+ if (hadFocus) {
+  try { input.focus(); input.setSelectionRange(input.value.length, input.value.length); } catch (e) {}
+ }
+
+ var qs = (data.summary && data.summary.questions) || [];
+ if (qs.length) {
+  var pills = ap(secQna, el("div", "cx-qna__pills"));
+  qs.forEach((q) => {
+   if (typeof q !== "string" || !q) return;
+   ap(pills, btn("cx-qna__pill", q, () => { qnaState.q = q; askQuestion(q); }));
+  });
+ }
+
+ if (qnaState.loading) {
+  var ld = ap(secQna, el("p", "cx-qna__loading"));
+  sa(ld, "role", "status");
+  ap(ld, el("span", "cx-spinner cx-qna__spinner"));
+  ap(ld, tx(" " + tq("loading")));
+ } else if (qnaState.error) {
+  var er = ap(secQna, el("p", "cx-qna__error", tq("error")));
+  sa(er, "role", "status");
+ } else if (qnaState.answer) {
+  var pan = ap(secQna, el("div", "cx-qna__answer"));
+  sa(pan, "role", "region");
+  al(pan, tq("title"));
+  var top = ap(pan, el("div", "cx-qna__answerhead"));
+  ap(top, el("strong", "cx-qna__q", qnaState.asked));
+  var cl = btn("cx-qna__close", "✕", () => { qnaState.answer = null; renderQna(); });
+  al(cl, tq("close"));
+  ap(top, cl);
+  ap(pan, el("p", "cx-qna__a", String(qnaState.answer.answer || "")));
+  var quotes = qnaState.answer.quotes || [];
+  for (var qi = 0; qi < quotes.length && qi < 3; qi++) {
+   var qt = quotes[qi] || {};
+   if (!qt.excerpt) continue;
+   var li = ap(pan, el("div", "cx-qna__quote"));
+   ap(li, el("p", "cx-quote-text", "“" + qt.excerpt + "”"));
+   var att = ap(li, el("p", "cx-qna__attr"));
+   var rr = Number(qt.rating) || 0;
+   if (rr > 0) ap(att, starRowCore(rr, 12, t("a11y.stars_label", { rating: NF1.format(rr) })));
+   if (qt.author) ap(att, el("span", "cx-qna__author", String(qt.author)));
+  }
+  ap(pan, el("p", "cx-summary__disclaimer cx-qna__disc", tq("disclaimer")));
+ }
+}
+function askQuestion(qtext) {
+ var q = String(qtext || "").trim();
+ if (q.length < 3 || qnaState.loading) return;
+ qnaState.loading = true;
+ qnaState.error = false;
+ qnaState.answer = null;
+ qnaState.asked = q;
+ qnaState.q = q;
+ renderQna();
+ if (cfg.demo) {
+  var d = demoData().qna || null;
+  qnaState.loading = false;
+  qnaState.answer = d;
+  qnaState.error = !d;
+  renderQna();
+  return;
+ }
+ postJSON("/ask", { product_id: cfg.productId, question: q, locale: cfg.locale }).then((res) => {
+  qnaState.loading = false;
+  if (res && typeof res.answer === "string" && res.answer) qnaState.answer = res;
+  else qnaState.error = true;
+  renderQna();
+ }, () => {
+  qnaState.loading = false;
+  qnaState.error = true;
+  renderQna();
+ });
+}
+
 function toggleTopic(topic) {
  if (state.topic === topic.key) {
   state.topic = "";
@@ -1990,6 +2147,7 @@ function renderAll() {
  var liveVal = prevSearch ? prevSearch.value : state.q;
  renderHeader();
  renderSummary();
+ renderQna(); // v1.16 §3
  renderMediaStrip();
  renderControls();
  renderActiveFilters();
@@ -2005,6 +2163,7 @@ function renderAll() {
  }
  if (!firstLoadDone) {
   firstLoadDone = true;
+  if (previewToken) fireTokenOk(); // v1.14 §5: server accepted this tab's token
   root.dispatchEvent(new CustomEvent("cellexia:loaded", {
    bubbles: true,
    detail: { // v1.5.1: PDP badge fallback data (+distribution, SPEC-1.12 §5)
@@ -2035,6 +2194,7 @@ function applyServerSettings(res) {
  if (showTr !== undefined && showTr !== null) {
   cfg.showTranslate = showTr === true || showTr === "true" || showTr === 1;
  }
+ if (own(s, "showQna")) cfg.showQna = s.showQna === true; // v1.16 §3
  var brand = own(s, "brandDisplayName") ? s.brandDisplayName :
   (own(res, "brand_display_name") ? res.brand_display_name : undefined);
  if (typeof brand === "string" && brand) cfg.brand = brand;
@@ -2111,6 +2271,7 @@ function localizeSummaryIfNeeded() {
   if (res && res.summary && res.summary.text) {
    data.summary = res.summary;
    renderSummary();
+   renderQna(); // v1.16 §3: localized suggested questions
   }
  }).catch(() => { /* keep the default-locale summary */ });
 }
@@ -2514,6 +2675,30 @@ function findPdpTitle(s) {
  } catch (e) { return null; }
  return target;
 }
+/* v1.16.1: card-scoped tagline lookup — the badge-position setting applies
+   to home/collection card badges too. Same preference order as the PDP:
+   known tagline classes AFTER the title, else the title's next <p> sibling;
+   none ⇒ null (caller falls back to under the title, never a missing badge).
+   Scoped to the CARD so one card's blurb can never anchor another's badge. */
+function cardTagline(card, titleEl) {
+ function ok(n) {
+  try { return !!n && n !== titleEl && !n.closest(".cx") && (n.textContent || "").trim(); } catch (e) { return false; }
+ }
+ var scope = card || titleEl.parentNode;
+ if (!scope) return null;
+ var sels = [".product__blurb", ".product__subtitle"], i, j, list;
+ for (i = 0; i < sels.length; i++) {
+  try { list = scope.querySelectorAll(sels[i]); } catch (e) { list = []; }
+  for (j = 0; j < list.length; j++) {
+   if (!ok(list[j])) continue;
+   try { if (titleEl.compareDocumentPosition(list[j]) & 4) return list[j]; } catch (e) {}
+  }
+ }
+ for (var n = titleEl.nextElementSibling; n; n = n.nextElementSibling) {
+  if (n.tagName === "P" && ok(n)) return n;
+ }
+ return null;
+}
 /* v1.10 (SPEC-1.10 §1) pdp_badge_position=under_tagline: .pdp__blurb →
    .product__subtitle → first <p> sibling after the title; none ⇒ under_title
    (never fail). Elements FOLLOWING the title in document order win. */
@@ -2688,9 +2873,12 @@ function initBadges(cfgE, I) {
    var b = from.replace(/\/$/, "");
    var url = b + "/badges?handles=" + encodeURIComponent(handles.join(","));
    if (token) url += "&preview_token=" + encodeURIComponent(token);
+   // v1.14 §6: report the Liquid-emitted market handle (admin picker source).
+   if (cfgE.market) url += "&market=" + encodeURIComponent(String(cfgE.market).slice(0, 64));
    return window.fetch(url, { credentials: "same-origin" }).then((r) => {
     if (r.status === 403) { // not_live: badges stop; a sent token = merchant → name the expiry (§5D)
      stopped = true; disconnect(); removePreviewBar();
+     removeStampedHide(); // v1.14 §5: rejected token must not keep Stamped hidden
      if (token) showExpiredPageNotice(I);
      return false;
     }
@@ -2705,6 +2893,7 @@ function initBadges(cfgE, I) {
     return r.json().then((body) => {
      var map = (body && body.badges) || {};
      handles.forEach((h) => { cache[h] = own(map, h) ? map[h] : null; });
+     if (token) fireTokenOk(); // v1.14 §5: server accepted this tab's token
      return true;
     }).catch(() => { unmark(); return false; });
    }).catch(() => { unmark(); return false; });
@@ -2728,7 +2917,11 @@ function initBadges(cfgE, I) {
     if (en.card && en.card.querySelector(".cx-badge-inline--card")) continue;
     var b = buildInlineBadge(Number(stats.average) || 0, Number(stats.count) || 0, s.badge_style, cfgE.skin, I, null);
     b.className += " cx-badge-inline--card";
-    insertAfter(b, tEl);
+    // v1.16.1 fix: the position setting applies to CARD badges too — under
+    // the card's tagline when chosen (missing tagline ⇒ under the title).
+    var anchor = tEl;
+    if (s.pdp_badge_position === "under_tagline") anchor = cardTagline(en.card, tEl) || tEl;
+    insertAfter(b, anchor);
    } catch (e) { en.done = true; }
   }
  }
@@ -2814,8 +3007,14 @@ function initOverall(root) {
  var max = Math.min(24, parseInt(ga("max-reviews", "6"), 10) || 6);
  var car = ga("layout", "grid") === "carousel";
  var links = ga("show-product-links", "true") !== "false";
- var I = makeI18n(ga("locale", "en"));
+ var loc = ga("locale", "en");
+ // v1.15 §2: translated display mode (mirrors the product widget).
+ var td = ga("translation-display", "original") === "translated" ? "translated" : "original";
+ var I = makeI18n(loc);
  var ot = I.t;
+ function oLangName(code) {
+  try { return new Intl.DisplayNames([loc], { type: "language" }).of(code) || code; } catch (e) { return code; }
+ }
  seedProxyBase();
  function ob() { return resolvedProxyBase || cleanProxyValue(root.getAttribute("data-proxy") || "") || cleanProxyValue(cfgE ? cfgE.proxy : "") || "/apps/cellexia-reviews/api"; }
  var stars = 0, nsync = null, chip = null, note = null;
@@ -2878,8 +3077,30 @@ function initOverall(root) {
   var rating = Number(r.rating) || 0;
   var line = ap(c, el("div", "cx-card__titleline"));
   ap(line, starRowCore(rating, 16, ot("a11y.stars_label", { rating: I.NF1.format(rating) })));
-  if (r.title) ap(line, el("strong", "cx-card__title", r.title));
-  ap(ap(c, el("div", "cx-overall__body cx-clamp")), el("p", null, r.body || ""));
+  // v1.15 §2: server translation until "See original" (SPEC-1.8 §4 contract).
+  var auto = td === "translated" && r.translated && r.translated.body ? r.translated : null;
+  var showT = !!auto;
+  var titleEl = null;
+  if (r.title || (auto && auto.title)) titleEl = ap(line, el("strong", "cx-card__title"));
+  var bodyP = ap(ap(c, el("div", "cx-overall__body cx-clamp")), el("p"));
+  function paintT() {
+   if (titleEl) titleEl.textContent = (showT && auto && auto.title ? auto.title : r.title) || "";
+   bodyP.textContent = (showT && auto ? auto.body : r.body) || "";
+  }
+  paintT();
+  if (auto) {
+   var tn = el("p", "cx-muted cx-translated-note");
+   var tns = ap(tn, el("span", null, ot("review.translated_from", { language: oLangName(auto.from || r.language) })));
+   ap(tn, tx(" "));
+   var tgl = ap(tn, btn("cx-link", ot("review.see_original"), () => {
+    showT = !showT;
+    paintT();
+    tns.hidden = !showT;
+    tgl.textContent = ot(showT ? "review.see_original" : "review.see_translation");
+    syncMore(c);
+   }));
+   ap(c, tn);
+  }
   var who = r.author || r.authorName || "";
   var dt = I.fmtDate(r.date || r.createdAt || "");
   var meta = el("p", "cx-card__meta");
@@ -2967,7 +3188,7 @@ function initOverall(root) {
    if ((Number(st.count) || 0) > 0 && body.reviews.length) { renderClientSection(st, body.reviews); wire(); }
    else showNote("pending"); // genuinely zero reviews (merchant-only)
   }, (kind) => {
-   if (kind === "not_live") removePreviewBar(); // §5D: an expired token names itself, never silent
+   if (kind === "not_live") { removePreviewBar(); removeStampedHide(); } // §5D + v1.14 §5
    root.hidden = false;
    showNote(kind);
   });
@@ -2976,7 +3197,7 @@ function initOverall(root) {
  function fetchBrand(n) {
   return new Promise((res, rej) => {
    if (!window.fetch) { rej("network"); return; }
-   var q = "?per_page=" + max + (n ? "&stars=" + n : "") + (token ? "&preview_token=" + encodeURIComponent(token) : "");
+   var q = "?per_page=" + max + "&locale=" + encodeURIComponent(loc) + (n ? "&stars=" + n : "") + (token ? "&preview_token=" + encodeURIComponent(token) : "");
    var go = (from, retry) => {
     window.fetch(from + "/brand-reviews" + q, { credentials: "same-origin" }).then((r) => {
      if (r.status === 403) { rej("not_live"); return; }
@@ -3012,7 +3233,7 @@ function initOverall(root) {
    stars = 0;
    mark();
    restore();
-   if (kind === "not_live") removePreviewBar();
+   if (kind === "not_live") { removePreviewBar(); removeStampedHide(); }
    showNote(kind);
   });
  }
@@ -3048,6 +3269,25 @@ function initOverall(root) {
  }
  if (empty) { emptyBoot(); return; } // v1.10 §5C
  wire();
+ // v1.15 §2: SSR cards are language-neutral (metafield) — translated mode
+ // refreshes once from the API; silent failure keeps the SSR originals.
+ // Review fixes: no repaint when nothing translated; a star filter clicked
+ // before this resolves stashes the translated cards for restore() instead.
+ if (td === "translated" && box && !demo && (live || token || ed)) {
+  fetchBrand(0).then((body) => {
+   if (!body.reviews || !body.reviews.length) return;
+   var anyT = false;
+   for (var bi = 0; bi < body.reviews.length; bi++) {
+    var bt = body.reviews[bi].translated;
+    if (bt && bt.body) { anyT = true; break; }
+   }
+   if (!anyT) return;
+   var nodes = body.reviews.slice(0, max).map(card);
+   if (stars) { ssr = nodes; return; }
+   swap(nodes, false);
+   ssr = Array.prototype.slice.call(box.children);
+  }, () => {});
+ }
 }
 function initOverallRoots(scope) {
  var list;
@@ -3055,6 +3295,38 @@ function initOverallRoots(scope) {
  for (var i = 0; i < list.length; i++) {
   try { initOverall(list[i]); } catch (e) { /* never break the theme */ }
  }
+}
+/* v1.14 §5: preview-tab Stamped hide — one rule per selector, hostile
+   characters skipped (server sanitizes too). SECURITY (review fix): only
+   called after the server ACCEPTED the tab's preview token (cellexia:tokenok,
+   fired by a successful token-carrying widget/badge fetch) — a fabricated
+   ?cx_preview= value must never hide Stamped for a shopper. The injected
+   style is marked so the invalid-token path can remove it WITHOUT touching a
+   Liquid-emitted live-market style. */
+function injectStampedHide(selectors) {
+ if (!Array.isArray(selectors) || document.getElementById("cx-stamped-hide")) return;
+ var bad = /[<{};@\/]/;
+ var css = "";
+ for (var i = 0; i < selectors.length; i++) {
+  var s = String(selectors[i] || "").trim();
+  if (!s || s.length > 200 || bad.test(s)) continue;
+  css += s + "{display:none !important}\n";
+ }
+ if (!css) return;
+ var st = el("style");
+ st.id = "cx-stamped-hide";
+ sa(st, "data-cx-injected", "1");
+ st.textContent = css;
+ try { document.head.appendChild(st); } catch (e) {}
+}
+function removeStampedHide() {
+ var st = document.getElementById("cx-stamped-hide");
+ if (st && st.getAttribute("data-cx-injected") === "1") {
+  try { st.parentNode.removeChild(st); } catch (e) {}
+ }
+}
+function fireTokenOk() {
+ try { document.dispatchEvent(new CustomEvent("cellexia:tokenok")); } catch (e) {}
 }
 /* ---- start orchestration (§3.1) ---- */
 function start() {
@@ -3092,6 +3364,13 @@ function start() {
   var previewing = !live && !!getPreviewToken(null, cfgE); // v1.10 §5A
   if (live || previewing || inDesignMode()) { // §3.3: gating passed
    pdpTitleBadge(cfgE, I, widgetRoot ? widgetRoot.id : null);
+  }
+  // v1.14 §5 (review-hardened): preview simulates the Stamped takeover ONLY
+  // after the server accepts this tab's token — never on the raw presence of
+  // a ?cx_preview= value (when live-in-market, Liquid already emitted the
+  // style; the id dedupes).
+  if (previewing && cfgE.hideStamped === true) {
+   on(document, "cellexia:tokenok", () => injectStampedHide(cfgE.stampedSelectors), { once: true });
   }
   initBadges(cfgE, I);
  } catch (e) { /* never break the theme */ }

@@ -1,6 +1,7 @@
 import type { ActionFunctionArgs } from "@remix-run/node";
 import db from "../db.server";
 import { authenticate } from "../shopify.server";
+import { invalidateAskAnswers } from "~/services/qna.server";
 
 /**
  * Single route for the three mandatory GDPR compliance webhooks
@@ -24,12 +25,32 @@ function chunk<T>(items: T[], size: number): T[][] {
   return chunks;
 }
 
-async function deleteReviewsByIds(ids: string[]) {
+async function deleteReviewsByIds(shop: string, ids: string[]) {
   for (const ids_ of chunk(ids, CHUNK_SIZE)) {
     // TranslationCache has no relation to Review, so clear it explicitly.
     await db.translationCache.deleteMany({ where: { reviewId: { in: ids_ } } });
     // ReviewMedia and Vote rows cascade with the review.
     await db.review.deleteMany({ where: { id: { in: ids_ } } });
+  }
+  // v1.16 review fix: cached Q&A answers can quote the deleted reviews —
+  // a redaction request must reach them too. Product-level granularity is
+  // unnecessary here; correctness beats cache warmth on a GDPR path.
+  await invalidateAskAnswers(shop);
+  // v1.19: the brand page's stored AI analysis embeds verbatim review
+  // excerpts with author names — a redaction must purge it (it is fully
+  // regenerable from the remaining reviews).
+  await db.brandAnalysis.deleteMany({ where: { shop } });
+  // The PUBLISHED brand-page metafield still holds the redacted customer's
+  // name and review text — republish it from the remaining reviews (offline
+  // session: a webhook has no admin context). Best effort: a failure here
+  // must not fail the redaction, and the next publish self-heals.
+  try {
+    const { unauthenticated } = await import("~/shopify.server");
+    const { admin } = await unauthenticated.admin(shop);
+    const { publishBrandPage } = await import("~/services/brand-page.server");
+    await publishBrandPage(shop, admin);
+  } catch (error) {
+    console.error("[cellexia] brand-page republish after redaction failed", error);
   }
 }
 
@@ -75,7 +96,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           select: { id: true },
         });
         if (reviews.length > 0) {
-          await deleteReviewsByIds(reviews.map((review) => review.id));
+          await deleteReviewsByIds(shop, reviews.map((review) => review.id));
         }
         console.log(
           `Redacted ${reviews.length} review(s) for customer ${customer?.id ?? "unknown"} on ${shop}`,
@@ -90,9 +111,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         select: { id: true },
       });
       if (reviews.length > 0) {
-        await deleteReviewsByIds(reviews.map((review) => review.id));
+        await deleteReviewsByIds(shop, reviews.map((review) => review.id));
       }
       await db.summary.deleteMany({ where: { shop } });
+      // v1.17/v1.19 derived tables that hold review-derived content.
+      await db.aiCuration.deleteMany({ where: { shop } });
+      await db.brandAnalysis.deleteMany({ where: { shop } });
+      await db.productDisplayConfig.deleteMany({ where: { shop } });
+      await db.generationJob.deleteMany({ where: { shop } });
       await db.setting.deleteMany({ where: { shop } });
       await db.session.deleteMany({ where: { shop } });
       console.log(`Redacted all app data for ${shop}`);

@@ -35,6 +35,7 @@ export default function App() {
         </Link>
         <Link to="/app/reviews">Reviews</Link>
         <Link to="/app/display">Display order</Link>
+        <Link to="/app/reviews-page">Reviews page</Link>
         <Link to="/app/bulk-add">Bulk add</Link>
         <Link to="/app/import-export">Import / Export</Link>
         <Link to="/app/qa-generator">QA data</Link>

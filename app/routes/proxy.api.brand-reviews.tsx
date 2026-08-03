@@ -39,6 +39,7 @@ import {
   listBrandReviews,
 } from "~/services/brand.server";
 import { getSettings } from "~/services/settings.server";
+import { attachTranslations } from "~/services/reviews.server";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const auth = await verifyProxy(request);
@@ -78,6 +79,20 @@ export async function loader({ request }: LoaderFunctionArgs) {
     }
   }
 
+  // v1.15 (SPEC-1.15 §2): request locale — drives the translated display
+  // mode on the homepage block exactly like the product widget (SPEC-1.8 §4).
+  const localeRaw = (params.get("locale") ?? "").trim();
+  const locale = localeRaw && /^[a-zA-Z-]{2,10}$/.test(localeRaw) ? localeRaw : undefined;
+
+  // v1.19 (SPEC-1.19 §9): brand-page filters. Invalid values are simply
+  // ignored (listBrandReviews re-validates against its own whitelists).
+  const productRaw = (params.get("product") ?? "").trim();
+  const product = productRaw && /^[a-z0-9-]{1,120}$/.test(productRaw) ? productRaw : undefined;
+  const concernRaw = (params.get("concern") ?? "").trim();
+  const concern = concernRaw && /^[a-z_]{1,40}$/.test(concernRaw) ? concernRaw : undefined;
+  // The brand PAGE always excludes synthetic QA rows (SPEC-1.19 §6).
+  const publicOnly = params.get("public") === "1";
+
   if (Object.keys(errors).length > 0) return errorJson(422, errors);
 
   // Same caching rules as the product reviews list (SPEC-1.9 §1): tokenized
@@ -87,10 +102,29 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const merchantPreview = await hasValidPreviewToken(shop, params);
 
   try {
-    const list = await listBrandReviews(shop, { page, perPage, stars });
-    return json(list, {
-      headers: merchantPreview ? NO_STORE_HEADERS : REVIEWS_CACHE_HEADERS,
-    });
+    const list = await listBrandReviews(shop, { page, perPage, stars, product, concern, publicOnly });
+    // v1.15 (SPEC-1.15 §2): in "translated" display mode the homepage block
+    // shows reviews in the shopper's language by default — the SAME effective
+    // -mode collapse as the product widget (SPEC-1.8 §4): translated only
+    // when the merchant chose it AND translations are possible at all
+    // (showTranslate on, provider not off). Without the collapse, cached
+    // translations would keep serving after the merchant turned Translate off.
+    const settings = await getSettings(shop);
+    const effectiveDisplay =
+      settings.translationDisplay === "translated" &&
+      settings.showTranslate &&
+      settings.translationProvider !== "off"
+        ? "translated"
+        : "original";
+    if (effectiveDisplay === "translated") {
+      await attachTranslations(shop, list.reviews, locale);
+    }
+    return json(
+      { ...list, translationDisplay: effectiveDisplay },
+      {
+        headers: merchantPreview ? NO_STORE_HEADERS : REVIEWS_CACHE_HEADERS,
+      },
+    );
   } catch (error) {
     console.error("[cellexia] listBrandReviews failed", error);
     return errorJson(500, { _: "server_error" });

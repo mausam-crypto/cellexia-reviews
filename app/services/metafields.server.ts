@@ -357,6 +357,18 @@ export async function syncShopSettingsMetafields(
     isLive: boolean;
     previewToken: string | null;
     proxySubpath?: string | null;
+    // v1.14 (SPEC-1.14 §2) — optional so existing callers passing a full
+    // Setting row pick them up automatically; absent values sync as the
+    // pre-1.14 behavior (scope all, no Stamped hiding).
+    liveScope?: string;
+    liveMarkets?: string;
+    hideStamped?: boolean;
+    stampedSelectors?: string | null;
+    // v1.15 (SPEC-1.15 §2): lets the Overall block know the translated
+    // display mode at Liquid render time (data-translation-display) — the
+    // EFFECTIVE mode, so translationProvider rides along for the collapse.
+    translationDisplay?: string;
+    translationProvider?: string;
   },
 ): Promise<void> {
   try {
@@ -416,6 +428,68 @@ export async function syncShopSettingsMetafields(
         key: "preview_token",
         type: "single_line_text_field",
         value: previewToken,
+      });
+    }
+
+    // v1.14 (SPEC-1.14 §2, hardened per review): once the merchant chose
+    // scope "markets", the metafield is ALWAYS {"scope":"markets",...} — an
+    // empty/unsalvageable handle list means live NOWHERE (cx-live renders 0
+    // in every market), never a silent widening to "all". Fail toward
+    // Stamped (§0.3); only scope "all" (or upgrades that never chose
+    // markets) syncs as {"scope":"all"}.
+    let handles: string[] = [];
+    try {
+      const parsed = JSON.parse(settings.liveMarkets ?? "[]");
+      if (Array.isArray(parsed)) {
+        handles = parsed.filter((h): h is string => typeof h === "string" && h.length > 0);
+      }
+    } catch {
+      handles = [];
+    }
+    const marketScope =
+      settings.liveScope === "markets" ? { scope: "markets", handles } : { scope: "all" };
+    metafields.push({
+      ownerId,
+      namespace: NAMESPACE,
+      key: "live_markets",
+      type: "json",
+      value: JSON.stringify(marketScope),
+    });
+    metafields.push({
+      ownerId,
+      namespace: NAMESPACE,
+      key: "hide_stamped",
+      type: "boolean",
+      value: settings.hideStamped ? "true" : "false",
+    });
+    // v1.15 review fix: sync the EFFECTIVE mode (SPEC-1.8 §4 collapse) so a
+    // shop with translation switched off never ships data-translation-
+    // display="translated" and never triggers the block's init refetch.
+    metafields.push({
+      ownerId,
+      namespace: NAMESPACE,
+      key: "translation_display",
+      type: "single_line_text_field",
+      value:
+        settings.translationDisplay === "translated" &&
+        settings.showTranslate &&
+        settings.translationProvider !== "off"
+          ? "translated"
+          : "original",
+    });
+    if (settings.stampedSelectors !== undefined) {
+      // Only synced when the merchant customized the list; the Liquid falls
+      // back to the shipped defaults when the metafield is absent/empty.
+      metafields.push({
+        ownerId,
+        namespace: NAMESPACE,
+        key: "stamped_selectors",
+        type: "json",
+        value: JSON.stringify(
+          settings.stampedSelectors
+            ? settings.stampedSelectors.split("\n").map((s) => s.trim()).filter(Boolean)
+            : [],
+        ),
       });
     }
 

@@ -40,6 +40,7 @@
  */
 import type { Prisma } from "@prisma/client";
 import prisma from "~/db.server";
+import { curatedOrder } from "./curation.server";
 import { MAX_PINNED_REVIEWS, RANKING_STRATEGIES } from "~/types/cellexia";
 import type { RankingStrategy } from "~/types/cellexia";
 import { getSettings } from "./settings.server";
@@ -104,6 +105,10 @@ const BASE_ORDER: Record<
   Prisma.ReviewOrderByWithRelationInput[]
 > = {
   amazon_top: [{ helpfulCount: "desc" }, { verified: "desc" }],
+  // v1.17: ai_curated is served as an explicit-id prefix in fetchRankedPage;
+  // when strategyOrderBy is consulted (remainder / fallback), it behaves as
+  // amazon_top.
+  ai_curated: [{ helpfulCount: "desc" }, { verified: "desc" }],
   top_positive: [{ rating: "desc" }, { helpfulCount: "desc" }],
   most_recent: [],
   verified_first: [{ verified: "desc" }, { helpfulCount: "desc" }],
@@ -152,6 +157,7 @@ export async function fetchRankedPage(
   page: number,
   perPage: number,
   where: Prisma.ReviewWhereInput,
+  locale?: string,
 ): Promise<RankedPage> {
   const safePage = Number.isFinite(page) ? Math.max(1, Math.floor(page)) : 1;
   const size = Number.isFinite(perPage) ? Math.max(1, Math.floor(perPage)) : 1;
@@ -165,27 +171,42 @@ export async function fetchRankedPage(
       ? await resolvePinnedIds(shop, productId, display.pinnedIds)
       : [];
 
+  // v1.17 (SPEC-1.17 §3): the AI-curated order is an explicit prefix served
+  // AFTER pins (pins still win), resolved per locale with en fallback; the
+  // remainder — and every case without a curation row — orders by amazon_top.
+  let curated: string[] = [];
+  let strategy = display.strategy;
+  if (strategy === "ai_curated") {
+    strategy = "amazon_top";
+    const order = await curatedOrder(shop, productId, locale);
+    if (order && order.length > 0) {
+      const resolved = await resolvePinnedIds(shop, productId, order);
+      curated = resolved.filter((id) => !pins.includes(id));
+    }
+  }
+  const prefix = [...pins, ...curated];
+
   // Plain path: a single orderBy the caller pages with its own skip/take.
-  if (pins.length === 0 && display.strategy !== "balanced") {
-    return { ids: null, orderBy: strategyOrderBy(display.strategy, display.boosts) };
+  if (prefix.length === 0 && strategy !== "balanced") {
+    return { ids: null, orderBy: strategyOrderBy(strategy, display.boosts) };
   }
 
-  const pagePins = pins.slice(Math.min(start, pins.length), Math.min(end, pins.length));
-  const remainderSkip = Math.max(0, start - pins.length);
-  const remainderTake = size - pagePins.length;
+  const pagePrefix = prefix.slice(Math.min(start, prefix.length), Math.min(end, prefix.length));
+  const remainderSkip = Math.max(0, start - prefix.length);
+  const remainderTake = size - pagePrefix.length;
   // AND keeps this correct even if `where` already constrains `id` (defense
   // in depth — pins are never combined with a topic filter by the callers).
   const remainderWhere: Prisma.ReviewWhereInput =
-    pins.length > 0 ? { AND: [where, { id: { notIn: pins } }] } : where;
+    prefix.length > 0 ? { AND: [where, { id: { notIn: prefix } }] } : where;
 
   let remainderIds: string[] = [];
   if (remainderTake > 0) {
-    if (display.strategy === "balanced") {
+    if (strategy === "balanced") {
       remainderIds = await balancedPageIds(remainderWhere, remainderSkip, remainderTake);
     } else {
       const rows = await prisma.review.findMany({
         where: remainderWhere,
-        orderBy: strategyOrderBy(display.strategy, display.boosts),
+        orderBy: strategyOrderBy(strategy, display.boosts),
         skip: remainderSkip,
         take: remainderTake,
         select: { id: true },
@@ -194,7 +215,7 @@ export async function fetchRankedPage(
     }
   }
 
-  return { ids: [...pagePins, ...remainderIds] };
+  return { ids: [...pagePrefix, ...remainderIds] };
 }
 
 /* ------------------------------------------------------------------------- *

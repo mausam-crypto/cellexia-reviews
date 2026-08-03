@@ -98,6 +98,9 @@ model Summary {
   locale      String
   text        String
   topics      String   @default("[]") // JSON: TopicJSON[] (see §6)
+  // v1.16 (SPEC-1.16 §3): 4-5 shopper questions answerable from the reviews,
+  // generated with the summary, localized with it. JSON string[].
+  suggestedQuestions String @default("[]")
   reviewCount Int      @default(0)
   model       String?
   updatedAt   DateTime @updatedAt
@@ -129,6 +132,9 @@ model Setting {
   deeplApiKey          String?
   googleApiKey         String?
   showTranslate        Boolean @default(true)
+  // v1.16 (SPEC-1.16 §3): the review Q&A box. Opt-in — shopper questions
+  // spend API tokens, so the merchant switches it on deliberately.
+  showQna              Boolean @default(false)
   showSummary          Boolean @default(true)
   showMediaStrip       Boolean @default(true)
   emitJsonLd           Boolean @default(true)
@@ -177,6 +183,92 @@ model Setting {
   // JSON or an unknown mode degrades to the auto ranking, and stale/
   // unpublished picked ids are dropped at use time, never persisted back.
   overallWidget        String  @default("{}")
+  // v1.14 (SPEC-1.14): market-scoped go-live + Stamped takeover.
+  // liveScope "all" reproduces pre-1.14 behavior exactly; "markets" limits
+  // storefront visibility to the market handles in liveMarkets (JSON array).
+  // isLive stays the master switch — false means live nowhere.
+  liveScope            String  @default("all") // all | markets
+  liveMarkets          String  @default("[]") // JSON string[] of market handles
+  // Hide the incumbent Stamped reviews via CSS — ONLY inside markets where
+  // this app is live (the style tag is emitted by the Liquid live-market
+  // branch, so it structurally cannot fire elsewhere).
+  hideStamped          Boolean @default(false)
+  // Newline-separated CSS selector override; null = shipped defaults
+  // (measured from cellexialabs.com, SPEC-1.14 §4). Sanitized on save.
+  stampedSelectors     String?
+  // Market handles the storefront has actually reported (via the widget's
+  // market param) — {handle: isoTimestamp}. Lets the merchant pick markets
+  // with zero extra API scopes: the recorded handle is exactly what Liquid
+  // compares at render time.
+  observedMarkets      String  @default("{}")
+  // v1.17 (SPEC-1.17): AI Curator settings — merchant guidance appended to
+  // every curation agent prompt, and the Accentuate "overview" metafield
+  // reference (namespace.key) read as curation input.
+  curationInstructions String?
+  curationOverviewField String @default("accentuate.overview")
+  // v1.18 (SPEC-1.18): what curation agents read — "as_seen" (what that
+  // language's shoppers see) | "all_translated" (every review translated
+  // into the agent's language at curation time, cached forever).
+  curationSource       String  @default("as_seen")
+  // v1.18 (SPEC-1.18): automatic re-curation of STALE existing curations —
+  // "manual" | "daily" | "weekly". First-time curation is always manual.
+  curationRefresh      String  @default("manual")
+  // v1.19 (SPEC-1.19): brand reviews page feature toggles (JSON:
+  // {ask?: bool, recommend?: bool} — both default true when absent).
+  brandPageConfig      String  @default("{}")
+}
+
+// v1.19 (SPEC-1.19 §6): the AI-written analysis for the "Cellexia Reviews"
+// brand page — one row per shop. Numbers are always computed
+// deterministically at render time; `sections` holds the verified prose +
+// verbatim quotes only.
+model BrandAnalysis {
+  shop        String    @id
+  sections    String    // JSON (see brand-page.server.ts AnalysisSections)
+  reviewCount Int
+  dateFrom    DateTime?
+  dateTo      DateTime?
+  model       String?
+  generatedAt DateTime  @updatedAt
+}
+
+// v1.16 (SPEC-1.16 §3): cached Q&A answers — one row per distinct question
+// per product+locale, so repeat questions (and every suggested-question tap
+// after the first) cost zero model calls. quotes: JSON
+// [{id, excerpt, author, rating}] hydrated at write time.
+model AskAnswer {
+  id           String   @id @default(cuid())
+  shop         String
+  productId    String
+  locale       String
+  questionHash String // sha256 of the normalized question
+  question     String
+  answer       String
+  quotes       String   @default("[]")
+  createdAt    DateTime @default(now())
+
+  @@unique([shop, productId, locale, questionHash])
+  @@index([shop, productId])
+}
+
+// v1.17 (SPEC-1.17 §3): one AI-curated review order per product per locale.
+// orderedIds: JSON string[] (best first); rationale: the agent's explanation
+// in that locale's language, shown verbatim in the admin. reviewCount is the
+// candidate count at run time (staleness display).
+model AiCuration {
+  id          String   @id @default(cuid())
+  shop        String
+  productId   String
+  locale      String
+  orderedIds  String   @default("[]")
+  rationale   String   @default("")
+  model       String?
+  reviewCount Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([shop, productId, locale])
+  @@index([shop, productId])
 }
 
 // v1.8 (SPEC-1.8 §1): per-product review display override. At most one row

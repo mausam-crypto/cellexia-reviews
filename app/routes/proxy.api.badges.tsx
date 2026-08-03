@@ -27,6 +27,7 @@ import {
 } from "~/services/proxy.server";
 import { checkRateLimit } from "~/services/ratelimit.server";
 import { badgeStatsByHandles, MAX_BADGE_HANDLES } from "~/services/badges.server";
+import { recordObservedMarket } from "~/services/markets.server";
 import { getSettings } from "~/services/settings.server";
 
 type AdminClient = Awaited<ReturnType<typeof unauthenticated.admin>>["admin"];
@@ -56,6 +57,19 @@ export async function loader({ request }: LoaderFunctionArgs) {
   }
 
   const params = new URL(request.url).searchParams;
+
+  // v1.14 (SPEC-1.14 §6, review-hardened): remember which market this request
+  // came from — but ONLY when the request carries the shop's current preview
+  // token. Recording is merchant-driven by design (open the preview link in a
+  // market); gating on the token means anonymous visitors can never poison
+  // the picker or exhaust its 50-handle cap.
+  const previewTokenParam = (params.get("preview_token") ?? "").trim();
+  if (previewTokenParam) {
+    const settingsForMarket = await getSettings(shop);
+    if (settingsForMarket.previewToken && previewTokenParam === settingsForMarket.previewToken) {
+      recordObservedMarket(shop, params.get("market"));
+    }
+  }
 
   const handlesRaw = (params.get("handles") ?? "").trim();
   if (!handlesRaw) return errorJson(422, { handles: "required" });

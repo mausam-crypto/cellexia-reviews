@@ -13,18 +13,25 @@ import { json } from "@remix-run/node";
 import {
   NO_STORE_HEADERS,
   errorJson,
+  getClientIp,
   matchShopLocale,
   recordStorefrontHit,
   requireLiveOrPreview,
   verifyProxy,
 } from "~/services/proxy.server";
-import { localizeSummary } from "~/services/ai.server";
+import { checkRateLimit } from "~/services/ratelimit.server";
+import { localizeSummary, maybeScheduleFirstGeneration } from "~/services/ai.server";
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const auth = await verifyProxy(request);
   if (!auth) return errorJson(401, { _: "unauthorized" });
   const { shop } = auth;
   recordStorefrontHit(shop, request); // SPEC-1.6 §2 — fire-and-forget, throttled
+
+  const ip = getClientIp(request);
+  if (!checkRateLimit(shop, ip, "summary")) {
+    return errorJson(429, { _: "rate_limited" });
+  }
 
   // SPEC-1.2 gating: not-live shops serve zero data unless the request
   // carries the current preview token (`preview_token` query param).
@@ -46,6 +53,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
 
   try {
     const summary = await localizeSummary(shop, productId, locale);
+    // v1.16 (SPEC-1.16 §1): no summary anywhere for this product yet —
+    // schedule the first generation in the background (debounced, silent).
+    if (!summary) maybeScheduleFirstGeneration(shop, productId);
     return json({ summary }, { headers: NO_STORE_HEADERS });
   } catch (error) {
     console.error("[cellexia] localizeSummary failed", error);

@@ -39,6 +39,7 @@ import {
   IndexTable,
   InlineStack,
   Layout,
+  Modal,
   Page,
   Pagination,
   Select,
@@ -89,6 +90,7 @@ const STRATEGY_SHORT: Record<RankingStrategy, string> = {
   verified_first: "Verified first",
   media_first: "Photos first",
   balanced: "Balanced",
+  ai_curated: "AI curated",
 };
 
 interface ExampleRow {
@@ -115,6 +117,17 @@ const STRATEGY_OPTIONS: Array<{
       { stars: 5, note: "312 found helpful" },
       { stars: 4, note: "198 found helpful · Verified" },
       { stars: 5, note: "54 found helpful" },
+    ],
+  },
+  {
+    value: "ai_curated",
+    label: "AI curated — conversion optimized (per language)",
+    description:
+      "A skeptical AI agent reads your product description and Overview, works out what prospects doubt, and puts the most credible convincing reviews first. Runs separately for every language, with instructions written in that language. Helpful-vote counts are ignored. Uses your Claude API key; you trigger curation from the card below (or turn on automatic refresh there), and languages without a curation fall back to the Amazon-style order.",
+    example: [
+      { stars: 5, note: "Answers the biggest doubt, credibly" },
+      { stars: 4, note: "Believable, covers a second concern" },
+      { stars: 5, note: "Specific results story" },
     ],
   },
   {
@@ -394,6 +407,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       },
       products: [] as OverviewProduct[],
       overall: null,
+      curation: null,
     });
   }
 
@@ -486,10 +500,39 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     .filter((row): row is OverallRowSource => Boolean(row))
     .map(toOverallRow);
 
+  const { curationStatus, recentCurationFailures } = await import("~/services/curation.server");
+  const { ensureCurationScheduler } = await import("~/services/curation-scheduler.server");
+  ensureCurationScheduler();
+  const curationRows = await curationStatus(shop);
+
   return json({
     defaults,
     editor: null,
     products,
+    curation: {
+      instructions: settings.curationInstructions ?? "",
+      overviewField: settings.curationOverviewField,
+      source: settings.curationSource === "all_translated" ? "all_translated" : "as_seen",
+      refresh: ["daily", "weekly"].includes(settings.curationRefresh)
+        ? settings.curationRefresh
+        : "manual",
+      rows: curationRows.map((r) => ({
+        productId: r.productId,
+        locale: r.locale,
+        ordered: r.ordered,
+        reviewCount: r.reviewCount,
+        publishedNow: r.publishedNow,
+        stale: r.stale,
+        model: r.model,
+        rationale: r.rationale,
+        updatedAt: r.updatedAt,
+      })),
+      failures: recentCurationFailures(shop).map((f) => ({
+        productId: f.productId,
+        locale: f.locale,
+        status: f.status,
+      })),
+    },
     overall: {
       mode: overallConfig.mode,
       picked: overallPicked,
@@ -572,6 +615,70 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       return json({
         ok: true,
         message: "Default review order saved — live on the storefront within a minute",
+      });
+    }
+
+    // v1.17 (SPEC-1.17): AI Curator admin actions.
+    if (intent === "save-curation-settings") {
+      const overviewRaw = String(form.get("curationOverviewField") ?? "").trim();
+      // Validate BEFORE saving so a typo never gets a success toast while the
+      // sanitizer silently keeps the old value (SPEC-1.17 §5).
+      if (overviewRaw && !/^[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(overviewRaw)) {
+        return json(
+          {
+            ok: false,
+            message:
+              'Not saved — the Overview field must look like "namespace.key" (letters, digits, - and _ only), e.g. accentuate.overview.',
+          },
+          { status: 400 },
+        );
+      }
+      // v1.18: whitelist-validate the two selects before saving (the same
+      // "no silent drops behind a success toast" rule as the overview field).
+      // ABSENT fields are left untouched — a pre-1.18 admin tab still open
+      // must never silently reset them to defaults.
+      const sourceRaw = form.get("curationSource");
+      const refreshRaw = form.get("curationRefresh");
+      if (sourceRaw !== null && !["as_seen", "all_translated"].includes(String(sourceRaw))) {
+        return json({ ok: false, message: "Not saved — invalid candidate source." }, { status: 400 });
+      }
+      if (refreshRaw !== null && !["manual", "daily", "weekly"].includes(String(refreshRaw))) {
+        return json({ ok: false, message: "Not saved — invalid refresh frequency." }, { status: 400 });
+      }
+      const { updateSettings } = await import("~/services/settings.server");
+      await updateSettings(shop, {
+        curationInstructions: String(form.get("curationInstructions") ?? "").trim() || null,
+        curationOverviewField: overviewRaw,
+        ...(sourceRaw !== null ? { curationSource: String(sourceRaw) } : {}),
+        ...(refreshRaw !== null ? { curationRefresh: String(refreshRaw) } : {}),
+      });
+      return json({
+        ok: true,
+        message: overviewRaw
+          ? "Curation settings saved."
+          : "Curation settings saved — Overview field reset to accentuate.overview.",
+      });
+    }
+    if (intent === "curate") {
+      const { queueCuration } = await import("~/services/curation.server");
+      const productIdRaw = String(form.get("productId") ?? "").trim();
+      const summary = await queueCuration(shop, admin, productIdRaw ? [productIdRaw] : undefined);
+      if (!summary.aiReady) {
+        return json(
+          {
+            ok: false,
+            message:
+              "Nothing queued — no Claude API key is configured. Add one in Settings, then curate.",
+          },
+          { status: 400 },
+        );
+      }
+      const parts = [`${summary.queued} curation run(s) queued across ${summary.products} product(s)`];
+      if (summary.skippedDebounce) parts.push(`${summary.skippedDebounce} skipped (ran in the last 10 minutes)`);
+      if (summary.skippedCap) parts.push(`${summary.skippedCap} skipped (daily cap reached)`);
+      return json({
+        ok: summary.queued > 0 || summary.skippedDebounce > 0,
+        message: parts.join(" · ") + ". Results appear in the table below as they finish — refresh in a minute.",
       });
     }
 
@@ -785,6 +892,16 @@ export default function DisplayRoute() {
       defaults={data.defaults}
       products={data.products}
       overall={data.overall}
+      curation={
+        data.curation ?? {
+          instructions: "",
+          overviewField: "accentuate.overview",
+          source: "as_seen",
+          refresh: "manual",
+          rows: [],
+          failures: [],
+        }
+      }
     />
   );
 }
@@ -793,10 +910,12 @@ function DisplayOverview({
   defaults,
   products,
   overall,
+  curation,
 }: {
   defaults: LoaderData["defaults"];
   products: LoaderData["products"];
   overall: LoaderData["overall"];
+  curation: CurationData;
 }) {
   const navigate = useNavigate();
   const saveFetcher = useFetcher<typeof action>();
@@ -876,6 +995,14 @@ function DisplayOverview({
                 </InlineStack>
               </BlockStack>
             </Card>
+
+            {/* SPEC-1.17 §5: the card shows only while "AI curated" is picked
+                somewhere — as the (unsaved or saved) default or any override. */}
+            {strategy === "ai_curated" ||
+            defaults.strategy === "ai_curated" ||
+            products.some((p) => p.override === "ai_curated") ? (
+              <CurationCard curation={curation} products={products} />
+            ) : null}
 
             <Card padding="0">
               <Box padding="400" paddingBlockEnd="200">
@@ -979,6 +1106,367 @@ function DisplayOverview({
  * ↑ / ↓ / Remove), the Refresh-homepage-data button and the live stats
  * preview of what the block will show.
  */
+/* v1.17 (SPEC-1.17 §5) — the AI Curator card. Nothing hidden: settings,
+   per-product Curate buttons, and the full status table with each agent's
+   rationale in its own language. */
+interface CurationData {
+  instructions: string;
+  overviewField: string;
+  source: string;
+  refresh: string;
+  rows: Array<{
+    productId: string;
+    locale: string;
+    ordered: number;
+    reviewCount: number;
+    publishedNow: number;
+    stale: boolean;
+    model: string | null;
+    rationale: string;
+    updatedAt: string;
+  }>;
+  failures: Array<{ productId: string; locale: string; status: string }>;
+}
+
+const FAILURE_LABELS: Record<string, string> = {
+  no_reviews: "not enough reviews",
+  no_ai: "no Claude API key configured",
+  no_product: "product not found in Shopify — it may have been deleted",
+  failed: "the AI call failed — try again in a minute",
+};
+
+function CurationCard({
+  curation,
+  products,
+}: {
+  curation: CurationData;
+  products: Array<{
+    productId: string;
+    productTitle: string | null;
+    publishedCount: number;
+    override: string | null;
+  }>;
+}) {
+  const settingsFetcher = useFetcher<typeof action>();
+  const curateFetcher = useFetcher<typeof action>();
+  useResultToast(settingsFetcher);
+  useResultToast(curateFetcher);
+
+  const [instructions, setInstructions] = useState(curation.instructions);
+  const [overviewField, setOverviewField] = useState(curation.overviewField);
+  const [source, setSource] = useState(curation.source);
+  const [refresh, setRefresh] = useState(curation.refresh);
+  const [openRationale, setOpenRationale] = useState<string | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [productPick, setProductPick] = useState("");
+
+  const titleById = new Map(products.map((p) => [p.productId, p.productTitle]));
+  const busy = curateFetcher.state !== "idle";
+  // Products below 3 published reviews can never produce a curation and are
+  // skipped by the queue — the confirm modal's scale must not count them.
+  const eligibleCount = products.filter((p) => p.publishedCount >= 3).length;
+
+  return (
+    <Card>
+      <BlockStack gap="400">
+        <BlockStack gap="150">
+          <Text as="h2" variant="headingMd">
+            AI curation (for the "AI curated" order)
+          </Text>
+          <Text as="p" variant="bodySm" tone="subdued">
+            For every language separately, a skeptical AI agent reads the product
+            description and your Overview field, works out what prospects doubt or want to
+            know, and puts the most credible convincing reviews first. Each language's
+            agent works entirely in that language. Helpful-vote counts are never used.
+            Products or languages without any curation show the Amazon-style order.
+            Curation runs when you press Curate — or automatically on the schedule you
+            pick below — using your Claude API key (one AI call per product per language,
+            capped at 300 per day).
+          </Text>
+        </BlockStack>
+
+        <InlineStack gap="300" wrap blockAlign="end">
+          <Box minWidth="260px">
+            <TextField
+              label="Overview field (Accentuate custom field)"
+              value={overviewField}
+              onChange={setOverviewField}
+              autoComplete="off"
+              placeholder="accentuate.overview"
+              helpText="The product metafield holding your Overview text, as namespace.key."
+            />
+          </Box>
+          <Box minWidth="300px">
+            <Select
+              label="What the agents read"
+              options={[
+                {
+                  label: "What each language's shoppers see",
+                  value: "as_seen",
+                },
+                {
+                  label: "All reviews, translated into each language",
+                  value: "all_translated",
+                },
+              ]}
+              value={source}
+              onChange={setSource}
+              helpText={
+                source === "all_translated"
+                  ? "Every agent reads every review, translated into its language. Reviews never translated before are translated at curation time with your translation provider (each translation is billed once, then cached forever). Every language qualifies, so Curate-all runs all 17 languages per product."
+                  : "Each agent reads originals in its language plus existing translations; untranslated foreign reviews are included but marked as foreign. Languages without enough reviews in that language reuse the English curation."
+              }
+            />
+          </Box>
+          <Box minWidth="260px">
+            <Select
+              label="Automatic refresh"
+              options={[
+                { label: "Manual only", value: "manual" },
+                { label: "Daily", value: "daily" },
+                { label: "Weekly", value: "weekly" },
+              ]}
+              value={refresh}
+              onChange={setRefresh}
+              helpText="Re-runs a curation automatically only when its reviews have changed since it last ran, at most once per day/week per product and language. The first curation of a product is always started by you; the 300-per-day cap applies."
+            />
+          </Box>
+        </InlineStack>
+        <TextField
+          label="Your guidance to the agents (optional)"
+          value={instructions}
+          onChange={setInstructions}
+          multiline={3}
+          autoComplete="off"
+          placeholder="e.g. Our buyers worry most about sensitive skin — prioritize credible reviews that mention it."
+          helpText="Added to every agent's instructions, in every language. Write it in any language."
+        />
+        <InlineStack gap="200" blockAlign="center" wrap>
+          <Button
+            onClick={() =>
+              settingsFetcher.submit(
+                {
+                  intent: "save-curation-settings",
+                  curationInstructions: instructions,
+                  curationOverviewField: overviewField,
+                  curationSource: source,
+                  curationRefresh: refresh,
+                },
+                { method: "post" },
+              )
+            }
+            loading={settingsFetcher.state !== "idle"}
+          >
+            Save curation settings
+          </Button>
+          <Button variant="primary" loading={busy} onClick={() => setConfirmOpen(true)}>
+            Curate all products now
+          </Button>
+          <Text as="span" variant="bodySm" tone="subdued">
+            {products.length} product(s) with published reviews.
+          </Text>
+        </InlineStack>
+        <Modal
+          open={confirmOpen}
+          onClose={() => setConfirmOpen(false)}
+          title="Curate all products?"
+          primaryAction={{
+            content: "Start curating",
+            onAction: () => {
+              setConfirmOpen(false);
+              curateFetcher.submit({ intent: "curate" }, { method: "post" });
+            },
+          }}
+          secondaryActions={[{ content: "Cancel", onAction: () => setConfirmOpen(false) }]}
+        >
+          <Modal.Section>
+            <BlockStack gap="200">
+              {source === "all_translated" ? (
+                <Text as="p" variant="bodyMd">
+                  This queues one AI call per product per language: {eligibleCount}{" "}
+                  product(s) with enough reviews (3+) × all 17 languages (in "all
+                  reviews, translated" mode every language qualifies) — never more than
+                  300 runs per day. Reviews never translated before are translated first
+                  with your translation provider and cached forever.
+                </Text>
+              ) : (
+                <Text as="p" variant="bodyMd">
+                  This queues one AI call per product per qualifying language:{" "}
+                  {eligibleCount} product(s) with enough reviews (3+) × up to 17
+                  languages. Only languages with enough reviews written in (or translated
+                  into) that language actually run, so the real number is usually much
+                  smaller — and never more than 300 runs per day.
+                </Text>
+              )}
+              <Text as="p" variant="bodySm" tone="subdued">
+                Each run sends that product's description, Overview text and up to 60
+                reviews to Claude using your API key. Products curated in the last 10
+                minutes are skipped.
+              </Text>
+              {source !== curation.source ? (
+                <Text as="p" variant="bodySm" tone="caution">
+                  You changed "What the agents read" without saving — save the curation
+                  settings first, or this run still uses the saved setting.
+                </Text>
+              ) : null}
+            </BlockStack>
+          </Modal.Section>
+        </Modal>
+        <InlineStack gap="200" blockAlign="end" wrap>
+          <Box minWidth="280px">
+            <Select
+              label="Curate a single product"
+              options={[
+                { label: "Choose a product…", value: "" },
+                ...products.map((p) => ({
+                  label: `${p.productTitle ?? p.productId} (${p.publishedCount} review${p.publishedCount === 1 ? "" : "s"})`,
+                  value: p.productId,
+                })),
+              ]}
+              value={productPick}
+              onChange={setProductPick}
+            />
+          </Box>
+          <Button
+            disabled={!productPick}
+            loading={busy}
+            onClick={() =>
+              curateFetcher.submit(
+                { intent: "curate", productId: productPick },
+                { method: "post" },
+              )
+            }
+          >
+            Curate this product
+          </Button>
+        </InlineStack>
+
+        {curation.failures.length > 0 ? (
+          <Banner tone="warning" title="Some recent runs did not produce a curation">
+            <BlockStack gap="100">
+              {curation.failures.slice(0, 5).map((f, i) => (
+                <Text key={`${f.productId}|${f.locale}|${i}`} as="p" variant="bodySm">
+                  {(titleById.get(f.productId) ?? f.productId) +
+                    " · " +
+                    f.locale +
+                    " — " +
+                    (FAILURE_LABELS[f.status] ?? f.status)}
+                </Text>
+              ))}
+            </BlockStack>
+          </Banner>
+        ) : null}
+
+        {curation.rows.length > 0 ? (
+          <BlockStack gap="200">
+            <Divider />
+            <Text as="h3" variant="headingSm">
+              Curations so far
+            </Text>
+            <IndexTable
+              resourceName={{ singular: "curation", plural: "curations" }}
+              itemCount={curation.rows.length}
+              selectable={false}
+              headings={[
+                { title: "Product" },
+                { title: "Language" },
+                { title: "Reviews ordered" },
+                { title: "Last run" },
+                { title: "Model" },
+                { title: "Freshness" },
+                { title: "Rationale" },
+              ]}
+            >
+              {curation.rows.map((row, index) => {
+                const key = `${row.productId}|${row.locale}`;
+                return (
+                  <IndexTable.Row id={key} key={key} position={index}>
+                    <IndexTable.Cell>
+                      <Text as="span" variant="bodySm">
+                        {titleById.get(row.productId) ?? row.productId}
+                      </Text>
+                    </IndexTable.Cell>
+                    <IndexTable.Cell>{row.locale}</IndexTable.Cell>
+                    <IndexTable.Cell>
+                      {row.ordered} of {row.reviewCount}
+                    </IndexTable.Cell>
+                    <IndexTable.Cell>
+                      <Text as="span" variant="bodySm">
+                        {formatDate(row.updatedAt)}
+                      </Text>
+                    </IndexTable.Cell>
+                    <IndexTable.Cell>
+                      <Text as="span" variant="bodySm" tone="subdued">
+                        {row.model || "—"}
+                      </Text>
+                    </IndexTable.Cell>
+                    <IndexTable.Cell>
+                      {row.stale ? (
+                        <Badge tone="attention">Reviews changed — re-curate</Badge>
+                      ) : (
+                        <Badge tone="success">Up to date</Badge>
+                      )}
+                    </IndexTable.Cell>
+                    <IndexTable.Cell>
+                      <Button
+                        variant="plain"
+                        onClick={() => setOpenRationale(openRationale === key ? null : key)}
+                      >
+                        {openRationale === key ? "Hide" : "Show"}
+                      </Button>
+                    </IndexTable.Cell>
+                  </IndexTable.Row>
+                );
+              })}
+            </IndexTable>
+            {openRationale
+              ? (() => {
+                  const row = curation.rows.find(
+                    (r) => `${r.productId}|${r.locale}` === openRationale,
+                  );
+                  return row ? (
+                    <Box padding="300" background="bg-surface-secondary" borderRadius="200">
+                      <BlockStack gap="100">
+                        <Text as="h4" variant="headingSm">
+                          {(titleById.get(row.productId) ?? row.productId) + " · " + row.locale}
+                        </Text>
+                        {/* dir="auto" so Arabic (and any RTL) rationales read right-to-left. */}
+                        <div dir="auto">
+                          <Text as="p" variant="bodySm">
+                            {row.rationale || "(no rationale recorded)"}
+                          </Text>
+                        </div>
+                        <InlineStack gap="200">
+                          <Button
+                            size="slim"
+                            loading={busy}
+                            onClick={() =>
+                              curateFetcher.submit(
+                                { intent: "curate", productId: row.productId },
+                                { method: "post" },
+                              )
+                            }
+                          >
+                            Re-curate this product
+                          </Button>
+                        </InlineStack>
+                      </BlockStack>
+                    </Box>
+                  ) : null;
+                })()
+              : null}
+          </BlockStack>
+        ) : (
+          <Text as="p" variant="bodySm" tone="subdued">
+            No curations yet — pick the "AI curated" order above (as default or for a
+            product), then press "Curate all products now".
+          </Text>
+        )}
+      </BlockStack>
+    </Card>
+  );
+}
+
 function OverallReviewsCard({ overall }: { overall: OverallData }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const saveFetcher = useFetcher<typeof action>();

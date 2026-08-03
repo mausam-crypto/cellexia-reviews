@@ -56,13 +56,18 @@
   endif
 
   comment
-    Gating — byte-for-byte the reviews.liquid rules (SPEC-1.2/1.6): only an
-    explicit false on `cellexia.live` means "not live"; the theme editor
-    always shows the full block; the preview token is emitted ONLY in
-    design mode and never on a normal storefront request.
+    Gating — byte-for-byte the reviews.liquid rules, market-aware since
+    v1.14 (SPEC-1.14 §3): the cx-live snippet decides (wrapper comments
+    stripped per SPEC-1.8 §5); the theme editor always shows the full block;
+    the preview token is emitted ONLY in design mode and never on a normal
+    storefront request.
   endcomment
+  capture cx_live_raw
+    render 'cx-live'
+  endcapture
+  assign cx_live_raw = cx_live_raw | remove: '<!-- BEGIN app snippet: cx-live -->' | remove: '<!-- END app snippet -->' | strip
   assign cx_is_live = true
-  if shop.metafields.cellexia.live.value == false
+  if cx_live_raw != '1'
     assign cx_is_live = false
   endif
   assign cx_show_full = cx_is_live
@@ -111,6 +116,7 @@
   class="cx cx-overall"
   {% if cx_lang == 'ar' %}dir="rtl"{% endif %}
   data-locale="{{ request.locale.iso_code }}"
+  data-translation-display="{{ shop.metafields.cellexia.translation_display.value | default: 'original' }}"
   data-proxy="{{ cx_proxy }}"
   data-heading="{{ cx_o_heading | escape }}"
   data-max-reviews="{{ cx_o_max }}"

@@ -1,0 +1,350 @@
+{% comment %}
+  Cellexia Reviews — the "Cellexia Reviews" brand page section (SPEC-1.19).
+
+  Placeable on the OS 2.0 page /pages/cellexia-reviews. EVERYTHING a crawler
+  needs is SSR'd here from the `cellexia.brand_page` SHOP metafield
+  (BrandPagePayload, written by the app's "Publish page data" action):
+  H1 + exact-phrase opening, stats band + full distribution, the five
+  analysis sections with verbatim quotes, best-product-by-concern table,
+  per-product table, ~36 evidence-rich review cards, methodology, crawlable
+  links into the /apps/<subpath>/reviews archive, and JSON-LD built from the
+  SAME payload (numbers cannot diverge from the visible HTML).
+
+  assets/cellexia-reviews-page.js layers the filter bar and the two ask
+  boxes on top (progressive enhancement — SSR content stays until the
+  shopper interacts). The main widget assets are NOT loaded here.
+
+  Gating: identical to overall-reviews.liquid (cx-live capture + strip,
+  design-mode always shows, editor token only in design mode). Without the
+  metafield: merchants (design mode) see a setup placeholder; shoppers see
+  nothing.
+
+  JSON-LD: Organization WITHOUT aggregateRating (Google excludes
+  self-serving org ratings — docs/SEO.md), WebPage, BreadcrumbList, and an
+  ItemList of Product entities with real per-product AggregateRating plus
+  up to 3 Review objects each — every one VISIBLY rendered on this page.
+{% endcomment %}
+{%- liquid
+  capture cx_live_raw
+    render 'cx-live'
+  endcapture
+  assign cx_live_raw = cx_live_raw | remove: '<!-- BEGIN app snippet: cx-live -->' | remove: '<!-- END app snippet -->' | strip
+  assign cx_is_live = true
+  if cx_live_raw != '1'
+    assign cx_is_live = false
+  endif
+  assign cx_show = cx_is_live
+  if request.design_mode
+    assign cx_show = true
+  endif
+  assign cx_editor_token = ''
+  if request.design_mode
+    assign cx_editor_token = shop.metafields.cellexia.preview_token.value | default: '' | append: '' | strip
+  endif
+  assign cx_lang = request.locale.iso_code | split: '-' | first
+
+  assign cx_skin = 'amazon'
+  case shop.metafields.cellexia.design_theme.value
+    when 'cellexia'
+      assign cx_skin = 'cellexia'
+    when 'luxe'
+      assign cx_skin = 'luxe'
+  endcase
+
+  assign cx_bp = nil
+  if shop.metafields.cellexia.brand_page
+    assign cx_bp = shop.metafields.cellexia.brand_page.value
+  endif
+-%}
+{%- comment -%}
+  The crawlable archive lives at "/apps/<subpath>/reviews" and the page JS
+  appends "/api/..." itself, so this block needs the proxy ROOT, not
+  cx-proxy's "/apps/<subpath>/api". cx-base derives it from the same
+  metafield (no string surgery on a rendered value). SPEC-1.8 §5: strip the
+  app-snippet wrapper comments Shopify injects around every render.
+{%- endcomment -%}
+{%- capture cx_base -%}{% render 'cx-base' %}{%- endcapture -%}
+{%- assign cx_base = cx_base | remove: '<!-- BEGIN app snippet: cx-base -->' | remove: '<!-- END app snippet -->' | strip -%}
+{{ 'cellexia-reviews-page.css' | asset_url | stylesheet_tag }}
+{%- if cx_bp == nil or cx_bp.facts == nil or cx_bp.facts.count == 0 -%}
+  {%- if request.design_mode -%}
+    <div class="cx-brand-page cx-brand-page--placeholder" data-cx-skin="{{ cx_skin }}">
+      <h1>Cellexia Reviews</h1>
+      <p>{{ 'cellexia.brand_page.placeholder' | t }}</p>
+    </div>
+  {%- endif -%}
+{%- else -%}
+{%- assign cx_f = cx_bp.facts -%}
+{%- capture cx_i18n_json -%}
+{
+  "filter_title": {{ 'cellexia.brand_page.filter_title' | t | json }},
+  "filter_all_products": {{ 'cellexia.brand_page.filter_all_products' | t | json }},
+  "filter_all_concerns": {{ 'cellexia.brand_page.filter_all_concerns' | t | json }},
+  "filter_all_ratings": {{ 'cellexia.brand_page.filter_all_ratings' | t | json }},
+  "filter_stars": {{ 'cellexia.brand_page.filter_stars' | t | json }},
+  "loading": {{ 'cellexia.brand_page.loading' | t | json }},
+  "load_error": {{ 'cellexia.brand_page.load_error' | t | json }},
+  "empty": {{ 'cellexia.brand_page.empty' | t | json }},
+  "page_of": {{ 'cellexia.brand_page.page_of' | t | json }},
+  "prev": {{ 'cellexia.brand_page.prev' | t | json }},
+  "next": {{ 'cellexia.brand_page.next' | t | json }},
+  "verified": {{ 'cellexia.brand_page.verified' | t | json }},
+  "ask_title": {{ 'cellexia.brand_page.ask_title' | t | json }},
+  "ask_placeholder": {{ 'cellexia.brand_page.ask_placeholder' | t | json }},
+  "ask_button": {{ 'cellexia.brand_page.ask_button' | t | json }},
+  "ask_hint": {{ 'cellexia.brand_page.ask_hint' | t | json }},
+  "recommend_title": {{ 'cellexia.brand_page.recommend_title' | t | json }},
+  "recommend_placeholder": {{ 'cellexia.brand_page.recommend_placeholder' | t | json }},
+  "recommend_button": {{ 'cellexia.brand_page.recommend_button' | t | json }},
+  "quotes_title": {{ 'cellexia.brand_page.quotes_title' | t | json }},
+  "translate": {{ 'cellexia.brand_page.translate' | t | json }},
+  "see_original": {{ 'cellexia.brand_page.see_original' | t | json }},
+  "source_label": {{ 'cellexia.brand_page.source_label' | t | json }}
+}
+{%- endcapture -%}
+{%- capture cx_products_json -%}
+[{%- for p in cx_f.products -%}{"handle": {{ p.handle | json }}, "title": {{ p.title | json }}, "count": {{ p.count | default: 0 }}}{%- unless forloop.last -%},{%- endunless -%}{%- endfor -%}]
+{%- endcapture -%}
+{%- capture cx_concerns_json -%}
+[{%- for w in cx_f.concernWinners -%}{"key": {{ w.concern | json }}, "label": {{ 'cellexia.skin.' | append: w.concern | t | json }}, "count": {{ w.mentions | default: 0 }}}{%- unless forloop.last -%},{%- endunless -%}{%- endfor -%}]
+{%- endcapture -%}
+<div
+  class="cx-brand-page"
+  {% if cx_lang == 'ar' %}dir="rtl"{% endif %}
+  data-cx-brand-page
+  data-cx-skin="{{ cx_skin }}"
+  data-proxy="{{ cx_base }}"
+  data-locale="{{ request.locale.iso_code }}"
+  data-count="{{ cx_f.count }}"
+  data-products="{{ cx_products_json | strip | escape }}"
+  data-concerns="{{ cx_concerns_json | strip | escape }}"
+  data-ask="{% if cx_bp.config.ask %}1{% else %}0{% endif %}"
+  data-recommend="{% if cx_bp.config.recommend %}1{% else %}0{% endif %}"
+  data-i18n="{{ cx_i18n_json | strip | escape }}"
+  data-cx-live="{{ cx_show }}"
+  {% unless cx_show %}hidden{% endunless %}
+  {% if cx_editor_token != blank %}data-cx-editor-token="{{ cx_editor_token | escape }}"{% endif %}
+>
+  <header class="cx-bp-head">
+    <h1>Cellexia Reviews</h1>
+    <p class="cx-bp-opening">{{ 'cellexia.brand_page.opening' | t: avg: cx_f.average, count: cx_f.count, from: cx_f.dateFrom, to: cx_f.dateTo }}</p>
+    <div class="cx-bp-stats">
+      <div class="cx-bp-stat"><span class="cx-bp-stat-num">{{ cx_f.average }}/5</span><span>{{ 'cellexia.brand_page.stats_avg' | t }}</span></div>
+      <div class="cx-bp-stat"><span class="cx-bp-stat-num">{{ cx_f.count }}</span><span>{{ 'cellexia.brand_page.stats_total' | t }}</span></div>
+      <div class="cx-bp-stat"><span class="cx-bp-stat-num">{{ cx_f.verifiedPercent }}%</span><span>{{ 'cellexia.brand_page.stats_verified' | t }}</span></div>
+      <div class="cx-bp-stat"><span class="cx-bp-stat-num">{{ cx_f.criticalCount }}</span><span>{{ 'cellexia.brand_page.stats_critical' | t }}</span></div>
+    </div>
+    <table class="cx-bp-dist">
+      <caption>{{ 'cellexia.brand_page.dist_title' | t }}</caption>
+      {%- assign cx_star_keys = '5,4,3,2,1' | split: ',' -%}
+      {%- for s in cx_star_keys -%}
+      {%- assign bucket = cx_f.distribution[s] -%}
+      <tr>
+        <th scope="row">{{ 'cellexia.brand_page.stars_row' | t: n: s }}</th>
+        <td class="cx-bp-dist-bar"><span style="width: {{ bucket.percent | default: 0 }}%"></span></td>
+        <td>{{ bucket.percent | default: 0 }}% ({{ bucket.count | default: 0 }})</td>
+      </tr>
+      {%- endfor -%}
+    </table>
+  </header>
+
+  {%- if cx_bp.analysis -%}
+  <section class="cx-bp-analysis">
+    <h2>{{ 'cellexia.brand_page.analysis_title' | t }}</h2>
+    <p class="cx-bp-based">{{ 'cellexia.brand_page.analysis_based' | t: count: cx_bp.analysis.reviewCount, date: cx_bp.analysis.generatedAt }}</p>
+    {%- assign cx_sections = 'positive,results,complaints,byConcern,timeline' | split: ',' -%}
+    {%- for skey in cx_sections -%}
+    {%- assign sec = cx_bp.analysis.sections[skey] -%}
+    {%- if sec -%}
+    <section class="cx-bp-qa">
+      <h3>{{ 'cellexia.brand_page.q_' | append: skey | t }}</h3>
+      <p>{{ sec.prose | escape }}</p>
+      {%- for q in sec.quotes -%}
+      <blockquote class="cx-bp-quote" lang="en">
+        <p>“{{ q.excerpt | escape }}”</p>
+        <footer>
+          {{ q.author | escape }} · {{ q.rating }}/5 · {{ q.date }}
+          {%- if q.productTitle %} · {% if q.productHandle %}<a href="/products/{{ q.productHandle | escape }}">{{ q.productTitle | escape }}</a>{% else %}{{ q.productTitle | escape }}{% endif %}{% endif %}
+          · <a href="{{ cx_base }}/reviews?review={{ q.id | escape }}#r{{ q.id | escape }}">{{ 'cellexia.brand_page.full_review' | t }}</a>
+        </footer>
+      </blockquote>
+      {%- endfor -%}
+    </section>
+    {%- endif -%}
+    {%- endfor -%}
+  </section>
+  {%- endif -%}
+
+  {%- if cx_f.concernWinners.size > 0 -%}
+  <section class="cx-bp-winners">
+    <h2>{{ 'cellexia.brand_page.winners_title' | t }}</h2>
+    <table>
+      <thead><tr><th>{{ 'cellexia.brand_page.winners_concern' | t }}</th><th>{{ 'cellexia.brand_page.winners_product' | t }}</th><th>{{ 'cellexia.brand_page.winners_rating' | t }}</th><th>{{ 'cellexia.brand_page.winners_reviews' | t }}</th></tr></thead>
+      <tbody>
+        {%- for w in cx_f.concernWinners -%}
+        <tr>
+          <td>{{ 'cellexia.skin.' | append: w.concern | t }}</td>
+          <td>{% if w.handle %}<a href="/products/{{ w.handle | escape }}">{{ w.title | escape }}</a>{% else %}{{ w.title | escape }}{% endif %}</td>
+          <td>{{ w.average }}/5</td>
+          <td><a href="{{ cx_base }}/reviews?concern={{ w.concern | escape }}">{{ w.count }}</a></td>
+        </tr>
+        {%- endfor -%}
+      </tbody>
+    </table>
+  </section>
+  {%- endif -%}
+
+  <section class="cx-bp-products">
+    <h2>{{ 'cellexia.brand_page.products_title' | t }}</h2>
+    <table>
+      <thead><tr><th>{{ 'cellexia.brand_page.products_product' | t }}</th><th>{{ 'cellexia.brand_page.products_avg' | t }}</th><th>{{ 'cellexia.brand_page.products_count' | t }}</th><th></th></tr></thead>
+      <tbody>
+        {%- for p in cx_f.products -%}
+        <tr>
+          <td>{% if p.handle %}<a href="/products/{{ p.handle | escape }}">{{ p.title | escape }}</a>{% else %}{{ p.title | escape }}{% endif %}</td>
+          <td>{{ p.average }}/5</td>
+          <td>{{ p.count }}</td>
+          <td>{% if p.handle %}<a href="{{ cx_base }}/reviews?product={{ p.handle | escape }}">{{ 'cellexia.brand_page.products_view' | t }}</a>{% endif %}</td>
+        </tr>
+        {%- endfor -%}
+      </tbody>
+    </table>
+  </section>
+
+  <div data-cx-page-ask hidden></div>
+  <div data-cx-page-recommend hidden></div>
+
+  <section class="cx-bp-reviews">
+    <h2>{{ 'cellexia.brand_page.top_title' | t }}</h2>
+    <div data-cx-page-filters></div>
+    <div data-cx-page-results aria-live="polite">
+      {%- for r in cx_bp.reviews -%}
+      <article class="cx-bp-review" lang="{{ r.language | escape }}">
+        <p class="cx-bp-review-head">
+          <span class="cx-bp-stars" aria-label="{{ r.rating }}/5">{% for i in (1..5) %}{% if i <= r.rating %}★{% else %}☆{% endif %}{% endfor %}</span>
+          <strong>{{ r.title | escape }}</strong>
+        </p>
+        <p class="cx-bp-review-meta">
+          {{ r.author | escape }} · {{ r.date }}
+          {%- if r.verified %} · <span class="cx-bp-verified">{{ 'cellexia.brand_page.verified' | t }}</span>{% endif %}
+          {%- if r.productTitle %} · {% if r.productHandle %}<a href="/products/{{ r.productHandle | escape }}">{{ r.productTitle | escape }}</a>{% else %}{{ r.productTitle | escape }}{% endif %}{% endif %}
+        </p>
+        {%- assign has_attrs = false -%}
+        {%- if r.ageRange or r.timeUsing or r.concerns.size > 0 or r.results.size > 0 -%}{%- assign has_attrs = true -%}{%- endif -%}
+        {%- if has_attrs -%}
+        <p class="cx-bp-review-attrs">
+          {%- if r.ageRange %}{{ 'cellexia.brand_page.meta_age' | t }}: {{ 'cellexia.age.' | append: r.ageRange | t }}{% endif -%}
+          {%- if r.concerns.size > 0 %} · {{ 'cellexia.brand_page.meta_concerns' | t }}: {% for c in r.concerns %}{{ 'cellexia.skin.' | append: c | t }}{% unless forloop.last %}, {% endunless %}{% endfor %}{% endif -%}
+          {%- if r.timeUsing %} · {{ 'cellexia.brand_page.meta_used' | t }}: {{ 'cellexia.time.' | append: r.timeUsing | t }}{% endif -%}
+          {%- if r.results.size > 0 %} · {{ 'cellexia.brand_page.meta_results' | t }}: {% for res in r.results %}{{ 'cellexia.results.' | append: res | t }}{% unless forloop.last %}, {% endunless %}{% endfor %}{% endif -%}
+        </p>
+        {%- endif -%}
+        <p class="cx-bp-review-body">{{ r.body | escape }}</p>
+        {%- if r.reply -%}
+        <p class="cx-bp-review-reply"><strong>{{ 'cellexia.brand_page.reply_label' | t }}:</strong> {{ r.reply | escape }}</p>
+        {%- endif -%}
+        {%- assign source_key = r.source | default: 'storefront' | replace: '-', '_' -%}
+        <p class="cx-bp-review-source">{{ 'cellexia.brand_page.source_' | append: source_key | t }}</p>
+      </article>
+      {%- endfor -%}
+    </div>
+    <p class="cx-bp-archive">
+      <a href="{{ cx_base }}/reviews">{{ 'cellexia.brand_page.archive_all' | t: count: cx_f.count }}</a>
+    </p>
+  </section>
+
+  <section class="cx-bp-method">
+    <h2>{{ 'cellexia.brand_page.method_title' | t }}</h2>
+    <p>{{ 'cellexia.brand_page.method_p1' | t }}</p>
+    <p>{{ 'cellexia.brand_page.method_p2' | t }}</p>
+    <ul>
+      {%- for s in cx_f.sources -%}
+      {%- assign skey2 = s.key | replace: '-', '_' -%}
+      <li>{{ 'cellexia.brand_page.source_' | append: skey2 | t }}: {{ s.count }}</li>
+      {%- endfor -%}
+    </ul>
+    <p class="cx-bp-updated">{{ 'cellexia.brand_page.last_updated' | t: date: cx_bp.publishedAt }}</p>
+  </section>
+
+  {%- comment -%}
+    Structured data ONLY when the page is actually live: JSON-LD is parsed
+    from the DOM regardless of `hidden`, so emitting it on a not-live store
+    would feed Google review rich-results for content no shopper can see.
+  {%- endcomment -%}
+  {%- if cx_show -%}
+  <script type="application/ld+json">
+  [
+    {
+      "@context": "https://schema.org",
+      "@type": "Organization",
+      "name": {{ shop.name | json }},
+      "url": {{ shop.url | json }}
+    },
+    {
+      "@context": "https://schema.org",
+      "@type": "WebPage",
+      "name": "Cellexia Reviews",
+      "url": {{ shop.url | append: '/pages/cellexia-reviews' | json }},
+      "dateModified": {{ cx_bp.publishedAt | json }},
+      "description": {{ 'cellexia.brand_page.opening' | t: avg: cx_f.average, count: cx_f.count, from: cx_f.dateFrom, to: cx_f.dateTo | json }}
+    },
+    {
+      "@context": "https://schema.org",
+      "@type": "BreadcrumbList",
+      "itemListElement": [
+        { "@type": "ListItem", "position": 1, "name": "Home", "item": {{ shop.url | json }} },
+        { "@type": "ListItem", "position": 2, "name": "Cellexia Reviews", "item": {{ shop.url | append: '/pages/cellexia-reviews' | json }} }
+      ]
+    },
+    {
+      "@context": "https://schema.org",
+      "@type": "ItemList",
+      "name": "Cellexia products by customer rating",
+      "itemListElement": [
+        {%- assign cx_ld_products = cx_f.products | where: 'handle' -%}
+        {%- for p in cx_ld_products -%}
+        {
+          "@type": "Product",
+          "@id": {{ shop.url | append: '/products/' | append: p.handle | json }},
+          "name": {{ p.title | json }},
+          "url": {{ shop.url | append: '/products/' | append: p.handle | json }},
+          "aggregateRating": {
+            "@type": "AggregateRating",
+            "ratingValue": {{ p.average | json }},
+            "reviewCount": {{ p.count | json }},
+            "bestRating": 5,
+            "worstRating": 1
+          }
+          {%- assign p_reviews = cx_bp.reviews | where: 'productId', p.productId -%}
+          {%- if p_reviews.size > 0 -%}
+          ,
+          "review": [
+            {%- for r in p_reviews limit: 3 -%}
+            {
+              "@type": "Review",
+              "reviewRating": { "@type": "Rating", "ratingValue": {{ r.rating | json }}, "bestRating": 5, "worstRating": 1 },
+              "author": { "@type": "Person", "name": {{ r.author | json }} },
+              "datePublished": {{ r.date | json }},
+              {%- if r.title %}"name": {{ r.title | json }},{% endif %}
+              "reviewBody": {{ r.body | json }}
+            }{%- unless forloop.last -%},{%- endunless -%}
+            {%- endfor -%}
+          ]
+          {%- endif -%}
+        }{%- unless forloop.last -%},{%- endunless -%}
+        {%- endfor -%}
+      ]
+    }
+  ]
+  </script>
+  {%- endif -%}
+</div>
+<script src="{{ 'cellexia-reviews-page.js' | asset_url }}" defer></script>
+{%- endif -%}
+{% schema %}
+{
+  "name": "t:cellexia.brand_page_block.name",
+  "target": "section",
+  "settings": []
+}
+{% endschema %}

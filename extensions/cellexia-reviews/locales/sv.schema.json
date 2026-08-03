@@ -10,6 +10,10 @@
         "show_summary": {
           "label": "Visa AI-sammanfattning och ämnen"
         },
+        "show_qna": {
+          "label": "Visa fråge- och svarsrutan",
+          "info": "Kunder ställer en fråga och får ett svar baserat på dina recensioner. Kräver även Q&A-inställningen i appens inställningar."
+        },
         "show_media_strip": {
           "label": "Visa kundernas fotorad"
         },
@@ -48,8 +52,8 @@
           "label": "Visa stjärnor under produkttiteln"
         },
         "pdp_badge_position": {
-          "label": "Stjärnornas position på produktsidan",
-          "info": "Var stjärnbetyget och antalet visas på produktsidor.",
+          "label": "Stjärnornas placering (produktsida och produktkort)",
+          "info": "Var betyg och antal visas: direkt under produktnamnet eller under beskrivningen. Gäller på produktsidor OCH under produktnamn på startsidan och kollektionssidor.",
           "options__1": {
             "label": "Direkt under titeln"
           },
@@ -115,6 +119,9 @@
     "defaults": {
       "heading": "Kundrecensioner",
       "overall_heading": "Vad våra kunder säger"
+    },
+    "brand_page_block": {
+      "name": "Cellexia Recensionssida"
     }
   }
 }

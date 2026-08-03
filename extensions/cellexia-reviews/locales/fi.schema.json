@@ -10,6 +10,10 @@
         "show_summary": {
           "label": "Näytä tekoälyn yhteenveto ja aiheet"
         },
+        "show_qna": {
+          "label": "Näytä kysymys- ja vastauslaatikko",
+          "info": "Asiakkaat kysyvät ja saavat vastauksen arvostelujesi pohjalta. Vaatii myös Q&A-asetuksen sovelluksen asetuksista."
+        },
         "show_media_strip": {
           "label": "Näytä asiakkaiden kuvarivi"
         },
@@ -48,8 +52,8 @@
           "label": "Näytä tähdet tuotteen otsikon alla"
         },
         "pdp_badge_position": {
-          "label": "Tähtien sijainti tuotesivulla",
-          "info": "Missä tähtiarvio ja arvostelujen määrä näkyvät tuotesivuilla.",
+          "label": "Tähtien sijainti (tuotesivu ja tuotekortit)",
+          "info": "Missä arvosana ja määrä näkyvät: suoraan tuotenimen alla tai kuvaustekstin alla. Koskee tuotesivuja JA tuotenimiä etusivulla ja kokoelmasivuilla.",
           "options__1": {
             "label": "Suoraan otsikon alla"
           },
@@ -115,6 +119,9 @@
     "defaults": {
       "heading": "Asiakasarvostelut",
       "overall_heading": "Mitä asiakkaamme sanovat"
+    },
+    "brand_page_block": {
+      "name": "Cellexia-arvostelusivu"
     }
   }
 }

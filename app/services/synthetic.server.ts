@@ -1621,6 +1621,16 @@ async function deleteReviewRows(shop: string, ids: string[]): Promise<number> {
     const result = await prisma.review.deleteMany({ where: { shop, id: { in: chunk } } });
     deleted += result.count;
   }
+  if (deleted > 0) {
+    // Cached Q&A answers (product + brand-page sentinels) can quote reviews
+    // that no longer exist — same rule as every other deletion path.
+    try {
+      const { invalidateAskAnswers } = await import("./qna.server");
+      await invalidateAskAnswers(shop);
+    } catch (error) {
+      console.error("[cellexia] ask-cache invalidation after batch delete failed", error);
+    }
+  }
   return deleted;
 }
 

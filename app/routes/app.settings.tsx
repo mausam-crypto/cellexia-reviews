@@ -28,7 +28,7 @@ import type { DesignTheme } from "~/types/cellexia";
 import { DESIGN_THEMES, TRANSLATION_DISPLAYS } from "~/types/cellexia";
 import { getSettings, updateSettings } from "~/services/settings.server";
 import { syncShopSettingsMetafields } from "~/services/metafields.server";
-import { generateSummary } from "~/services/ai.server";
+import { generateSummary, verifyAnthropicKey } from "~/services/ai.server";
 import { syncProductData } from "~/components/admin/moderation.server";
 import { ConfirmationModal } from "~/components/admin/ConfirmationModal";
 import { useResultToast } from "~/components/admin/useResultToast";
@@ -54,11 +54,15 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       translationDisplay: settings.translationDisplay,
       showTranslate: settings.showTranslate,
       showSummary: settings.showSummary,
+      showQna: settings.showQna,
       showMediaStrip: settings.showMediaStrip,
       emitJsonLd: settings.emitJsonLd,
       reviewsPerPage: settings.reviewsPerPage,
       designTheme: settings.designTheme,
       hasAnthropicKey: Boolean(settings.anthropicApiKey),
+      // Last 4 characters only — enough to recognize which key is saved,
+      // never enough to reconstruct it. The full key never leaves the server.
+      anthropicKeyHint: settings.anthropicApiKey ? settings.anthropicApiKey.slice(-4) : null,
       hasDeeplKey: Boolean(settings.deeplApiKey),
       hasGoogleKey: Boolean(settings.googleApiKey),
     },
@@ -112,6 +116,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           : "original",
         showTranslate: form.get("showTranslate") === "true",
         showSummary: form.get("showSummary") === "true",
+        showQna: form.get("showQna") === "true",
         showMediaStrip: form.get("showMediaStrip") === "true",
         emitJsonLd: form.get("emitJsonLd") === "true",
         reviewsPerPage: clampInt(str("reviewsPerPage"), 10, 1, 50),
@@ -134,6 +139,46 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       // full saved row is passed so isLive (cellexia.live) rides along too.
       await syncShopSettingsMetafields(admin, saved);
       return json({ ok: true, message: "Settings saved" });
+    }
+
+    if (intent === "test-anthropic-key") {
+      // Tests the key typed into the field (before saving) or, when the field
+      // is blank, the stored key — via the free count_tokens endpoint.
+      const typed = str("anthropicApiKey");
+      const settings = await getSettings(shop);
+      const key = typed || settings.anthropicApiKey;
+      if (!key) {
+        return json({ ok: false, message: "No key to test — paste a key first (or save one)." });
+      }
+      const formModel = str("aiModel");
+      const model = (AI_MODELS as readonly string[]).includes(formModel)
+        ? formModel
+        : settings.aiModel;
+      const which = typed ? "The key you entered" : "The saved key";
+      const result = await verifyAnthropicKey(key, model);
+      switch (result.status) {
+        case "ok":
+          return json({ ok: true, message: `${which} works — ${model} is reachable.` });
+        case "invalid_key":
+          return json({ ok: false, message: `${which} was rejected by Anthropic (401). Check for typos or a revoked key.` });
+        case "forbidden":
+          return json({ ok: false, message: `${which} was refused (403) — it may lack API access. Check the key's permissions at console.anthropic.com.` });
+        case "model_missing":
+          return json({ ok: false, message: `${which} is valid, but the model ${model} is not available on that account.` });
+        default:
+          return json({ ok: false, message: `Could not verify the key: ${result.detail}` });
+      }
+    }
+
+    if (intent === "remove-anthropic-key") {
+      // Explicit removal — the save flow deliberately treats an empty field as
+      // "keep the saved key", so removal needs its own intent.
+      await updateSettings(shop, { anthropicApiKey: "" });
+      return json({
+        ok: true,
+        message:
+          "Claude API key removed. AI summaries, the QA generator and Claude translations are paused until a new key is saved.",
+      });
     }
 
     if (intent === "regen-preview-token") {
@@ -207,15 +252,43 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
       // ReviewMedia + Vote rows cascade with their reviews.
       await prisma.review.deleteMany({ where: { shop } });
+      // v1.16 review fix: cached Q&A answers quote review text — the wipe
+      // must reach them (and Summary rows already go via deleteMany below).
+      await prisma.askAnswer.deleteMany({ where: { shop } });
+      // v1.19: the brand page's analysis row (verbatim quotes + names) and
+      // the per-product curations — both are review-derived content.
+      await prisma.brandAnalysis.deleteMany({ where: { shop } });
+      await prisma.aiCuration.deleteMany({ where: { shop } });
+      // The brand page is SSR'd from a SHOP METAFIELD: clearing the database
+      // alone would leave every deleted review still rendering publicly.
+      // Republish from the (now empty) data before the Setting row goes.
+      try {
+        const { publishBrandPage } = await import("~/services/brand-page.server");
+        await publishBrandPage(shop, admin);
+      } catch (error) {
+        console.error("[cellexia] brand-page clear after delete-all-data failed", error);
+      }
       await prisma.summary.deleteMany({ where: { shop } });
       await prisma.setting.deleteMany({ where: { shop } });
-      // Recreate the settings row with fresh defaults but keep the live state
-      // and the detected app-proxy subpath, then re-sync the shop metafields so
-      // the DB, `cellexia.live` and `cellexia.proxy_path` agree after the wipe.
+      // Recreate the settings row with fresh defaults but keep the live state,
+      // the detected app-proxy subpath AND (v1.14, review fix) the market
+      // scope + Stamped-takeover state — recreating with defaults would
+      // silently widen a markets-scoped live store to ALL markets (the exact
+      // outcome SPEC-1.14 §0.1 forbids). Then re-sync the shop metafields so
+      // the DB and every `cellexia.*` flag agree after the wipe.
+      const keep = {
+        isLive: prev.isLive,
+        proxySubpath: prev.proxySubpath,
+        liveScope: prev.liveScope,
+        liveMarkets: prev.liveMarkets,
+        hideStamped: prev.hideStamped,
+        stampedSelectors: prev.stampedSelectors,
+        observedMarkets: prev.observedMarkets,
+      };
       await prisma.setting.upsert({
         where: { shop },
-        update: { isLive: prev.isLive, proxySubpath: prev.proxySubpath },
-        create: { shop, isLive: prev.isLive, proxySubpath: prev.proxySubpath },
+        update: keep,
+        create: { shop, ...keep },
       });
       // Read back through getSettings, which mints a preview token when the
       // row has none: syncShopSettingsMetafields SKIPS `cellexia.preview_token`
@@ -344,6 +417,7 @@ export default function Settings() {
   const regenFetcher = useFetcher<typeof action>();
   const tokenFetcher = useFetcher<typeof action>();
   const deleteFetcher = useFetcher<typeof action>();
+  const keyFetcher = useFetcher<typeof action>();
 
   const [deleteOpen, setDeleteOpen] = useState(false);
 
@@ -351,6 +425,7 @@ export default function Settings() {
   useResultToast(regenFetcher);
   useResultToast(tokenFetcher);
   useResultToast(deleteFetcher, () => setDeleteOpen(false));
+  useResultToast(keyFetcher);
 
   const [form, setForm] = useState({
     brandDisplayName: settings.brandDisplayName,
@@ -366,6 +441,7 @@ export default function Settings() {
     googleApiKey: "",
     showTranslate: settings.showTranslate,
     showSummary: settings.showSummary,
+    showQna: settings.showQna,
     showMediaStrip: settings.showMediaStrip,
     emitJsonLd: settings.emitJsonLd,
     reviewsPerPage: String(settings.reviewsPerPage),
@@ -396,6 +472,7 @@ export default function Settings() {
         googleApiKey: form.googleApiKey,
         showTranslate: String(form.showTranslate),
         showSummary: String(form.showSummary),
+        showQna: String(form.showQna),
         showMediaStrip: String(form.showMediaStrip),
         emitJsonLd: String(form.emitJsonLd),
         reviewsPerPage: form.reviewsPerPage,
@@ -511,14 +588,60 @@ export default function Settings() {
                     helpText="Generates the “Customers say” summary and topic chips on your storefront."
                   />
                   <TextField
-                    label="Anthropic API key"
+                    label="Anthropic (Claude) API key"
                     type="password"
                     value={form.anthropicApiKey}
                     onChange={set("anthropicApiKey")}
                     autoComplete="off"
-                    placeholder={settings.hasAnthropicKey ? "•••••••• (key saved)" : "sk-ant-…"}
-                    helpText="Leave blank to keep the saved key. Get a key at console.anthropic.com."
+                    placeholder={
+                      settings.hasAnthropicKey
+                        ? `•••••••• (saved key ends in ${settings.anthropicKeyHint})`
+                        : "sk-ant-…"
+                    }
+                    helpText={
+                      settings.hasAnthropicKey
+                        ? `A key ending in ····${settings.anthropicKeyHint} is saved. To change it, paste the new key here and press Save — the old key is replaced. Leaving the field blank keeps the saved key.`
+                        : "Paste your key and press Save. Get a key at console.anthropic.com."
+                    }
                   />
+                  <InlineStack gap="200" blockAlign="center" wrap>
+                    <Button
+                      loading={keyFetcher.state !== "idle" &&
+                        keyFetcher.formData?.get("intent") === "test-anthropic-key"}
+                      onClick={() =>
+                        keyFetcher.submit(
+                          {
+                            intent: "test-anthropic-key",
+                            anthropicApiKey: form.anthropicApiKey,
+                            aiModel: form.aiModel,
+                          },
+                          { method: "post" },
+                        )
+                      }
+                    >
+                      Test key
+                    </Button>
+                    {settings.hasAnthropicKey ? (
+                      <Button
+                        tone="critical"
+                        variant="secondary"
+                        loading={keyFetcher.state !== "idle" &&
+                          keyFetcher.formData?.get("intent") === "remove-anthropic-key"}
+                        onClick={() =>
+                          keyFetcher.submit(
+                            { intent: "remove-anthropic-key" },
+                            { method: "post" },
+                          )
+                        }
+                      >
+                        Remove saved key
+                      </Button>
+                    ) : null}
+                    <Text as="span" variant="bodySm" tone="subdued">
+                      Test checks the key in the field (or the saved one if blank) against the
+                      Anthropic API — nothing is billed.
+                    </Text>
+                  </InlineStack>
                   <Select
                     label="Model"
                     options={[
@@ -551,6 +674,12 @@ export default function Settings() {
                       Regenerates the AI summary for every product with published reviews.
                     </Text>
                   </InlineStack>
+                  <Checkbox
+                    label="Review Q&A (“Looking for specific info?”)"
+                    checked={form.showQna}
+                    onChange={set("showQna")}
+                    helpText="Shoppers type a question under the AI summary and get an answer grounded in your reviews, with supporting quotes — answers speak as your brand. Uses the Claude API key above; each distinct question per product is answered once and then cached (capped at 200 fresh answers per day). Off by default."
+                  />
                 </FormLayout>
               </BlockStack>
             </Card>

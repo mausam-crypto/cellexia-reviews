@@ -21,6 +21,15 @@ extension — no theme code edits, uninstall-safe.
   brand (porcelain neutrals, champagne-gold stars, refined serif headings, soft rectangles).
   Pure CSS skins via a `data-cx-skin` attribute, synced to the storefront through a shop
   metafield (`cellexia.design_theme`).
+- **Market-scoped go-live with a Stamped takeover** (since 1.14.0): go live in selected
+  Shopify Markets only — the per-market decision is made by Shopify's own page rendering
+  (`localization.market`), never by client-side geo guessing, so unselected markets keep a
+  byte-for-byte unchanged storefront. Optionally hide the incumbent Stamped reviews (PDP
+  widget + its stars under product names on product/home/collection pages) in exactly the
+  markets where Cellexia Reviews is live: CSS-only, instantly reversible, previewable per
+  tab before going live, with selector defaults measured from the real theme and an
+  admin override. Market picking works with zero extra API scopes (handles register
+  themselves from storefront visits; `read_markets` optionally adds names).
 - **Safe install, private preview, explicit go-live**: installing changes nothing on the live
   storefront — a new install starts **Not live**, so visitors see no widget, no review data and
   no JSON-LD until you click **Go live** on the Dashboard. Before (and after) that,
@@ -283,4 +292,4 @@ Full production installation, hosting and store setup: **[docs/INSTALL.md](docs/
 
 ## Version
 
-Current version: **1.12.1** — see [CHANGELOG.md](CHANGELOG.md).
+Current version: **1.19.0** — see [CHANGELOG.md](CHANGELOG.md).

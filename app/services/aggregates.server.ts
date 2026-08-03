@@ -108,7 +108,11 @@ export async function recomputeProductWithSync(
   let topReviews: Review[];
   try {
     const display = await getEffectiveDisplay(shop, pid);
-    const ranked = await fetchRankedPage(shop, pid, display, 1, 3, topWhere);
+    // The top_reviews metafield is single-valued per shop, so under the
+    // AI-curated order it deliberately uses the English curation ("en" is the
+    // canonical fallback every locale already shares) — per-language curated
+    // orders apply to the live widget, which requests its own locale.
+    const ranked = await fetchRankedPage(shop, pid, display, 1, 3, topWhere, "en");
     if (ranked.ids === null) {
       topReviews = await prisma.review.findMany({
         where: topWhere,

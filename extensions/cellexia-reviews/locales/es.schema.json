@@ -10,6 +10,10 @@
         "show_summary": {
           "label": "Mostrar resumen de IA y temas"
         },
+        "show_qna": {
+          "label": "Mostrar el cuadro de preguntas y respuestas",
+          "info": "Los clientes hacen una pregunta y reciben una respuesta basada en tus opiniones. Requiere también el ajuste de preguntas y respuestas en la configuración de la aplicación."
+        },
         "show_media_strip": {
           "label": "Mostrar tira de fotos de clientes"
         },
@@ -48,8 +52,8 @@
           "label": "Mostrar estrellas debajo del título del producto"
         },
         "pdp_badge_position": {
-          "label": "Posición de las estrellas en la página de producto",
-          "info": "Dónde aparecen la valoración con estrellas y el número de opiniones en las páginas de producto.",
+          "label": "Posición de las estrellas (página de producto y tarjetas)",
+          "info": "Dónde aparecen la valoración y el número: directamente bajo el nombre del producto o bajo la descripción breve. Se aplica en las páginas de producto Y bajo los nombres de producto en la página de inicio y las colecciones.",
           "options__1": {
             "label": "Directamente debajo del título"
           },
@@ -115,6 +119,9 @@
     "defaults": {
       "heading": "Opiniones de clientes",
       "overall_heading": "Lo que dicen nuestros clientes"
+    },
+    "brand_page_block": {
+      "name": "Cellexia Página de opiniones"
     }
   }
 }

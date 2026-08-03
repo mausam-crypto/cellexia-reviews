@@ -10,6 +10,10 @@
         "show_summary": {
           "label": "Afficher le résumé IA et les thèmes"
         },
+        "show_qna": {
+          "label": "Afficher le module de questions-réponses",
+          "info": "Les clients posent une question et reçoivent une réponse fondée sur vos avis. Nécessite aussi l'option Questions-réponses dans les réglages de l'application."
+        },
         "show_media_strip": {
           "label": "Afficher le bandeau de photos clients"
         },
@@ -48,8 +52,8 @@
           "label": "Afficher les étoiles sous le titre du produit"
         },
         "pdp_badge_position": {
-          "label": "Position des étoiles sur la page produit",
-          "info": "Où la note en étoiles et le nombre d'avis apparaissent sur les pages produit.",
+          "label": "Position des étoiles (page produit et fiches produit)",
+          "info": "Où la note et le nombre d'avis s'affichent : directement sous le nom du produit ou sous le descriptif. S'applique aux pages produit ET sous les noms de produits sur la page d'accueil et les pages de collections.",
           "options__1": {
             "label": "Directement sous le titre"
           },
@@ -115,6 +119,9 @@
     "defaults": {
       "heading": "Avis clients",
       "overall_heading": "Ce que disent nos clients"
+    },
+    "brand_page_block": {
+      "name": "Page Avis Cellexia"
     }
   }
 }

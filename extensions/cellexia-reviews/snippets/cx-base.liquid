@@ -1,0 +1,30 @@
+{%- comment -%}
+  Cellexia Reviews — the app-proxy ROOT path (v1.19, SPEC-1.19 §8).
+
+  Sibling of cx-proxy.liquid, deriving the SAME metafield with the SAME
+  fallback and sanitization, but emitting the root instead of the API base:
+
+    cx-proxy  →  "/apps/<subpath>/api"     (JSON endpoints)
+    cx-base   →  "/apps/<subpath>"         (this snippet)
+
+  Why a snippet instead of stripping "/api" off cx-proxy's output: string
+  surgery on a rendered value depends on a filter being available and on the
+  suffix never changing. Deriving both from the same source makes the two
+  paths structurally impossible to drift, and a subpath that literally
+  contains "api" cannot confuse it.
+
+  Consumers: blocks/reviews-page.liquid builds every crawlable archive link
+  ("<base>/reviews?...") from this, and hands the same value to
+  assets/cellexia-reviews-page.js as data-proxy (the JS appends "/api/..."
+  itself).
+
+  Output contract: exactly "/apps/<subpath>", no surrounding whitespace.
+{%- endcomment -%}
+{%- liquid
+  assign cx_base_subpath = shop.metafields.cellexia.proxy_path.value | default: '' | append: '' | strip
+  assign cx_base_subpath = cx_base_subpath | remove: '/' | remove: ' '
+  if cx_base_subpath == blank
+    assign cx_base_subpath = 'cellexia-reviews'
+  endif
+-%}
+{{- '/apps/' | append: cx_base_subpath -}}

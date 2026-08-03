@@ -24,12 +24,17 @@
 {{ 'cellexia-reviews.css' | asset_url | stylesheet_tag }}
 {%- liquid
   comment
-    v1.2 (SPEC-1.2): app-synced `cellexia.live` SHOP metafield. Only an explicit
-    false means "not live" — absent/invalid values stay live so upgraded stores
-    never go dark. The theme editor always shows the full widget.
+    v1.14 (SPEC-1.14 §3): market-aware live via the cx-live snippet (single
+    source of truth; app-snippet comment wrapper stripped per SPEC-1.8 §5).
+    Anything but exactly "1" means not live on this request. The theme editor
+    always shows the full widget.
   endcomment
+  capture cx_live_raw
+    render 'cx-live'
+  endcapture
+  assign cx_live_raw = cx_live_raw | remove: '<!-- BEGIN app snippet: cx-live -->' | remove: '<!-- END app snippet -->' | strip
   assign cx_is_live = true
-  if shop.metafields.cellexia.live.value == false
+  if cx_live_raw != '1'
     assign cx_is_live = false
   endif
   assign cx_show_full = cx_is_live
@@ -172,7 +177,11 @@
   data-per-page="{{ block.settings.per_page | default: 10 }}"
   data-heading="{{ cx_heading | escape }}"
   {% if cx_brand != blank %}data-brand="{{ cx_brand | escape }}"{% endif %}
+  {%- if localization.market and localization.market.handle %} data-market="{{ localization.market.handle | escape }}"{% endif %}
   data-show-summary="{{ block.settings.show_summary }}"
+  {%- comment -%} No `| default: true` — Liquid default swallows false! An
+  absent setting yields "" which the JS flag() treats as its true default. {%- endcomment -%}
+  data-show-qna="{{ block.settings.show_qna }}"
   data-show-media-strip="{{ block.settings.show_media_strip }}"
   data-show-form="{{ block.settings.show_form }}"
   data-show-translate="{{ cx_show_translate }}"
@@ -364,6 +373,13 @@
       "type": "checkbox",
       "id": "show_summary",
       "label": "t:cellexia.reviews_block.settings.show_summary.label",
+      "default": true
+    },
+    {
+      "type": "checkbox",
+      "id": "show_qna",
+      "label": "t:cellexia.reviews_block.settings.show_qna.label",
+      "info": "t:cellexia.reviews_block.settings.show_qna.info",
       "default": true
     },
     {

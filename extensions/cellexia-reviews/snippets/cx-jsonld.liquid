@@ -25,7 +25,14 @@
 {% endcomment %}
 {%- if product -%}
 {%- if shop.metafields.cellexia.emit_jsonld.value != false -%}
-{%- if shop.metafields.cellexia.live.value != false -%}
+{%- comment -%}
+  v1.14 (SPEC-1.14 §3): rich snippets are emitted only where the app is live
+  — market-aware via cx-live (wrapper comments stripped per SPEC-1.8 §5), so
+  markets that still show Stamped never carry Cellexia JSON-LD.
+{%- endcomment -%}
+{%- capture cx_j_live_raw -%}{% render 'cx-live' %}{%- endcapture -%}
+{%- assign cx_j_live_raw = cx_j_live_raw | remove: '<!-- BEGIN app snippet: cx-live -->' | remove: '<!-- END app snippet -->' | strip -%}
+{%- if cx_j_live_raw == '1' -%}
 {%- assign cx_j_rating_mf = product.metafields.cellexia.rating -%}
 {%- assign cx_j_count_mf = product.metafields.cellexia.rating_count -%}
 {%- if cx_j_rating_mf and cx_j_count_mf -%}

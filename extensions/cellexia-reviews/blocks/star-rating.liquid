@@ -38,8 +38,14 @@
   {%- when 'luxe' -%}
     {%- assign cx_b_skin = 'luxe' -%}
 {%- endcase -%}
+{%- comment -%}
+  v1.14 (SPEC-1.14 §3): market-aware live via cx-live (wrapper comments
+  stripped per SPEC-1.8 §5); anything but "1" hides, except in the editor.
+{%- endcomment -%}
+{%- capture cx_live_raw -%}{% render 'cx-live' %}{%- endcapture -%}
+{%- assign cx_live_raw = cx_live_raw | remove: '<!-- BEGIN app snippet: cx-live -->' | remove: '<!-- END app snippet -->' | strip -%}
 {%- assign cx_b_show = true -%}
-{%- if shop.metafields.cellexia.live.value == false -%}
+{%- if cx_live_raw != '1' -%}
   {%- unless request.design_mode -%}
     {%- assign cx_b_show = false -%}
   {%- endunless -%}

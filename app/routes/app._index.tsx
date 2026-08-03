@@ -16,6 +16,9 @@ import {
   Box,
   Button,
   Card,
+  Checkbox,
+  ChoiceList,
+  Collapsible,
   DataTable,
   Divider,
   InlineGrid,
@@ -25,14 +28,28 @@ import {
   Page,
   Popover,
   Spinner,
+  Tag,
   Text,
+  TextField,
 } from "@shopify/polaris";
 import { TitleBar } from "@shopify/app-bridge-react";
 
 import { authenticate } from "~/shopify.server";
 import prisma from "~/db.server";
-import { getSettings, updateSettings } from "~/services/settings.server";
+import {
+  DEFAULT_STAMPED_SELECTORS,
+  SelectorValidationError,
+  getSettings,
+  parseLiveMarkets,
+  sanitizeMarketHandles,
+  updateSettings,
+} from "~/services/settings.server";
 import { syncShopSettingsMetafields } from "~/services/metafields.server";
+import {
+  isValidMarketHandle,
+  listMarkets,
+  parseObservedMarkets,
+} from "~/services/markets.server";
 import { getPreviewUrls } from "~/services/preview.server";
 import { runStorefrontHealthCheck } from "~/services/proxyhealth.server";
 import type { HealthReport } from "~/services/proxyhealth.server";
@@ -419,9 +436,28 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     }))
     .sort((a, b) => b.count - a.count);
 
+  // v1.14 (SPEC-1.14 §6/§7): market scope state + picker sources. listMarkets
+  // degrades to { needsScope: true } when the app lacks read_markets — the UI
+  // then offers observed-market chips and manual handle entry instead.
+  const marketsResult = await listMarkets(admin);
+
   return json({
     shop,
     isLive: settings.isLive,
+    marketScope: {
+      liveScope: settings.liveScope === "markets" ? ("markets" as const) : ("all" as const),
+      liveMarkets: parseLiveMarkets(settings),
+      hideStamped: settings.hideStamped,
+      stampedSelectors: settings.stampedSelectors,
+      stampedDefaults: DEFAULT_STAMPED_SELECTORS,
+      // Offer only handles that can actually be saved (same slug rule as the
+      // sanitizer) — an exotic API handle must not pass the UI then vanish.
+      markets: marketsResult.markets
+        ? marketsResult.markets.filter((m) => isValidMarketHandle(m.handle))
+        : null,
+      needsScope: marketsResult.needsScope,
+      observedMarkets: parseObservedMarkets(settings.observedMarkets),
+    },
     previewUrls,
     stats: {
       average: publishedAgg._avg.rating,
@@ -493,12 +529,62 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       // Mirror the change onto the SHOP metafield (cellexia.live) so the theme
       // extension shows/hides the widget without a DB round-trip.
       await syncShopSettingsMetafields(admin, saved);
+      const scoped = saved.liveScope === "markets" ? parseLiveMarkets(saved) : [];
       return json({
         ok: true,
         message: isLive
-          ? "You're live!"
+          ? scoped.length > 0
+            ? `You're live in: ${scoped.join(", ")} — every other market is unchanged and keeps Stamped.`
+            : "You're live!"
           : "The review widget is now hidden from store visitors",
       });
+    }
+
+    // v1.14 (SPEC-1.14 §7): market scope + Stamped takeover settings.
+    if (intent === "save-live-scope") {
+      const liveScope = String(form.get("liveScope") ?? "all") === "markets" ? "markets" : "all";
+      const liveMarkets = String(form.get("liveMarkets") ?? "[]");
+      const hideStamped = form.get("hideStamped") === "true";
+      const selectorsRaw = String(form.get("stampedSelectors") ?? "").trim();
+      // Review hardening: validate the handles that will actually SURVIVE
+      // sanitization — a raw count let unsaveable handles slip through and
+      // reach the metafield as an empty list.
+      const surviving = JSON.parse(sanitizeMarketHandles(liveMarkets)) as string[];
+      if (liveScope === "markets" && surviving.length === 0) {
+        return json({
+          ok: false,
+          message:
+            "None of the selected markets have a valid handle — pick at least one valid market (or switch back to “All markets”) before saving.",
+        });
+      }
+      try {
+        const saved = await updateSettings(shop, {
+          liveScope,
+          liveMarkets,
+          hideStamped,
+          stampedSelectors: selectorsRaw === "" ? null : selectorsRaw,
+        });
+        await syncShopSettingsMetafields(admin, saved);
+        const handles = parseLiveMarkets(saved);
+        const where =
+          saved.liveScope === "markets" ? `only in: ${handles.join(", ")}` : "in all markets";
+        // Review fix: when the store is ALREADY live this takes effect now —
+        // say so instead of the misleading "When live…".
+        const prefix = saved.isLive
+          ? `Saved — in effect now. Reviews show ${where}`
+          : `Saved. When you go live, reviews will show ${where}`;
+        return json({
+          ok: true,
+          message: `${prefix}${
+            saved.hideStamped ? " and Stamped is hidden there (other markets untouched)" : ""
+          }.`,
+        });
+      } catch (error) {
+        if (error instanceof SelectorValidationError) {
+          return json({ ok: false, message: `Stamped selectors: ${error.message}` });
+        }
+        throw error;
+      }
     }
 
     /* ---- Storefront connection test (SPEC-1.6 §5) ------------------------ */
@@ -1009,10 +1095,254 @@ function reviewDataRow(
   };
 }
 
+/* v1.14 (SPEC-1.14 §7) — market scope + Stamped takeover card. */
+function MarketScopeCard({
+  marketScope,
+  isLive,
+}: {
+  marketScope: LoaderData["marketScope"];
+  isLive: boolean;
+}) {
+  const fetcher = useFetcher<typeof action>();
+  useResultToast(fetcher);
+
+  const [scope, setScope] = useState<"all" | "markets">(marketScope.liveScope);
+  const [selected, setSelected] = useState<string[]>(marketScope.liveMarkets);
+  const [hideStamped, setHideStamped] = useState(marketScope.hideStamped);
+  const [manual, setManual] = useState("");
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [selectors, setSelectors] = useState(marketScope.stampedSelectors ?? "");
+
+  const toggleHandle = (handle: string) =>
+    setSelected((prev) =>
+      prev.includes(handle) ? prev.filter((h) => h !== handle) : [...prev, handle],
+    );
+  const addManual = () => {
+    const handle = manual.trim().toLowerCase();
+    if (/^[a-z0-9-]{1,64}$/.test(handle) && !selected.includes(handle)) {
+      setSelected((prev) => [...prev, handle]);
+    }
+    setManual("");
+  };
+  const save = () =>
+    fetcher.submit(
+      {
+        intent: "save-live-scope",
+        liveScope: scope,
+        liveMarkets: JSON.stringify(selected),
+        hideStamped: String(hideStamped),
+        stampedSelectors: selectors,
+      },
+      { method: "post" },
+    );
+
+  // Handles offered as checkboxes: the Markets API list when available,
+  // otherwise every handle the storefront has reported plus anything already
+  // selected (so a saved handle never disappears from the UI).
+  const apiMarkets = marketScope.markets;
+  const fallbackHandles = [
+    ...new Set([...marketScope.observedMarkets.map((m) => m.handle), ...selected]),
+  ].sort();
+  const saveDisabled = scope === "markets" && selected.length === 0;
+  // Review fix: surface unsaved changes — Go live uses the SAVED scope.
+  const dirty =
+    scope !== marketScope.liveScope ||
+    hideStamped !== marketScope.hideStamped ||
+    (selectors || "") !== (marketScope.stampedSelectors ?? "") ||
+    JSON.stringify([...selected].sort()) !==
+      JSON.stringify([...marketScope.liveMarkets].sort());
+  const saveError =
+    fetcher.state === "idle" &&
+    fetcher.data &&
+    fetcher.data.ok === false &&
+    "message" in fetcher.data
+      ? String(fetcher.data.message)
+      : null;
+
+  return (
+    <Card>
+      <BlockStack gap="400">
+        <BlockStack gap="150">
+          <Text as="h2" variant="headingMd">
+            Markets — where your reviews go live
+          </Text>
+          <Text as="p" tone="subdued" variant="bodySm">
+            The market of every page view is decided by Shopify itself when it renders the
+            page, so this can never leak into other markets. Markets not selected here keep
+            their storefront byte-for-byte unchanged — including Stamped.
+          </Text>
+        </BlockStack>
+
+        <ChoiceList
+          title="Visibility scope"
+          titleHidden
+          choices={[
+            {
+              label: "All markets (default)",
+              value: "all",
+              helpText: "Behaves exactly like before this feature existed.",
+            },
+            {
+              label: "Only selected markets",
+              value: "markets",
+              helpText: isLive
+                ? "Your reviews stay visible only in the markets picked below."
+                : "When you press Go live, reviews appear only in the markets picked below.",
+            },
+          ]}
+          selected={[scope]}
+          onChange={(values) => setScope(values[0] === "markets" ? "markets" : "all")}
+        />
+
+        {scope === "markets" ? (
+          <BlockStack gap="300">
+            {apiMarkets ? (
+              <BlockStack gap="100">
+                {apiMarkets.map((market) => (
+                  <Checkbox
+                    key={market.handle}
+                    label={`${market.name} (${market.handle})${market.enabled ? "" : " — inactive market"}`}
+                    checked={selected.includes(market.handle)}
+                    onChange={() => toggleHandle(market.handle)}
+                  />
+                ))}
+              </BlockStack>
+            ) : (
+              <BlockStack gap="300">
+                {marketScope.needsScope ? (
+                  <Banner tone="info" title="Market names unavailable (optional permission missing)">
+                    <Text as="p">
+                      Listing your markets by name needs the app's <code>read_markets</code>{" "}
+                      permission (see UPDATE.md — optional). Everything below works without
+                      it: open your storefront in a market (e.g. via the preview link on that
+                      market's domain) and its handle appears here automatically, or type the
+                      handle from Shopify admin → Settings → Markets.
+                    </Text>
+                  </Banner>
+                ) : null}
+                {fallbackHandles.length > 0 ? (
+                  <BlockStack gap="100">
+                    {fallbackHandles.map((handle) => (
+                      <Checkbox
+                        key={handle}
+                        label={handle}
+                        checked={selected.includes(handle)}
+                        onChange={() => toggleHandle(handle)}
+                      />
+                    ))}
+                  </BlockStack>
+                ) : (
+                  <Text as="p" tone="subdued" variant="bodySm">
+                    No markets detected yet — visit your storefront once (any page) and
+                    refresh this page, or add a handle manually below.
+                  </Text>
+                )}
+                <InlineStack gap="200" blockAlign="end" wrap>
+                  <Box minWidth="220px">
+                    <TextField
+                      label="Add a market handle"
+                      labelHidden
+                      placeholder="market handle, e.g. eu"
+                      value={manual}
+                      onChange={setManual}
+                      autoComplete="off"
+                    />
+                  </Box>
+                  <Button onClick={addManual} disabled={!manual.trim()}>
+                    Add
+                  </Button>
+                </InlineStack>
+              </BlockStack>
+            )}
+            {selected.length > 0 ? (
+              <InlineStack gap="150" wrap>
+                {selected.map((handle) => (
+                  <Tag key={handle} onRemove={() => toggleHandle(handle)}>
+                    {handle}
+                  </Tag>
+                ))}
+              </InlineStack>
+            ) : (
+              <Text as="p" tone="critical" variant="bodySm">
+                Select at least one market — with none selected, nothing can be saved.
+              </Text>
+            )}
+          </BlockStack>
+        ) : null}
+
+        <Divider />
+
+        <BlockStack gap="200">
+          <Text as="h3" variant="headingSm">
+            Replace Stamped where Cellexia Reviews is live
+          </Text>
+          <Checkbox
+            label="Hide Stamped reviews in the market(s) where Cellexia Reviews is live"
+            checked={hideStamped}
+            onChange={setHideStamped}
+            helpText="Hides Stamped's product-page widget and its stars under product names (product, home and collection pages) — only where your reviews are live. Every other market keeps Stamped exactly as it is. CSS-only and instantly reversible: switch this off and Stamped is back on the next page load. The preview link shows you the swap before anything is live."
+          />
+          <Button
+            variant="plain"
+            disclosure={advancedOpen ? "up" : "down"}
+            onClick={() => setAdvancedOpen((open) => !open)}
+          >
+            Advanced: what gets hidden
+          </Button>
+          <Collapsible id="cx-stamped-advanced" open={advancedOpen}>
+            <BlockStack gap="200">
+              <TextField
+                label="CSS selectors to hide (one per line)"
+                value={selectors}
+                onChange={setSelectors}
+                multiline={5}
+                autoComplete="off"
+                placeholder={marketScope.stampedDefaults.join("\n")}
+                helpText="Leave empty to use the built-in list (shown above), measured from your live theme. Only edit this if Stamped's markup changes."
+              />
+              {selectors ? (
+                <Button variant="plain" onClick={() => setSelectors("")}>
+                  Reset to built-in list
+                </Button>
+              ) : null}
+            </BlockStack>
+          </Collapsible>
+        </BlockStack>
+
+        {saveError ? (
+          <Text as="p" tone="critical" variant="bodySm">
+            {saveError}
+          </Text>
+        ) : null}
+        <InlineStack gap="200" blockAlign="center" wrap>
+          <Button
+            variant="primary"
+            onClick={save}
+            loading={fetcher.state !== "idle"}
+            disabled={saveDisabled}
+          >
+            Save market settings
+          </Button>
+          {saveDisabled ? (
+            <Text as="span" tone="subdued" variant="bodySm">
+              Pick at least one market first.
+            </Text>
+          ) : dirty ? (
+            <Text as="span" tone="caution" variant="bodySm">
+              Unsaved changes — the storefront (and Go live) uses the last saved settings.
+            </Text>
+          ) : null}
+        </InlineStack>
+      </BlockStack>
+    </Card>
+  );
+}
+
 export default function Dashboard() {
   const {
     shop,
     isLive,
+    marketScope,
     previewUrls,
     stats,
     setup,
@@ -1373,7 +1703,14 @@ export default function Dashboard() {
         </div>
 
         {isLive ? (
-          <Banner tone="success" title="Live — visitors can see the review widget.">
+          <Banner
+            tone="success"
+            title={
+              marketScope.liveScope === "markets" && marketScope.liveMarkets.length > 0
+                ? `Live in ${marketScope.liveMarkets.join(", ")} only — every other market is unchanged.`
+                : "Live — visitors can see the review widget."
+            }
+          >
             <InlineStack gap="300" blockAlign="center" wrap>
               <PreviewMenu previewUrls={previewUrls}>Preview link</PreviewMenu>
               <Button variant="plain" onClick={() => setLiveConfirm("go-offline")}>
@@ -1400,6 +1737,8 @@ export default function Dashboard() {
             </BlockStack>
           </Banner>
         )}
+
+        <MarketScopeCard marketScope={marketScope} isLive={isLive} />
 
         {syntheticPublishedCount > 0 ? (
           isLive ? (
@@ -1574,7 +1913,14 @@ export default function Dashboard() {
       >
         <Modal.Section>
           <BlockStack gap="300">
-            <Text as="p">Make Cellexia Reviews visible to all store visitors?</Text>
+            {marketScope.liveScope === "markets" && marketScope.liveMarkets.length > 0 ? (
+              <Text as="p">
+                You are going live in <strong>{marketScope.liveMarkets.join(", ")}</strong>{" "}
+                only. Every other market keeps Stamped and sees no change at all.
+              </Text>
+            ) : (
+              <Text as="p">Make Cellexia Reviews visible to all store visitors?</Text>
+            )}
             {report ? (
               overall === "pass" ? (
                 <Banner tone="success" title="Storefront connection verified">

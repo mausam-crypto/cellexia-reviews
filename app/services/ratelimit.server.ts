@@ -23,6 +23,17 @@ export const RATE_LIMITS = {
   translate: { max: 120, windowMs: HOUR_MS },
   badges: { max: 300, windowMs: HOUR_MS },
   brand: { max: 120, windowMs: HOUR_MS },
+  // v1.19 (SPEC-1.19 §8): the crawlable review archive is a PUBLIC SEO
+  // surface — a search or AI crawler legitimately walks hundreds of pages in
+  // one session, and 429s there cost indexing. Generous ceiling; the route is
+  // a cheap read with a 300 s public cache and no model calls.
+  archive: { max: 1200, windowMs: HOUR_MS },
+  // v1.16 (SPEC-1.16 §3): shopper Q&A — model calls cost money, so this is
+  // deliberately tight per shop:ip; qna.server adds a per-shop daily cap too.
+  ask: { max: 20, windowMs: HOUR_MS },
+  // v1.16 review fix: /summary can schedule background generation — the only
+  // previously-unlimited data route gets a ceiling like its siblings.
+  summary: { max: 120, windowMs: HOUR_MS },
 } as const;
 
 export type RateLimitAction = keyof typeof RATE_LIMITS;

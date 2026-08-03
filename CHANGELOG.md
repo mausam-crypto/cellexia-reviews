@@ -4,6 +4,216 @@ All notable changes to Cellexia Reviews are documented here. The version number 
 `package.json` and stamped into the release ZIP built by `npm run package`
 (`dist/cellexia-reviews-v<version>.zip`).
 
+## 1.19.0 — 2026-08-02
+
+### Added
+
+- **The "Cellexia Reviews" page** (SPEC-1.19) — a dedicated, crawlable brand-reviews
+  knowledge page built to rank for "cellexia reviews" and to feed AI assistants
+  (ChatGPT, Claude, Perplexity) real facts about the brand's reviews:
+  - A new app SECTION ("Cellexia Reviews page") for an Online Store 2.0 page at
+    `/pages/cellexia-reviews` (the app can create the page for you from the new
+    **Reviews page** admin screen). Everything on it is server-rendered from a shop
+    metafield — H1 and exact-phrase opening paragraph with live numbers, the full
+    rating distribution with counts and percents, total sample size and date range,
+    ~36 evidence-rich review cards (product, rating, date, Verified Purchase, skin
+    concerns, age, usage duration, results seen, source, store reply), a
+    best-product-by-skin-concern table, a per-product ratings table, and a
+    review-collection & moderation methodology section. Critical reviews are
+    guaranteed visible. Synthetic QA reviews are always excluded from this page.
+  - A **citation-ready AI analysis** with five visible sections ("Are Cellexia
+    reviews positive?", results reported, common complaints, best products by skin
+    concern, how long results take). Every number is computed by the app, never by
+    the AI; the AI writes the prose and picks quotes, and every quote is verified
+    verbatim against the source review (with a link to it). Generated on demand from
+    the admin, refreshed with one click.
+  - A fully **crawlable archive** of ALL reviews at `/apps/<subpath>/reviews`,
+    server-rendered inside the theme with plain-link pagination and filters by
+    product, skin concern and star rating — no JavaScript needed to read any review.
+  - **Correct structured data**: Organization (no self-serving rating), WebPage,
+    BreadcrumbList, and per-product Product + AggregateRating + Review JSON-LD built
+    from the same data the page visibly renders.
+  - **Interactive extras** (each can be turned off): filter bar, an "Ask our reviews
+    a question" box, and a "Which product is right for me?" recommender that answers
+    from reviews and links the recommended products. Progressive enhancement only —
+    the page is complete without JavaScript.
+  - The admin **Reviews page** screen: setup checklist (create page, add section,
+    generate analysis, publish data), robots.txt guidance for AI crawlers
+    (OAI-SearchBot, ClaudeBot, GPTBot, PerplexityBot), navigation/sitemap notes,
+    and the feature toggles. Page data auto-refreshes when reviews change.
+
+## 1.18.0 — 2026-08-02
+
+### Added
+
+- **AI Curator: "What the agents read" option** (SPEC-1.18). New select on the AI
+  curation card. Default ("What each language's shoppers see") keeps the 1.17.0
+  behavior: each language's agent reads originals in its language plus existing
+  translations, with untranslated foreign reviews marked as foreign. The new mode
+  ("All reviews, translated into each language") makes every agent read the complete
+  review set translated into its own language: reviews never translated before are
+  translated at curation time with your configured translation provider and cached
+  forever (each translation is billed at most once, ever) — and in this mode every one
+  of the 17 languages gets its own curation for any product with at least 3 reviews.
+  Reviews that can't be translated (provider off or a provider error) are still
+  included, marked with their original language, so a run never fails because of
+  translation.
+- **AI Curator: automatic refresh** (SPEC-1.18). New "Automatic refresh" select on the
+  card: Manual only (default — exactly today's behavior), Daily, or Weekly. When on, the
+  app checks hourly in the background and re-runs ONLY curations whose reviews have
+  actually changed since they last ran, at most once per day/week per product and
+  language. The first curation of a product is always started by you; automatic runs go
+  through the same 300-per-day cap, concurrency limit and failure reporting as manual
+  ones, and their results appear in the same status table.
+
+## 1.17.0 — 2026-08-02
+
+### Added
+
+- **"AI curated" review order — conversion-optimized, per language** (SPEC-1.17). An
+  optional new order system on the Display page: a skeptical AI agent reads the product's
+  description AND your Accentuate "Overview" field (configurable `namespace.key`), works
+  out what prospects are likely doubtful about, judges every review's credibility
+  (specific, balanced, plausible beats generic praise and too-perfect superlatives), and
+  puts the good reviews that best answer those doubts first. It runs SEPARATELY for every
+  language: each language's agent has its full instructions written natively in that
+  language and evaluates the texts shoppers of that language actually see (originals and
+  existing translations) — so French shoppers get a French-curated order, Japanese
+  shoppers a Japanese-curated one. Helpful-vote counts are never an input. Everything is
+  visible in the admin: per product × language you see when curation ran, over how many
+  reviews, a freshness badge, and the agent's full reasoning in that language. You can add
+  your own guidance to all agents ("our buyers worry most about…"). Curation runs only
+  when you press Curate (never from storefront traffic), one AI call per product per
+  language, capped at 300/day, with hand-picked featured reviews still winning over the
+  curated order and every uncurated case falling back to the Amazon-style order.
+  Safety rails: "Curate all" shows a confirmation with the expected scale first; a
+  missing Claude API key means an explicit "nothing queued" (never silent); runs that
+  fail are listed in the card and can be retried immediately; the freshness badge also
+  notices reviews published after a curation ran; products with fewer than 3 reviews are
+  skipped entirely; and the agents are instructed, in every language, to never follow
+  instructions embedded inside customer review texts.
+
+## 1.16.1 — 2026-08-01
+
+### Fixed
+
+- **The stars-position setting now applies to product cards too.** The app embed's
+  "under the title / under the tagline" choice only moved the badge on product pages;
+  the star badges injected under product names on the home page and collection pages
+  ignored it and always sat directly under the name. With "Under the tagline" selected,
+  card badges now sit under the card's short description (`.product__blurb` /
+  `.product__subtitle`, or the next paragraph after the title) — and cards without a
+  tagline safely keep the badge under the title. Verified against the live theme's real
+  card markup in both modes. The setting's label now says it covers product pages and
+  product cards, in all 17 admin languages.
+
+## 1.16.0 — 2026-08-01
+
+### Added
+
+- **The AI summary now switches itself on** (SPEC-1.16 §1). Stores whose reviews were
+  imported before an API key was saved never got a "Customers say" summary — nothing
+  generated it. The summary endpoint now schedules a background generation the first time a
+  product with published reviews is viewed and no summary exists (once per product,
+  debounced, silent) — so after deploying, summaries appear on their own within a couple of
+  page views per product. "Regenerate all now" in Settings still works for bulk refreshes.
+- **Review Q&A — "Looking for specific info?"** (SPEC-1.16 §3, opt-in via Settings → AI).
+  A search box under the AI summary where shoppers type a question and get an answer
+  generated from the product's reviews, with up to three supporting customer quotes
+  (verbatim — the server verifies every quote against the actual review text and drops
+  anything the model invented). Answers speak as the brand in first person ("our cream"),
+  in the shopper's language, in all 17 locales. Suggested question pills are generated per
+  product with the summary. Cost controls: every distinct question per product+language is
+  answered once and cached forever, shopper requests are rate-limited (20/h per visitor),
+  and fresh answers are capped at 200 per day per store. A per-block theme-editor toggle
+  can hide the box per surface.
+- **Amazon-matched summary styling** (SPEC-1.16 §2, measured from amazon.com 2026-08-01):
+  20px "Customers say" heading, 14px summary/disclaimer with a neutral AI mark, 14px topic
+  links with the green ↗ (#067D62) for positive topics and ~ for mixed, counts in ink —
+  on desktop and mobile, in all three design versions.
+
+### Changed
+
+- Widget JS byte cap 128 → 132 KiB and CSS 60 → 64 KiB for the Q&A box (gate stays active).
+
+## 1.15.0 — 2026-08-01
+
+### Fixed
+
+- **Literal "&#39;" and other HTML entities in storefront text.** French (and any
+  language) could show raw entities — "Tranche d&#39;âge", "Voir l&#39;original" — when
+  Shopify's Translate & Adapt overrides delivered HTML-escaped strings; the widget renders
+  text safely via textContent, so the escapes displayed literally. The dictionary reader now
+  decodes numeric and named HTML entities on ingestion (safe by construction: everything
+  still renders as text, never as HTML), curing tainted strings from any upstream source in
+  all 17 languages. `npm run check:locales` additionally fails the build if an entity ever
+  appears in the app's own locale files.
+
+### Added
+
+- **Homepage Overall reviews block follows the translated display mode.** With
+  Settings → Translation → display set to automatic translation, the homepage block's
+  reviews now appear in the shopper's language by default — with the same
+  "Translated from …" note and "See original" toggle as the product widget — instead of
+  their original language. Translations come from the same cached per-language store
+  (each review+language pair is paid for once, shared with the product widget). Note for
+  existing installs: open Settings and press Save once after updating so the new
+  display-mode flag reaches the theme.
+
+### Changed
+
+- The entity decoder is single-pass (decoded output is never rescanned, so
+  double-encoded text stays faithful) and covers the typographic named entities
+  translation tools emit (’ ‘ ” “ … – — é è ç ü ö ß etc.). The homepage block only
+  repaints its server-rendered cards when at least one review actually has a translation,
+  and the translated mode obeys the same "translations possible at all" collapse as the
+  product widget — turning Translate off stops homepage auto-translation too. Widget JS
+  byte cap raised 124 → 128 KiB for the decoder table (packaging gate stays active).
+
+## 1.14.0 — 2026-07-31
+
+### Added
+
+- **Go live in selected markets only** (SPEC-1.14). A new Dashboard card, "Markets — where
+  your reviews go live", limits storefront visibility to chosen Shopify Markets. The
+  per-market decision is made by Shopify's Liquid renderer on every page view
+  (`localization.market.handle` against the app-synced `cellexia.live_markets` metafield) —
+  never by client-side geo guessing — and fails closed: any ambiguity (missing market
+  context, malformed data) renders the not-live state. Markets not selected keep their
+  storefront byte-for-byte unchanged. Market picking needs no new API scopes: handles
+  register themselves when the storefront is visited (or can be typed manually), and the
+  optional `read_markets` scope adds a friendly named list (see UPDATE.md).
+- **Stamped takeover in live markets.** An opt-in toggle hides the incumbent Stamped
+  reviews — the product-page widget (with its "More Product Reviews" heading) and the
+  Stamped stars under product names on product, home and collection pages — exactly and
+  only in markets where Cellexia Reviews is live. The hide is a CSS style tag emitted
+  inside the Liquid live-market branch (structurally incapable of appearing in other
+  markets), one rule per selector so older browsers degrade gracefully, CSS-only and
+  instantly reversible. Selector defaults were measured from the live Cellexia theme; an
+  advanced admin field can override them, sanitized so style-tag injection is impossible.
+  The tokenized preview simulates the takeover for the merchant's tab only, before
+  anything goes live.
+- JSON-LD star rich snippets now follow the same market gate, so search engines only see
+  Cellexia ratings for markets where they are actually shown.
+
+### Changed
+
+- Widget JS byte cap raised deliberately 120 → 124 KiB for the preview simulation and
+  market reporting (SPEC-1.14 §8); the packaging gate remains active.
+
+## 1.13.0 — 2026-07-31
+
+### Added
+
+- **Full Claude API key management in Settings → AI summary.** Changing the key was already
+  possible (paste + Save) but invisible and unverifiable; now the field shows the last four
+  characters of the saved key (the full key never leaves the server), the help text spells
+  out the replace flow, a **Test key** button verifies the key in the field — or the saved
+  one — against the Anthropic API for free and reports precisely what is wrong (invalid or
+  revoked key, missing permissions, or a model unavailable on that account), and a
+  **Remove saved key** button clears it, pausing AI summaries, the QA generator and Claude
+  translations gracefully until a new key is saved.
+
 ## 1.12.1 — 2026-07-30
 
 ### Fixed

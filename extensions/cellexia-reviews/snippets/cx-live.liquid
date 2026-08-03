@@ -1,0 +1,59 @@
+{% comment %}
+  cx-live — the single source of truth for "is Cellexia Reviews live on THIS
+  request?" (SPEC-1.14 §3). Echoes exactly `1` (live here) or `0` (not).
+
+  Decision, evaluated by Shopify's Liquid renderer with the request's real
+  market context (localization.market.handle) — never client-side:
+
+    1. `cellexia.live` metafield explicitly false        → 0 (live nowhere)
+    2. `cellexia.live_markets.scope == "markets"`        → 1 only when this
+       request's market handle is in `handles`, else 0
+    3. anything else (absent metafield / scope "all" /
+       malformed value)                                  → 1 when rule 1
+       passed — the exact pre-1.14 behavior, so upgrades
+       are shopper-invisible
+
+  Consumers MUST render via capture and strip Shopify's app-snippet wrapper
+  comments (SPEC-1.8 §5) before comparing:
+
+    {%- capture cx_live_raw -%}{% render 'cx-live' %}{%- endcapture -%}
+    {%- assign cx_live_raw = cx_live_raw | remove: '<!-- BEGIN app snippet: cx-live -->' | remove: '<!-- END app snippet -->' | strip -%}
+
+  A comparison against the UNstripped capture would read "not 1" everywhere
+  and silently hide the app on every page — strip first, always.
+{% endcomment %}
+{%- liquid
+  assign cx_live_out = '1'
+  if shop.metafields.cellexia.live.value == false
+    assign cx_live_out = '0'
+  else
+    assign cx_lm = shop.metafields.cellexia.live_markets.value
+    if cx_lm
+      if cx_lm.scope == 'markets'
+        assign cx_live_out = '0'
+        assign cx_market_handle = ''
+        if localization.market and localization.market.handle
+          assign cx_market_handle = localization.market.handle | downcase
+        endif
+        if cx_market_handle != ''
+          for cx_h in cx_lm.handles
+            assign cx_h_norm = cx_h | downcase
+            if cx_h_norm == cx_market_handle
+              assign cx_live_out = '1'
+            endif
+          endfor
+        endif
+      elsif cx_lm.scope == 'all'
+        assign cx_live_out = '1'
+      else
+        comment
+          SPEC-1.14 §0.3: a PRESENT but unrecognized live_markets value
+          (foreign write, corruption) fails CLOSED — not live anywhere.
+          Only an ABSENT metafield keeps the pre-1.14 all-markets behavior.
+        endcomment
+        assign cx_live_out = '0'
+      endif
+    endif
+  endif
+  echo cx_live_out
+-%}

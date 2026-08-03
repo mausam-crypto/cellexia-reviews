@@ -293,6 +293,14 @@ console.log(`Locale check passed: ${filesChecked} file(s) OK.`);
   for (const m of js.matchAll(/\bt\(\s*"([a-z0-9_]+\.[a-z0-9_.]+)"/g)) {
     consumed.add(m[1]);
   }
+  // Group-prefix helpers (tq → "qna." + key, etc.): resolve their literal
+  // keys too, so a group helper cannot hide a missing snippet entry.
+  const HELPER_GROUPS = { tq: "qna" };
+  for (const [helper, group] of Object.entries(HELPER_GROUPS)) {
+    for (const m of js.matchAll(new RegExp(`\\b${helper}\\(\\s*"([a-z0-9_]+)"`, "g"))) {
+      consumed.add(`${group}.${m[1]}`);
+    }
+  }
   // Keys the snippet emits: "group.key": lines plus loop-emitted plural
   // groups listed in cx_i18n_plural_keys.
   const emitted = new Set();
@@ -324,4 +332,44 @@ console.log(`Locale check passed: ${filesChecked} file(s) OK.`);
     process.exit(1);
   }
   console.log(`cx-i18n sync check passed: ${consumed.size} JS-consumed key(s) covered.`);
+}
+
+/* ---------------------------------------------------------------------------
+ * HTML-entity guard (added with v1.15): locale strings must contain REAL
+ * characters, never HTML entities — the widget renders via textContent, so
+ * "&#39;" would display literally to shoppers. (The runtime also decodes
+ * defensively for strings tainted upstream, e.g. Translate & Adapt
+ * overrides; this guard keeps OUR files clean at the source.)
+ * ------------------------------------------------------------------------- */
+{
+  const ENTITY_RE = /&(#\d{1,7}|#x[0-9a-fA-F]{1,6}|[a-zA-Z]{2,10});/;
+  const offenders = [];
+  const scan = (value, filePath, keyPath) => {
+    if (typeof value === "string") {
+      const m = value.match(ENTITY_RE);
+      if (m) offenders.push(`${filePath} → ${keyPath}: contains "${m[0]}"`);
+    } else if (value && typeof value === "object") {
+      for (const [k, v] of Object.entries(value)) scan(v, filePath, `${keyPath}.${k}`);
+    }
+  };
+  for (const extension of fs.readdirSync(EXTENSIONS_DIR)) {
+    const localesDir = path.join(EXTENSIONS_DIR, extension, "locales");
+    if (!fs.existsSync(localesDir)) continue;
+    for (const file of fs.readdirSync(localesDir)) {
+      if (!file.endsWith(".json")) continue;
+      const rel = path.join("extensions", extension, "locales", file);
+      try {
+        scan(JSON.parse(fs.readFileSync(path.join(localesDir, file), "utf8")), rel, "");
+      } catch {
+        /* parse errors already reported above */
+      }
+    }
+  }
+  if (offenders.length > 0) {
+    console.error("");
+    console.error("HTML-entity check failed — locale strings must use real characters:");
+    for (const line of offenders.slice(0, 20)) console.error(`  - ${line}`);
+    process.exit(1);
+  }
+  console.log("HTML-entity check passed: no entities in locale strings.");
 }

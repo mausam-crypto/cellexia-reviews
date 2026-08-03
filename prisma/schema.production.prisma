@@ -98,6 +98,7 @@ model Summary {
   locale      String
   text        String
   topics      String   @default("[]") // JSON: TopicJSON[] (see §6)
+  suggestedQuestions String @default("[]")
   reviewCount Int      @default(0)
   model       String?
   updatedAt   DateTime @updatedAt
@@ -129,6 +130,7 @@ model Setting {
   deeplApiKey          String?
   googleApiKey         String?
   showTranslate        Boolean @default(true)
+  showQna              Boolean @default(false)
   showSummary          Boolean @default(true)
   showMediaStrip       Boolean @default(true)
   emitJsonLd           Boolean @default(true)
@@ -145,6 +147,57 @@ model Setting {
   rankingBoosts        String  @default("{}")
   translationDisplay   String  @default("original")
   overallWidget        String  @default("{}")
+  liveScope            String  @default("all")
+  liveMarkets          String  @default("[]")
+  hideStamped          Boolean @default(false)
+  stampedSelectors     String?
+  observedMarkets      String  @default("{}")
+  curationInstructions String?
+  curationOverviewField String @default("accentuate.overview")
+  curationSource       String  @default("as_seen")
+  curationRefresh      String  @default("manual")
+  brandPageConfig      String  @default("{}")
+}
+
+model BrandAnalysis {
+  shop        String    @id
+  sections    String
+  reviewCount Int
+  dateFrom    DateTime?
+  dateTo      DateTime?
+  model       String?
+  generatedAt DateTime  @updatedAt
+}
+
+model AskAnswer {
+  id           String   @id @default(cuid())
+  shop         String
+  productId    String
+  locale       String
+  questionHash String
+  question     String
+  answer       String
+  quotes       String   @default("[]")
+  createdAt    DateTime @default(now())
+
+  @@unique([shop, productId, locale, questionHash])
+  @@index([shop, productId])
+}
+
+model AiCuration {
+  id          String   @id @default(cuid())
+  shop        String
+  productId   String
+  locale      String
+  orderedIds  String   @default("[]")
+  rationale   String   @default("")
+  model       String?
+  reviewCount Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@unique([shop, productId, locale])
+  @@index([shop, productId])
 }
 
 model ProductDisplayConfig {

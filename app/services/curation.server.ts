@@ -182,10 +182,17 @@ export async function buildCandidates(
   source: CurationSource = "as_seen",
   options: { translate?: boolean } = {},
 ): Promise<{ candidates: CurationCandidate[]; localTexts: number; trimmedFrom?: number | null; missingTranslations?: number }> {
-  // EVERY published, non-synthetic review — no recency window (SPEC-1.20 §1).
-  // Synthetic QA rows never reach an agent that shapes what shoppers see.
+  // EVERY published review — no recency window (SPEC-1.20 §1).
+  // The curator orders what the PRODUCT PAGE serves, so it must read exactly
+  // the same set. reviews.server.ts's storefront query is
+  // `{ shop, productId, status: "PUBLISHED" }` with no provenance filter, so a
+  // published QA-generated review is shown to shoppers — and therefore has to
+  // be ordered like any other. (v1.20.1: v1.20.0 added `isSynthetic: false`
+  // here, which silently emptied the curator for stores populated from the QA
+  // generator. The public brand page is the one place that DOES exclude them,
+  // deliberately, and that is unaffected.)
   const rows = await prisma.review.findMany({
-    where: { shop, productId: String(productId), status: "PUBLISHED", isSynthetic: false },
+    where: { shop, productId: String(productId), status: "PUBLISHED" },
     orderBy: { createdAt: "desc" },
     select: {
       id: true,
@@ -365,8 +372,8 @@ export async function qualifyingLocales(
 ): Promise<string[]> {
   const rows = await prisma.review.findMany({
     // Same filter as buildCandidates: qualification must be decided on the
-    // rows the agent will actually receive, never on synthetic QA rows.
-    where: { shop, productId: String(productId), status: "PUBLISHED", isSynthetic: false },
+    // rows the agent will actually receive.
+    where: { shop, productId: String(productId), status: "PUBLISHED" },
     orderBy: { createdAt: "desc" },
     select: { id: true, language: true },
   });
@@ -490,6 +497,24 @@ export async function buildCurationRequest(
       trimmedFrom: trimmedFrom ?? null,
     },
   };
+}
+
+/**
+ * The products a curation run covers when the merchant has not named one.
+ *
+ * ONE definition, exported, because three callers need it — the cost preview,
+ * "Run now" and "Run in the background" — and when they each wrote their own
+ * copy they drifted: 1.20.0 narrowed some and not others, so the preview
+ * priced a run that the batch path then refused. If this query ever changes,
+ * it must keep matching the storefront query in reviews.server.ts, which is
+ * what decides the set the curated order applies to.
+ */
+export async function curatableProductIds(shop: string): Promise<string[]> {
+  const groups = await prisma.review.groupBy({
+    by: ["productId"],
+    where: { shop, status: "PUBLISHED" },
+  });
+  return groups.map((g) => g.productId);
 }
 
 /**
@@ -766,15 +791,7 @@ export async function queueCuration(
     return { queued: 0, skippedDebounce: 0, skippedCap: 0, products: 0, aiReady: false };
   }
   let ids = productIds;
-  if (!ids || ids.length === 0) {
-    const groups = await prisma.review.groupBy({
-      by: ["productId"],
-      // v1.20: same filter as the estimate and the batch path, so "Run now"
-      // and "Run in background" always cover the identical product set.
-      where: { shop, status: "PUBLISHED", isSynthetic: false },
-    });
-    ids = groups.map((g) => g.productId);
-  }
+  if (!ids || ids.length === 0) ids = await curatableProductIds(shop);
   const summary: QueueSummary = { queued: 0, skippedDebounce: 0, skippedCap: 0, products: ids.length, aiReady: true };
   const budget = await checkBudget(shop, 0);
   if (!budget.ok && budget.ceiling != null) {
@@ -869,9 +886,9 @@ export async function curationStatus(shop: string) {
   });
   const counts = await prisma.review.groupBy({
     by: ["productId"],
-    // Must match buildCandidates' filter exactly: it excludes synthetic rows,
-    // so counting them here would mark every such product permanently stale.
-    where: { shop, status: "PUBLISHED", isSynthetic: false },
+    // Must match buildCandidates' filter exactly, or every product would read
+    // as permanently stale.
+    where: { shop, status: "PUBLISHED" },
     _count: { _all: true },
     _max: { createdAt: true },
   });

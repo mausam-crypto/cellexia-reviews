@@ -633,6 +633,13 @@ drop reviews, keeping a deliberate spread across 5, 4, 3, 2 and 1 stars rather t
 newest. When that happens the table says so ("read 640 of 812"), so you are never quietly
 shown a partial answer.
 
+**What the agent counts as a review.** Exactly what the product page shows: every published
+review of that product, whatever created it — the storefront form, a CSV import, or the QA
+generator (§12). That is deliberate: the curator decides the order shoppers see, so it has to
+be looking at the same list they are. The one place QA-generated reviews *are* excluded is the
+public **Cellexia Reviews** brand page (§11), which makes public claims about real customers.
+Unpublished reviews are never curated.
+
 **Press "Estimate cost" before you spend anything.** The button builds exactly the payload
 each agent would receive, sends it to Anthropic's free token-counting endpoint, and shows you
 the real number of input tokens, the number of product-and-language runs, and the price in

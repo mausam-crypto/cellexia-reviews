@@ -20,6 +20,7 @@ import {
   asCurationSource,
   buildCurationRequest,
   checkBudget,
+  curatableProductIds,
   qualifyingLocales,
 } from "./curation.server";
 import type { ProductContextCache } from "./curation.server";
@@ -115,12 +116,26 @@ export async function estimateCuration(
   const notes: string[] = [];
 
   let ids = productIds;
-  if (!ids || ids.length === 0) {
-    const groups = await prisma.review.groupBy({
-      by: ["productId"],
-      where: { shop, status: "PUBLISHED", isSynthetic: false },
-    });
-    ids = groups.map((g) => g.productId);
+  if (!ids || ids.length === 0) ids = await curatableProductIds(shop);
+
+  // A preview that finds nothing must say WHY. Before v1.20.1 the loop below
+  // simply never ran when this list was empty, so the modal asserted reasons
+  // ("needs 3 published reviews", "must exist in Shopify") that nothing had
+  // actually checked. Report the shape of the catalogue first.
+  if (ids.length === 0) {
+    const anyReviews = await prisma.review.count({ where: { shop } });
+    const anyPublished = await prisma.review.count({ where: { shop, status: "PUBLISHED" } });
+    if (anyReviews === 0) {
+      notes.push("There are no reviews in this app yet, so there is nothing to order.");
+    } else if (anyPublished === 0) {
+      notes.push(
+        `All ${anyReviews} review(s) are still unpublished. Curation only orders published reviews — approve some on the Reviews page first.`,
+      );
+    } else {
+      notes.push(
+        `${anyPublished} published review(s) exist but none could be grouped by product, which usually means their product ids no longer match any product.`,
+      );
+    }
   }
 
   const source = asCurationSource(settings.curationSource);
@@ -136,6 +151,8 @@ export async function estimateCuration(
   const contextCache: ProductContextCache = new Map();
   const unreadableProducts = new Set<string>();
   const tooFewReviews = new Set<string>();
+  /** Products with published reviews that no locale qualified for. */
+  const noQualifyingLocale = new Set<string>();
   // A flag, not a note per pair: with no key EVERY pair reports no_ai, which
   // would push the same sentence hundreds of times into the modal.
   let noAiKey = false;
@@ -155,6 +172,7 @@ export async function estimateCuration(
     }
     measuredIds.push(productId);
     const locales = await qualifyingLocales(shop, productId, source);
+    if (locales.length === 0) noQualifyingLocale.add(productId);
     for (const locale of locales) {
       // Dry run: never translates, never calls the Messages API.
       const built = await buildCurationRequest(shop, admin, productId, locale, {
@@ -197,9 +215,14 @@ export async function estimateCuration(
   if (noAiKey) {
     notes.push("No Claude API key is configured, so nothing could be prepared for this run.");
   }
+  if (noQualifyingLocale.size > 0) {
+    notes.push(
+      `${noQualifyingLocale.size} product${noQualifyingLocale.size === 1 ? " has" : "s have"} fewer than 3 published reviews, which is the minimum an agent needs to put an order together.`,
+    );
+  }
   if (unreadableProducts.size > 0) {
     notes.push(
-      `${unreadableProducts.size} product${unreadableProducts.size === 1 ? "" : "s"} could not be read from Shopify and ${unreadableProducts.size === 1 ? "is" : "are"} not included in this estimate. ${unreadableProducts.size === 1 ? "It" : "They"} will be skipped by the run too.`,
+      `${unreadableProducts.size} product${unreadableProducts.size === 1 ? "" : "s"} could not be read from Shopify, so ${unreadableProducts.size === 1 ? "it is" : "they are"} not included. That usually means the product was deleted, but it can also be a temporary Shopify error — if these reviews belong to products that still exist, try again in a minute.`,
     );
   }
   if (tooFewReviews.size > 0) {
@@ -350,7 +373,7 @@ async function countMissingTranslations(
   locales: string[],
 ): Promise<number> {
   const rows = await prisma.review.findMany({
-    where: { shop, productId: String(productId), status: "PUBLISHED", isSynthetic: false },
+    where: { shop, productId: String(productId), status: "PUBLISHED" },
     select: { id: true, language: true },
   });
   if (rows.length === 0) return 0;

@@ -829,20 +829,17 @@ export const action = async ({ request }: ActionFunctionArgs) => {
           ? estimatedCostValue
           : 0;
 
-      const { asCurationSource, qualifyingLocales } = await import("~/services/curation.server");
+      const { asCurationSource, curatableProductIds, qualifyingLocales } = await import(
+        "~/services/curation.server"
+      );
       const settings = await getSettings(shop);
       const source = asCurationSource(settings.curationSource);
 
-      let ids: string[];
-      if (scoped) {
-        ids = scoped;
-      } else {
-        const groups = await prisma.review.groupBy({
-          by: ["productId"],
-          where: { shop, status: "PUBLISHED", isSynthetic: false },
-        });
-        ids = groups.map((g) => g.productId);
-      }
+      // The SAME list the preview priced and "Run now" would queue — this
+      // route used to keep its own copy of the query, and 1.20.0 left it
+      // narrower than the other two, so a preview promising N calls submitted
+      // a batch of nothing.
+      const ids: string[] = scoped ?? (await curatableProductIds(shop));
       const pairs: Array<{ productId: string; locale: string }> = [];
       for (const productId of ids) {
         for (const locale of await qualifyingLocales(shop, productId, source)) {
@@ -1770,10 +1767,13 @@ function CurationCard({
               </InlineStack>
             ) : estimate && estimate.calls === 0 ? (
               <BlockStack gap="300">
+                {/* The reason comes from the estimate's own counters — never
+                    guess at the merchant. It always reports at least one. */}
                 <Banner tone="warning" title="There is nothing to curate right now">
                   <Text as="p" variant="bodySm">
-                    No product could be prepared for a run. A product needs at least 3
-                    published reviews, and must still exist in Shopify.
+                    {estimate.notes.length > 0
+                      ? "Nothing could be prepared for a run:"
+                      : "No product could be prepared for a run, and the app could not work out why. Check that your products still exist in Shopify and have published reviews."}
                   </Text>
                 </Banner>
                 {estimate.notes.map((note, index) => (

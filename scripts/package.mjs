@@ -172,6 +172,61 @@ console.log(
     `locales total ${(localeTotal / KIB).toFixed(1)} KB / 256 KB · Liquid ${(liquidTotal / KIB).toFixed(1)} KB / 100 KB`,
 );
 
+/**
+ * The AI Curator decides the ORDER shoppers see, so the set of reviews it
+ * reads has to be the set the product page serves. In 1.20.0 a well-meant
+ * `isSynthetic: false` was added to the curation queries only; on a store
+ * populated from the QA generator that emptied the curator completely, and
+ * the cost preview reported "nothing to curate" for products full of reviews.
+ * It shipped because nothing compared the two queries.
+ *
+ * This gate does. It is a source check — no database, no Prisma client — that
+ * fails the package if any curation query filters reviews by a column the
+ * storefront query does not.
+ */
+const CURATION_SOURCES = [
+  "app/services/curation.server.ts",
+  "app/services/curation-estimate.server.ts",
+  "app/routes/app.display.tsx",
+];
+const STOREFRONT_SOURCE = "app/services/reviews.server.ts";
+const PROVENANCE_COLUMNS = ["isSynthetic", "source:", "syntheticBatchId"];
+
+const storefrontText = fs.readFileSync(path.join(ROOT, STOREFRONT_SOURCE), "utf8");
+// The storefront's own base where-clause, as written in listReviews.
+const storefrontFiltersProvenance = /const where: Prisma\.ReviewWhereInput = \{[^}]*isSynthetic/.test(
+  storefrontText,
+);
+
+const parityFailures = [];
+for (const rel of CURATION_SOURCES) {
+  const abs = path.join(ROOT, rel);
+  if (!fs.existsSync(abs)) continue;
+  const lines = fs.readFileSync(abs, "utf8").split("\n");
+  lines.forEach((line, i) => {
+    // Only review queries matter; a comment mentioning the column is fine.
+    const trimmed = line.trim();
+    if (trimmed.startsWith("//") || trimmed.startsWith("*")) return;
+    if (!/status:\s*"PUBLISHED"/.test(line)) return;
+    for (const column of PROVENANCE_COLUMNS) {
+      if (!line.includes(column)) continue;
+      if (storefrontFiltersProvenance) continue; // both filter — still in parity
+      parityFailures.push(
+        `${rel}:${i + 1} filters curation reviews by ${column.replace(":", "")}, but the ` +
+          `storefront query in ${STOREFRONT_SOURCE} does not. The curator would order a ` +
+          `different set of reviews than the product page shows.`,
+      );
+    }
+  });
+}
+if (parityFailures.length > 0) {
+  console.error("CURATION/STOREFRONT REVIEW-SET MISMATCH — the curated order would be wrong:");
+  for (const line of parityFailures) console.error(`  - ${line}`);
+  console.error("  Fix the query, or change the storefront query too if the split is deliberate.");
+  process.exit(1);
+}
+console.log("  curation reads the same review set the product page serves");
+
 let fileCount = 0;
 for (const file of walk(ROOT)) {
   archive.file(file.abs, { name: `${TOP_FOLDER}/${file.rel}` });

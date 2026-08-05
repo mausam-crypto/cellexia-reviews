@@ -4,6 +4,38 @@ All notable changes to Cellexia Reviews are documented here. The version number 
 `package.json` and stamped into the release ZIP built by `npm run package`
 (`dist/cellexia-reviews-v<version>.zip`).
 
+## 1.20.1 — 2026-08-05
+
+### Fixed
+
+- **The cost preview said "There is nothing to curate right now" even for products with
+  plenty of published reviews.** 1.20.0 quietly narrowed what the AI Curator is allowed to
+  read: it started skipping reviews created by the QA review generator. Those reviews are
+  *shown to shoppers* when they are published — the product page has never filtered them out
+  — so on a store populated that way the curator suddenly had nothing to order, and the
+  preview came back empty. The curator now reads exactly the set the product page serves:
+  every published review, whatever created it. On a mixed store this also matters in a
+  quieter way — 1.20.0 would have ordered only part of what the page displays.
+
+  (The public **Cellexia Reviews** brand page is the one place that deliberately leaves
+  QA-generated reviews out, and it is unchanged. That page makes public claims about real
+  customers, so it should exclude them; the product-page ordering should not.)
+
+- **An empty preview now explains itself instead of guessing.** The modal used to assert two
+  specific reasons — "needs at least 3 published reviews" and "must still exist in Shopify" —
+  without the app having checked either, which is what made the problem above hard to place.
+  It now reports what it actually found: no reviews yet, reviews still waiting for approval,
+  products under the three-review minimum, or products Shopify would not return (and, for
+  that last one, that a temporary Shopify error looks the same as a deleted product, so it is
+  worth trying again).
+
+- **"Run in the background" could submit nothing after the preview promised a run.** The
+  batch action kept its own copy of the "which products are curatable" query, and 1.20.0 left
+  that copy narrower than the other two — so on the same store the preview would price, say,
+  three calls and the background run would submit zero. All three paths (preview, Run now, Run
+  in the background) now share one definition, and packaging the app fails outright if the
+  curator's review query ever drifts from the storefront's again.
+
 ## 1.20.0 — 2026-08-05
 
 ### Changed

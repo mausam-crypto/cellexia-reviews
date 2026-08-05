@@ -216,6 +216,62 @@ model Setting {
   // v1.19 (SPEC-1.19): brand reviews page feature toggles (JSON:
   // {ask?: bool, recommend?: bool} — both default true when absent).
   brandPageConfig      String  @default("{}")
+  // v1.20 (SPEC-1.20 §3): optional spend ceiling for AI curation, in USD.
+  // null = no ceiling (the preview still shows the cost before every run).
+  curationBudgetUsd    Float?
+  // Rolling monthly spend counter — "YYYY-MM" plus the USD total billed in
+  // that month. Reset happens implicitly when the month string changes.
+  curationSpendMonth   String  @default("")
+  /**
+   * Held while a background run is being assembled and submitted. Taken with
+   * a compare-and-set, so two clicks cannot both get past the "one run at a
+   * time" guard and bill the same work twice. Expires on its own so a crash
+   * mid-submit does not lock the shop out.
+   */
+  curationBatchLock    DateTime?
+  curationSpendUsd     Float   @default(0)
+}
+
+// v1.20 (SPEC-1.20 §4): one submitted Anthropic Message Batch of curation
+// requests. `pairs` maps custom_id -> {productId, locale} so results can be
+// applied back to the right curation; token/cost columns are filled from the
+// batch's own usage once it ends.
+model CurationBatch {
+  id               String    @id @default(cuid())
+  shop             String
+  anthropicBatchId String    @unique
+  status           String    @default("in_progress") // in_progress | canceling | ended | failed
+  model            String
+  requestCount     Int
+  succeeded        Int       @default(0)
+  errored          Int       @default(0)
+  expired          Int       @default(0)
+  pairs            String    // JSON: { "<custom_id>": { productId, locale } }
+  inputTokens      Int       @default(0)
+  outputTokens     Int       @default(0)
+  costUsd          Float     @default(0)
+  // Estimated cost charged to the ledger at SUBMIT time so several batches
+  // cannot each pass the ceiling check; reconciled to the real cost on apply.
+  reservedUsd      Float     @default(0)
+  /**
+   * The spend month ("YYYY-MM") the reservation was charged to. Releasing it
+   * must credit THAT month, never simply "now" — a July reservation released
+   * in August would otherwise be subtracted from August's fresh total.
+   */
+  reservedMonth    String    @default("")
+  error            String?
+  submittedAt      DateTime  @default(now())
+  endedAt          DateTime?
+  /**
+   * Set when a poll takes ownership of applying the results, cleared on
+   * failure. Distinct from appliedAt (set only once the results are actually
+   * stored) so a process that dies mid-apply leaves a claim that goes stale
+   * and can be retried, instead of stranding results the merchant paid for.
+   */
+  claimedAt        DateTime?
+  appliedAt        DateTime?
+
+  @@index([shop, status])
 }
 
 // v1.19 (SPEC-1.19 §6): the AI-written analysis for the "Cellexia Reviews"
@@ -263,7 +319,16 @@ model AiCuration {
   orderedIds  String   @default("[]")
   rationale   String   @default("")
   model       String?
+  /** How many reviews the agent actually read (post-trim). */
   reviewCount Int      @default(0)
+  /**
+   * v1.20: how many reviews were PUBLISHED when the run happened. Staleness
+   * compares against this, not reviewCount — otherwise a run that had to trim
+   * its payload would read as stale the instant it finished, and the
+   * auto-refresh sweep would re-bill the shop's largest product every window
+   * forever. 0 on rows written before 1.20.0, which fall back to reviewCount.
+   */
+  sourceCount Int      @default(0)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 

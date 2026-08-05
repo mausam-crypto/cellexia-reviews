@@ -202,6 +202,93 @@ export async function callClaude(
   return null;
 }
 
+/** Billed usage of one Messages API call (SPEC-1.20 §3). */
+export interface ClaudeUsage {
+  inputTokens: number;
+  outputTokens: number;
+}
+
+/**
+ * Same call as `callClaude`, but also returns the API's own `usage` block so
+ * spend accounting uses BILLED token counts rather than our estimate. Kept as
+ * a sibling (not a replacement) so existing callers are untouched.
+ */
+export async function callClaudeWithUsage(
+  apiKey: string,
+  model: string,
+  system: string,
+  userContent: string,
+  maxTokens = 3000,
+): Promise<{ text: string; usage: ClaudeUsage } | null> {
+  const body = JSON.stringify({
+    model,
+    max_tokens: maxTokens,
+    system,
+    messages: [{ role: "user", content: userContent }],
+  });
+
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const response = await fetch(ANTHROPIC_MESSAGES_URL, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-api-key": apiKey,
+          "anthropic-version": ANTHROPIC_VERSION,
+        },
+        body,
+      });
+
+      if (response.status === 429 || response.status >= 500) {
+        if (attempt === 0) {
+          await sleep(1500);
+          continue;
+        }
+        console.error(`[cellexia] Claude API transient error ${response.status}`);
+        return null;
+      }
+      if (!response.ok) {
+        const detail = await response.text().catch(() => "");
+        console.error(
+          `[cellexia] Claude API error ${response.status}: ${detail.slice(0, 300)}`,
+        );
+        return null;
+      }
+
+      const data = (await response.json()) as {
+        content?: Array<{ type?: string; text?: string }>;
+        stop_reason?: string;
+        usage?: { input_tokens?: unknown; output_tokens?: unknown };
+      };
+      const usage: ClaudeUsage = {
+        inputTokens: toCount(data.usage?.input_tokens),
+        outputTokens: toCount(data.usage?.output_tokens),
+      };
+      // A refusal or truncation still consumed tokens — return the usage so
+      // the spend counter stays honest, with empty text for the caller.
+      if (data.stop_reason === "refusal") return { text: "", usage };
+      if (data.stop_reason === "max_tokens") {
+        console.error("[cellexia] Claude response truncated at max_tokens — output likely unparseable");
+      }
+      const text = Array.isArray(data.content)
+        ? data.content
+            .filter((block) => block && block.type === "text" && typeof block.text === "string")
+            .map((block) => block.text as string)
+            .join("\n")
+        : "";
+      return { text, usage };
+    } catch (error) {
+      if (attempt === 0) {
+        await sleep(1000);
+        continue;
+      }
+      console.error("[cellexia] Claude API request failed", error);
+      return null;
+    }
+  }
+  return null;
+}
+
 /**
  * Exact input-token count for a prospective Messages API call, via the
  * Anthropic token-counting endpoint (`POST /v1/messages/count_tokens`,

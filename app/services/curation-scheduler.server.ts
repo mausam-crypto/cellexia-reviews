@@ -8,8 +8,8 @@
  *
  * Only shops that explicitly opted in (Setting.curationRefresh = daily |
  * weekly) are swept; everything runs through queueCurationPairs, so the
- * v1.17 rails (daily cap 300, concurrency 2, 10-min debounce, failure
- * recording) apply unchanged.
+ * shared rails (the merchant's spend ceiling, concurrency 2, 10-min debounce,
+ * failure recording) apply unchanged.
  *
  * Mechanics mirror jobs.server.ts: globalThis-stored singleton so dev
  * module reloads never double-arm, an unref'd setTimeout chain (never
@@ -26,12 +26,21 @@ import {
   lastCurationAttempt,
   qualifyingLocales,
   queueCurationPairs,
-  remainingDailyCap,
+  checkBudget,
 } from "./curation.server";
 import { getSettings } from "./settings.server";
 
 const FIRST_TICK_MS = 60 * 1000;
 const SWEEP_INTERVAL_MS = 60 * 60 * 1000;
+/**
+ * While a Message Batch is still open the sweep runs far more often: the
+ * admin page only refreshes batch STATUS (applying results there would hang
+ * the page load), so this chain is what actually applies them, and an hour of
+ * "finished but not applied" would feel broken.
+ */
+const OPEN_BATCH_INTERVAL_MS = 5 * 60 * 1000;
+/** Max (product, locale) pairs one sweep will qualify and queue. */
+const SWEEP_MAX_PAIRS = 300;
 const REFRESH_WINDOWS: Record<string, number> = {
   daily: 24 * 60 * 60 * 1000,
   weekly: 7 * 24 * 60 * 60 * 1000,
@@ -73,6 +82,7 @@ async function tick(): Promise<void> {
     return;
   }
   state.sweeping = true;
+  let openBatchesRemain = false;
   try {
     const shops = await prisma.setting.findMany({
       where: { curationRefresh: { in: ["daily", "weekly"] } },
@@ -85,11 +95,20 @@ async function tick(): Promise<void> {
         console.error(`[cellexia] curation sweep failed for ${shop}`, error);
       }
     }
+    // v1.20 (SPEC-1.20 §4): advance any open Message Batch, for EVERY shop
+    // that has one — not just shops on an auto-refresh schedule, since a
+    // batch is usually started by hand. Applying is claim-guarded, so this
+    // racing the admin page is safe.
+    try {
+      openBatchesRemain = await pollOpenBatches();
+    } catch (error) {
+      console.error("[cellexia] batch poll sweep failed", error);
+    }
   } catch (error) {
     console.error("[cellexia] curation sweep failed", error);
   } finally {
     state.sweeping = false;
-    schedule(SWEEP_INTERVAL_MS);
+    schedule(openBatchesRemain ? OPEN_BATCH_INTERVAL_MS : SWEEP_INTERVAL_MS);
   }
 }
 
@@ -106,17 +125,18 @@ export async function sweepShopCurations(
   if (!window) return { queued: 0 };
   if (settings.aiProvider !== "anthropic" || !settings.anthropicApiKey) return { queued: 0 };
 
-  // Cap already exhausted today ⇒ nothing can queue; skip all qualification
-  // work so a cap-starved backlog costs this sweep nothing.
-  const room = remainingDailyCap(shop);
-  if (room <= 0) return { queued: 0 };
+  // v1.20 (SPEC-1.20 §3): the daily cap is gone. The sweep still stops early
+  // when the shop's spend ceiling is already reached, so a budget-capped shop
+  // costs each sweep nothing.
+  const budget = await checkBudget(shop, 0);
+  if (!budget.ok) return { queued: 0 };
 
   const rows = await curationStatus(shop);
   // Window math uses the last ATTEMPT, not just the last success —
   // AiCuration.updatedAt only advances when a run stores a curation, so
   // without this a persistently failing pair would be retried every hourly
-  // sweep (billing model calls and draining the shared daily cap) instead
-  // of once per refresh window.
+  // sweep (billing model calls against the merchant's ceiling) instead of
+  // once per refresh window.
   const due = rows.filter(
     (r) =>
       r.stale &&
@@ -130,9 +150,10 @@ export async function sweepShopCurations(
   // no_reviews) and, in as_seen mode, locales that no longer have enough
   // local texts — a stale row alone is not a license to burn a model call.
   const source = asCurationSource(settings.curationSource);
-  // Bound this sweep's qualification queries to what the cap can admit —
-  // the rest of a large backlog is picked up by later sweeps as cap frees.
-  const dueNow = due.slice(0, room);
+  // Bound one sweep's qualification queries so a huge backlog can't turn a
+  // single hourly tick into thousands of queries; the rest is picked up by
+  // later sweeps.
+  const dueNow = due.slice(0, SWEEP_MAX_PAIRS);
   const byProduct = new Map<string, typeof due>();
   for (const r of dueNow) {
     const list = byProduct.get(r.productId) ?? [];
@@ -162,4 +183,41 @@ export async function sweepShopCurations(
     console.log(`[cellexia] curation auto-refresh queued ${summary.queued} run(s) for ${shop}`);
   }
   return { queued: summary.queued };
+}
+
+/**
+ * v1.20: polls every shop with an unfinished curation batch. Runs on the same
+ * unref'd timer chain as the refresh sweep; each shop is isolated so one bad
+ * offline session cannot stop the others.
+ */
+async function pollOpenBatches(): Promise<boolean> {
+  const where = { status: { in: ["in_progress", "canceling", "ended"] }, appliedAt: null };
+  const rows = await prisma.curationBatch.findMany({
+    where,
+    select: { shop: true },
+    distinct: ["shop"],
+    take: 25,
+  });
+  if (rows.length === 0) return false;
+  const { pollCurationBatches, releaseStaleReservations } = await import(
+    "./curation-batch.server"
+  );
+  // Any batch we could never reach has held money back long enough.
+  await releaseStaleReservations().catch((error) => {
+    console.error("[cellexia] stale reservation release failed", error);
+    return 0;
+  });
+  // No offline Shopify session is needed: applying a batch reads only this
+  // app's own database. Requiring one would mean a shop whose session had
+  // lapsed could never collect results it had already paid for.
+  for (const { shop } of rows) {
+    try {
+      await pollCurationBatches(shop);
+    } catch (error) {
+      console.error(`[cellexia] batch poll failed for ${shop}`, error);
+    }
+  }
+  // Anything still unapplied keeps the fast tick going.
+  const remaining = await prisma.curationBatch.count({ where });
+  return remaining > 0;
 }

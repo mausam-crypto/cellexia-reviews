@@ -22,7 +22,7 @@
  * save/refresh paths call syncShopRating synchronously (SPEC-1.9 §4) so the
  * two shop metafields the Overall-reviews block SSRs from update right away.
  */
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ActionFunctionArgs, LoaderFunctionArgs, SerializeFrom } from "@remix-run/node";
 import { json, redirect } from "@remix-run/node";
 import { useFetcher, useLoaderData, useNavigate, useSearchParams } from "@remix-run/react";
@@ -43,6 +43,7 @@ import {
   Page,
   Pagination,
   Select,
+  Spinner,
   Text,
   TextField,
 } from "@shopify/polaris";
@@ -53,11 +54,16 @@ import prisma from "~/db.server";
 import { RANKING_STRATEGIES } from "~/types/cellexia";
 import type { RankingStrategy } from "~/types/cellexia";
 import { getSettings } from "~/services/settings.server";
+import type { CurationEstimate as FullCurationEstimate } from "~/services/curation-estimate.server";
 import { computeShopStats, syncShopRating } from "~/services/brand.server";
 import { syncProductData } from "~/components/admin/moderation.server";
 import { StarRating } from "~/components/admin/StarRating";
 import { useResultToast } from "~/components/admin/useResultToast";
-import { formatDate, pluralize } from "~/components/admin/labels";
+import { formatDate, formatDateTime, pluralize } from "~/components/admin/labels";
+import { formatUsd } from "~/components/admin/GenerationActivityBar";
+
+/** What the estimate action actually sends: aggregates only (no `pairs`). */
+type CurationEstimate = Omit<FullCurationEstimate, "pairs">;
 
 /** Featured ("pinned") reviews per product — SPEC-1.8 §3 cap, both ends. */
 const MAX_PINNED = 10;
@@ -505,6 +511,27 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   ensureCurationScheduler();
   const curationRows = await curationStatus(shop);
 
+  // v1.20 (SPEC-1.20 §4/§5): refresh the STATUS of any open batch so the card
+  // is current the moment the page opens. Deliberately status-only: applying a
+  // batch means one Shopify Admin call and one database write per curation in
+  // it, which on a large catalogue is minutes of work — far too much to hang a
+  // page load on. The scheduler applies results (it tightens its tick while a
+  // batch is open), so nothing is lost by not doing it here. Best-effort: a
+  // failed refresh must never take the page down with it.
+  const { refreshBatchStatuses, recentCurationBatches } = await import(
+    "~/services/curation-batch.server"
+  );
+  try {
+    await refreshBatchStatuses(shop);
+  } catch (error) {
+    console.error("[cellexia] curation batch status refresh on display load failed", error);
+  }
+  const batchRows = await recentCurationBatches(shop);
+  // Rolling monthly counter: a stamp from an earlier month reads as 0 spent,
+  // exactly as checkBudget treats it (SPEC-1.20 §3).
+  const spendMonth = settings.curationSpendMonth ?? "";
+  const currentMonth = new Date().toISOString().slice(0, 7);
+
   return json({
     defaults,
     editor: null,
@@ -521,6 +548,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         locale: r.locale,
         ordered: r.ordered,
         reviewCount: r.reviewCount,
+        readOf: r.readOf,
         publishedNow: r.publishedNow,
         stale: r.stale,
         model: r.model,
@@ -531,6 +559,31 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         productId: f.productId,
         locale: f.locale,
         status: f.status,
+      })),
+      // v1.20 (SPEC-1.20 §3/§5): spend ceiling, month-to-date spend, batches.
+      budgetUsd: settings.curationBudgetUsd ?? null,
+      model: settings.aiModel,
+      modelPriced: (await import("~/services/pricing.server")).ratesFor(settings.aiModel) !== null,
+      spendUsd: spendMonth === currentMonth ? settings.curationSpendUsd : 0,
+      spendMonth,
+      // Dates are stringified here rather than left to json()'s serializer so
+      // the client-side type is unambiguously `string`.
+      batches: batchRows.map((b) => ({
+        id: b.id,
+        anthropicBatchId: b.anthropicBatchId,
+        status: b.status,
+        model: b.model,
+        requestCount: b.requestCount,
+        succeeded: b.succeeded,
+        errored: b.errored,
+        expired: b.expired,
+        inputTokens: b.inputTokens,
+        outputTokens: b.outputTokens,
+        costUsd: b.costUsd,
+        error: b.error,
+        submittedAt: b.submittedAt.toISOString(),
+        endedAt: b.endedAt ? b.endedAt.toISOString() : null,
+        appliedAt: b.appliedAt ? b.appliedAt.toISOString() : null,
       })),
     },
     overall: {
@@ -548,6 +601,26 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     },
   });
 };
+
+/**
+ * Which products a run covers, as the PREVIEW measured them. `productId` is a
+ * single product; `productIds` is the explicit list the preview priced when it
+ * ran out of time before reaching the whole catalogue. Neither present means
+ * "everything", which is only correct when the preview covered everything.
+ * Returning the priced list is what keeps the quote and the bill the same.
+ */
+function scopedProductIds(form: FormData): string[] | undefined {
+  const single = String(form.get("productId") ?? "").trim();
+  if (single) return [single];
+  const many = String(form.get("productIds") ?? "").trim();
+  if (!many) return undefined;
+  const ids = many
+    .split(",")
+    .map((id) => id.trim())
+    .filter(Boolean)
+    .slice(0, 2000);
+  return ids.length > 0 ? ids : undefined;
+}
 
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
@@ -645,12 +718,38 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       if (refreshRaw !== null && !["manual", "daily", "weekly"].includes(String(refreshRaw))) {
         return json({ ok: false, message: "Not saved — invalid refresh frequency." }, { status: 400 });
       }
+      // v1.20 (SPEC-1.20 §3): the spend ceiling. Empty string means "no
+      // ceiling" (null); anything non-numeric or negative is refused rather
+      // than quietly dropped. ABSENT ⇒ untouched, same stale-tab rule as above.
+      const budgetRaw = form.get("curationBudgetUsd");
+      let budgetPatch: { curationBudgetUsd: number | null } | null = null;
+      if (budgetRaw !== null) {
+        const budgetText = String(budgetRaw).trim();
+        if (budgetText === "") {
+          budgetPatch = { curationBudgetUsd: null };
+        } else {
+          const budgetValue = Number(budgetText);
+          if (!Number.isFinite(budgetValue) || budgetValue < 0) {
+            return json(
+              {
+                ok: false,
+                message:
+                  "Not saved — the spending limit must be a number of dollars (for example 25), or empty for no limit.",
+              },
+              { status: 400 },
+            );
+          }
+          budgetPatch = { curationBudgetUsd: Math.round(budgetValue * 100) / 100 };
+        }
+      }
       const { updateSettings } = await import("~/services/settings.server");
       await updateSettings(shop, {
         curationInstructions: String(form.get("curationInstructions") ?? "").trim() || null,
         curationOverviewField: overviewRaw,
         ...(sourceRaw !== null ? { curationSource: String(sourceRaw) } : {}),
         ...(refreshRaw !== null ? { curationRefresh: String(refreshRaw) } : {}),
+        // v1.20: the ceiling rides the same sanitizer as every other setting.
+        ...(budgetPatch ?? {}),
       });
       return json({
         ok: true,
@@ -661,8 +760,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     }
     if (intent === "curate") {
       const { queueCuration } = await import("~/services/curation.server");
-      const productIdRaw = String(form.get("productId") ?? "").trim();
-      const summary = await queueCuration(shop, admin, productIdRaw ? [productIdRaw] : undefined);
+      const summary = await queueCuration(shop, admin, scopedProductIds(form));
       if (!summary.aiReady) {
         return json(
           {
@@ -675,11 +773,189 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
       const parts = [`${summary.queued} curation run(s) queued across ${summary.products} product(s)`];
       if (summary.skippedDebounce) parts.push(`${summary.skippedDebounce} skipped (ran in the last 10 minutes)`);
-      if (summary.skippedCap) parts.push(`${summary.skippedCap} skipped (daily cap reached)`);
+      if (summary.skippedCap) {
+        // v1.20: the only thing that skips a pair now is the spend ceiling, and
+        // the summary carries both numbers — name them rather than say "cap".
+        const { formatUsd: formatSpend } = await import("~/services/pricing.server");
+        parts.push(
+          summary.budget
+            ? `${summary.skippedCap} not started — you have spent ${formatSpend(summary.budget.spent)} this month and your limit is ${formatSpend(summary.budget.ceiling)}`
+            : `${summary.skippedCap} not started — your monthly spending limit is already reached`,
+        );
+      }
       return json({
         ok: summary.queued > 0 || summary.skippedDebounce > 0,
         message: parts.join(" · ") + ". Results appear in the table below as they finish — refresh in a minute.",
       });
+    }
+
+    // v1.20 (SPEC-1.20 §2/§5): measure what a run would cost before it runs.
+    // Spends nothing — dry-run payloads plus the free count_tokens endpoint.
+    if (intent === "estimate-curation") {
+      const productIdRaw = String(form.get("productId") ?? "").trim();
+      try {
+        const { estimateCuration } = await import("~/services/curation-estimate.server");
+        const estimate = await estimateCuration(
+          shop,
+          admin,
+          productIdRaw ? [productIdRaw] : undefined,
+        );
+        // The modal renders aggregates; the per-pair array is large and
+        // unused on the client, so it never crosses the wire.
+        const { pairs: _pairs, ...estimateSummary } = estimate;
+        return json({ ok: true, estimate: estimateSummary });
+      } catch (error) {
+        console.error("Curation estimate failed", error);
+        return json(
+          {
+            ok: false,
+            message:
+              "Could not measure this run — the estimate did not complete. Try again in a minute.",
+          },
+          { status: 500 },
+        );
+      }
+    }
+
+    // v1.20 (SPEC-1.20 §4): the same run, submitted to the Message Batches API
+    // at half price. The pair list is rebuilt exactly as queueCuration builds
+    // it, so what is submitted is what the estimate measured.
+    if (intent === "curate-batch") {
+      const scoped = scopedProductIds(form);
+      const estimatedCostRaw = String(form.get("estimatedCost") ?? "").trim();
+      const estimatedCostValue = Number(estimatedCostRaw);
+      const estimatedCost =
+        estimatedCostRaw && Number.isFinite(estimatedCostValue) && estimatedCostValue > 0
+          ? estimatedCostValue
+          : 0;
+
+      const { asCurationSource, qualifyingLocales } = await import("~/services/curation.server");
+      const settings = await getSettings(shop);
+      const source = asCurationSource(settings.curationSource);
+
+      let ids: string[];
+      if (scoped) {
+        ids = scoped;
+      } else {
+        const groups = await prisma.review.groupBy({
+          by: ["productId"],
+          where: { shop, status: "PUBLISHED", isSynthetic: false },
+        });
+        ids = groups.map((g) => g.productId);
+      }
+      const pairs: Array<{ productId: string; locale: string }> = [];
+      for (const productId of ids) {
+        for (const locale of await qualifyingLocales(shop, productId, source)) {
+          pairs.push({ productId, locale });
+        }
+      }
+
+      const { submitCurationBatch } = await import("~/services/curation-batch.server");
+      const result = await submitCurationBatch(shop, admin, pairs, estimatedCost);
+      if (result.status === "ok") {
+        const batchParts = [
+          `Background run submitted — ${result.requestCount} AI call(s) sent to Anthropic at half price`,
+        ];
+        if (result.skipped > 0) {
+          // Do not promise "run again to get the rest": a second run rebuilds
+          // and re-bills every pair, not only the leftovers. Say what happened.
+          batchParts.push(
+            `${result.skipped} did not fit in this batch or could not be prepared, and were not submitted. Running the preview again once this finishes will cover them, but it covers everything else again too and is billed accordingly`,
+          );
+        }
+        return json({
+          ok: true,
+          message:
+            batchParts.join(" · ") +
+            '. It shows under "Background runs" below; results are applied automatically when the batch finishes.',
+        });
+      }
+      if (result.status === "no_ai") {
+        return json(
+          {
+            ok: false,
+            message:
+              "Nothing submitted — no Claude API key is configured. Add one in Settings, then curate.",
+          },
+          { status: 400 },
+        );
+      }
+      if (result.status === "already_running") {
+        return json(
+          {
+            ok: false,
+            message:
+              'Nothing submitted — a background run is already going. Wait for it to finish (see "Background runs" below), or cancel it first. This guard is what stops a double-click billing the same run twice.',
+          },
+          { status: 409 },
+        );
+      }
+      if (result.status === "no_pairs") {
+        return json(
+          {
+            ok: false,
+            message:
+              "Nothing submitted — no product and language could be prepared for this run. Products need at least 3 published reviews.",
+          },
+          { status: 400 },
+        );
+      }
+      if (result.status === "over_budget") {
+        const { formatUsd: formatSpend } = await import("~/services/pricing.server");
+        return json(
+          {
+            ok: false,
+            message: `Nothing submitted — this run would pass your spending limit. You have spent ${formatSpend(result.spent)} on AI curation this month and your limit is ${formatSpend(result.ceiling)}. Raise the limit, or clear it for no limit.`,
+          },
+          { status: 400 },
+        );
+      }
+      return json(
+        {
+          ok: false,
+          message:
+            "Nothing submitted — Anthropic rejected the batch. Check your Claude API key in Settings, then try again.",
+        },
+        { status: 502 },
+      );
+    }
+
+    // v1.20: applying a batch is minutes of work on a large catalogue, so the
+    // page load never does it — the scheduler does. This gives the merchant a
+    // way to make it happen right now instead of waiting for the next tick.
+    if (intent === "apply-batches") {
+      const { pollCurationBatches } = await import("~/services/curation-batch.server");
+      const result = await pollCurationBatches(shop);
+      return json({
+        ok: true,
+        message:
+          result.applied > 0
+            ? `${result.applied} background run(s) applied — the table below is up to date.`
+            : "Nothing to apply yet. The results are still with Anthropic; the app keeps checking every few minutes on its own.",
+      });
+    }
+
+    if (intent === "cancel-batch") {
+      const batchId = String(form.get("batchId") ?? "").trim();
+      if (!batchId) {
+        return json({ ok: false, message: "Nothing to cancel — no run was named." }, { status: 400 });
+      }
+      const { cancelCurationBatch } = await import("~/services/curation-batch.server");
+      const cancelled = await cancelCurationBatch(shop, batchId);
+      return cancelled
+        ? json({
+            ok: true,
+            message:
+              "Cancellation requested — calls that had not started are dropped. Calls already running still finish, return results, and are still billed.",
+          })
+        : json(
+            {
+              ok: false,
+              message:
+                "Could not cancel that run — it may have already finished, or no Claude API key is configured.",
+            },
+            { status: 400 },
+          );
     }
 
     if (intent === "save-product") {
@@ -900,6 +1176,12 @@ export default function DisplayRoute() {
           refresh: "manual",
           rows: [],
           failures: [],
+          budgetUsd: null,
+          model: "",
+          modelPriced: true,
+          spendUsd: 0,
+          spendMonth: "",
+          batches: [],
         }
       }
     />
@@ -1109,6 +1391,26 @@ function DisplayOverview({
 /* v1.17 (SPEC-1.17 §5) — the AI Curator card. Nothing hidden: settings,
    per-product Curate buttons, and the full status table with each agent's
    rationale in its own language. */
+/** One row of the "Background runs" list (SPEC-1.20 §4/§5). Dates arrive as
+ *  ISO strings — Remix's json() never returns Date objects to the client. */
+interface CurationBatchRow {
+  id: string;
+  anthropicBatchId: string;
+  status: string;
+  model: string;
+  requestCount: number;
+  succeeded: number;
+  errored: number;
+  expired: number;
+  inputTokens: number;
+  outputTokens: number;
+  costUsd: number;
+  error: string | null;
+  submittedAt: string;
+  endedAt: string | null;
+  appliedAt: string | null;
+}
+
 interface CurationData {
   instructions: string;
   overviewField: string;
@@ -1119,6 +1421,7 @@ interface CurationData {
     locale: string;
     ordered: number;
     reviewCount: number;
+    readOf: number | null;
     publishedNow: number;
     stale: boolean;
     model: string | null;
@@ -1126,13 +1429,37 @@ interface CurationData {
     updatedAt: string;
   }>;
   failures: Array<{ productId: string; locale: string; status: string }>;
+  /** null ⇒ no ceiling: every run is allowed, whatever it costs. */
+  budgetUsd: number | null;
+  model: string;
+  modelPriced: boolean;
+  /** Month-to-date AI curation spend; 0 once the month rolls over. */
+  spendUsd: number;
+  spendMonth: string;
+  batches: CurationBatchRow[];
 }
+
+/** Batch processing_status → the badge the merchant sees (SPEC-1.20 §4). */
+const BATCH_BADGES: Record<string, { tone: "attention" | "success" | "critical"; label: string }> = {
+  in_progress: { tone: "attention", label: "Running" },
+  canceling: { tone: "attention", label: "Canceling" },
+  ended: { tone: "success", label: "Finished" },
+  failed: { tone: "critical", label: "Failed" },
+  // Set when a run could not be reached before Anthropic's 24-hour expiry;
+  // whatever it had reserved against the spending limit is given back.
+  expired: { tone: "critical", label: "Expired" },
+};
 
 const FAILURE_LABELS: Record<string, string> = {
   no_reviews: "not enough reviews",
   no_ai: "no Claude API key configured",
   no_product: "product not found in Shopify — it may have been deleted",
   failed: "the AI call failed — try again in a minute",
+  over_budget: "stopped by your monthly spending limit",
+  // Statuses only a background run can produce.
+  errored: "Anthropic returned an error for this one — try again",
+  canceled: "cancelled before this one ran",
+  expired: "the background run expired before this one was answered",
 };
 
 function CurationCard({
@@ -1149,22 +1476,106 @@ function CurationCard({
 }) {
   const settingsFetcher = useFetcher<typeof action>();
   const curateFetcher = useFetcher<typeof action>();
+  const estimateFetcher = useFetcher<typeof action>();
+  const cancelFetcher = useFetcher<typeof action>();
   useResultToast(settingsFetcher);
   useResultToast(curateFetcher);
+  // Errors only — a successful estimate carries no message, just the numbers.
+  useResultToast(estimateFetcher);
+  useResultToast(cancelFetcher);
 
   const [instructions, setInstructions] = useState(curation.instructions);
   const [overviewField, setOverviewField] = useState(curation.overviewField);
   const [source, setSource] = useState(curation.source);
   const [refresh, setRefresh] = useState(curation.refresh);
+  const [budget, setBudget] = useState(
+    curation.budgetUsd == null ? "" : String(curation.budgetUsd),
+  );
   const [openRationale, setOpenRationale] = useState<string | null>(null);
-  const [confirmOpen, setConfirmOpen] = useState(false);
   const [productPick, setProductPick] = useState("");
+
+  // v1.20 (SPEC-1.20 §5): no run starts before the merchant has seen what it
+  // costs. Opening the modal fires the (free) estimate; the two run buttons
+  // live inside it. "" as the target means "every product".
+  const [estimateOpen, setEstimateOpen] = useState(false);
+  const [estimateTarget, setEstimateTarget] = useState("");
+  const [estimate, setEstimate] = useState<CurationEstimate | null>(null);
 
   const titleById = new Map(products.map((p) => [p.productId, p.productTitle]));
   const busy = curateFetcher.state !== "idle";
-  // Products below 3 published reviews can never produce a curation and are
-  // skipped by the queue — the confirm modal's scale must not count them.
-  const eligibleCount = products.filter((p) => p.publishedCount >= 3).length;
+  const measuring = estimateFetcher.state !== "idle";
+
+  const lastEstimateData = useRef<unknown>(null);
+  useEffect(() => {
+    if (
+      estimateFetcher.state !== "idle" ||
+      !estimateFetcher.data ||
+      estimateFetcher.data === lastEstimateData.current
+    ) {
+      return;
+    }
+    lastEstimateData.current = estimateFetcher.data;
+    const data = estimateFetcher.data as { ok?: boolean; estimate?: CurationEstimate };
+    if (data.ok === true && data.estimate) setEstimate(data.estimate);
+  }, [estimateFetcher.state, estimateFetcher.data]);
+
+  /** Opens the preview and measures it. `productId` "" ⇒ the whole catalog. */
+  const openEstimate = (productId: string) => {
+    setEstimateTarget(productId);
+    // Never show the previous run's numbers while the new ones are measured.
+    setEstimate(null);
+    setEstimateOpen(true);
+    estimateFetcher.submit(
+      productId
+        ? { intent: "estimate-curation", productId }
+        : { intent: "estimate-curation" },
+      { method: "post" },
+    );
+  };
+
+  /**
+   * The run must cover exactly what the preview priced. When the preview ran
+   * out of time it covers only part of the catalogue, so the ids it measured
+   * are sent explicitly rather than letting the run re-derive "everything".
+   */
+  const scopeFields = (): Record<string, string> => {
+    if (estimateTarget) return { productId: estimateTarget };
+    if (estimate?.truncated && estimate.productIds.length > 0) {
+      return { productIds: estimate.productIds.join(",") };
+    }
+    return {};
+  };
+
+  const runBatch = () => {
+    setEstimateOpen(false);
+    curateFetcher.submit(
+      {
+        intent: "curate-batch",
+        // The batch's OWN price, PLUS the translations the run has to make
+        // first: both are billed to the same key and both are reserved
+        // against the ceiling the moment the batch is submitted. Sending only
+        // the batch half would let a translation-heavy run slip past.
+        estimatedCost: String(
+          (estimate?.batchCostUsd ?? 0) + (estimate?.translationCostUsd ?? 0),
+        ),
+        ...scopeFields(),
+      },
+      { method: "post" },
+    );
+  };
+
+  const runNow = () => {
+    setEstimateOpen(false);
+    curateFetcher.submit({ intent: "curate", ...scopeFields() }, { method: "post" });
+  };
+
+  // Each mode is judged on its own price: a background run costs half, so a
+  // ceiling that cannot fit "Run now" often fits it comfortably.
+  // Nothing to run is also a reason to block: an estimate covering zero calls
+  // would otherwise offer the merchant a "$0.0000" run that cannot exist.
+  const nothingToRun = !estimate || estimate.calls === 0;
+  const instantBlocked = nothingToRun || estimate!.budget.wouldExceed;
+  const batchBlocked = nothingToRun || estimate!.budget.batchWouldExceed;
 
   return (
     <Card>
@@ -1180,8 +1591,8 @@ function CurationCard({
             agent works entirely in that language. Helpful-vote counts are never used.
             Products or languages without any curation show the Amazon-style order.
             Curation runs when you press Curate — or automatically on the schedule you
-            pick below — using your Claude API key (one AI call per product per language,
-            capped at 300 per day).
+            pick below — using your Claude API key (one AI call per product per language).
+            Every run shows you what it will cost before it starts.
           </Text>
         </BlockStack>
 
@@ -1228,7 +1639,7 @@ function CurationCard({
               ]}
               value={refresh}
               onChange={setRefresh}
-              helpText="Re-runs a curation automatically only when its reviews have changed since it last ran, at most once per day/week per product and language. The first curation of a product is always started by you; the 300-per-day cap applies."
+              helpText="Re-runs a curation automatically only when its reviews have changed since it last ran, at most once per day/week per product and language. The first curation of a product is always started by you. Automatic runs stop at your spending limit below."
             />
           </Box>
         </InlineStack>
@@ -1241,6 +1652,44 @@ function CurationCard({
           placeholder="e.g. Our buyers worry most about sensitive skin — prioritize credible reviews that mention it."
           helpText="Added to every agent's instructions, in every language. Write it in any language."
         />
+
+        {/* v1.20 (SPEC-1.20 §3): the spend ceiling replaces the old daily cap.
+            Saved by the same button as the settings above it. */}
+        <BlockStack gap="200">
+          <Divider />
+          <Text as="h3" variant="headingSm">
+            Spending
+          </Text>
+          <InlineStack gap="300" wrap blockAlign="center">
+            <Box minWidth="280px">
+              <TextField
+                label="Stop a run if it would cost more than"
+                prefix="$"
+                value={budget}
+                onChange={setBudget}
+                autoComplete="off"
+                inputMode="decimal"
+                placeholder="No limit"
+                helpText="Leave empty for no limit. Counts real billed tokens for curation and for the translations a curation run needs."
+              />
+            </Box>
+            <Text as="span" variant="bodySm" tone="subdued">
+              Spent this month:{" "}
+              {curation.spendUsd > 0 ? formatUsd(curation.spendUsd) : "nothing yet"}
+            </Text>
+          </InlineStack>
+          {/* A limit can only be enforced against a model this app has a
+              published price for. Say so rather than let the field imply a
+              protection that is not there. */}
+          {!curation.modelPriced ? (
+            <Text as="p" variant="bodySm" tone="caution">
+              The model set in Settings ({curation.model}) has no published price in this
+              app, so costs cannot be measured and a spending limit cannot be enforced for
+              it. Pick one of the listed models to use the limit.
+            </Text>
+          ) : null}
+        </BlockStack>
+
         <InlineStack gap="200" blockAlign="center" wrap>
           <Button
             onClick={() =>
@@ -1251,6 +1700,7 @@ function CurationCard({
                   curationOverviewField: overviewField,
                   curationSource: source,
                   curationRefresh: refresh,
+                  curationBudgetUsd: budget,
                 },
                 { method: "post" },
               )
@@ -1259,59 +1709,13 @@ function CurationCard({
           >
             Save curation settings
           </Button>
-          <Button variant="primary" loading={busy} onClick={() => setConfirmOpen(true)}>
+          <Button variant="primary" loading={busy} onClick={() => openEstimate("")}>
             Curate all products now
           </Button>
           <Text as="span" variant="bodySm" tone="subdued">
             {products.length} product(s) with published reviews.
           </Text>
         </InlineStack>
-        <Modal
-          open={confirmOpen}
-          onClose={() => setConfirmOpen(false)}
-          title="Curate all products?"
-          primaryAction={{
-            content: "Start curating",
-            onAction: () => {
-              setConfirmOpen(false);
-              curateFetcher.submit({ intent: "curate" }, { method: "post" });
-            },
-          }}
-          secondaryActions={[{ content: "Cancel", onAction: () => setConfirmOpen(false) }]}
-        >
-          <Modal.Section>
-            <BlockStack gap="200">
-              {source === "all_translated" ? (
-                <Text as="p" variant="bodyMd">
-                  This queues one AI call per product per language: {eligibleCount}{" "}
-                  product(s) with enough reviews (3+) × all 17 languages (in "all
-                  reviews, translated" mode every language qualifies) — never more than
-                  300 runs per day. Reviews never translated before are translated first
-                  with your translation provider and cached forever.
-                </Text>
-              ) : (
-                <Text as="p" variant="bodyMd">
-                  This queues one AI call per product per qualifying language:{" "}
-                  {eligibleCount} product(s) with enough reviews (3+) × up to 17
-                  languages. Only languages with enough reviews written in (or translated
-                  into) that language actually run, so the real number is usually much
-                  smaller — and never more than 300 runs per day.
-                </Text>
-              )}
-              <Text as="p" variant="bodySm" tone="subdued">
-                Each run sends that product's description, Overview text and up to 60
-                reviews to Claude using your API key. Products curated in the last 10
-                minutes are skipped.
-              </Text>
-              {source !== curation.source ? (
-                <Text as="p" variant="bodySm" tone="caution">
-                  You changed "What the agents read" without saving — save the curation
-                  settings first, or this run still uses the saved setting.
-                </Text>
-              ) : null}
-            </BlockStack>
-          </Modal.Section>
-        </Modal>
         <InlineStack gap="200" blockAlign="end" wrap>
           <Box minWidth="280px">
             <Select
@@ -1330,16 +1734,153 @@ function CurationCard({
           <Button
             disabled={!productPick}
             loading={busy}
-            onClick={() =>
-              curateFetcher.submit(
-                { intent: "curate", productId: productPick },
-                { method: "post" },
-              )
-            }
+            onClick={() => openEstimate(productPick)}
           >
             Curate this product
           </Button>
         </InlineStack>
+
+        {/* SPEC-1.20 §5: nothing is spent until the merchant has seen the
+            measured size of the run and picked a mode. */}
+        <Modal
+          open={estimateOpen}
+          onClose={() => setEstimateOpen(false)}
+          title={
+            estimateTarget
+              ? `Curate ${titleById.get(estimateTarget) ?? estimateTarget}?`
+              : "Curate all products?"
+          }
+          primaryAction={{
+            content: "Run in background (half price)",
+            disabled: batchBlocked,
+            onAction: runBatch,
+          }}
+          secondaryActions={[
+            { content: "Run now", disabled: instantBlocked, onAction: runNow },
+            { content: "Cancel", onAction: () => setEstimateOpen(false) },
+          ]}
+        >
+          <Modal.Section>
+            {measuring ? (
+              <InlineStack gap="200" blockAlign="center">
+                <Spinner size="small" accessibilityLabel="Measuring this run" />
+                <Text as="p" variant="bodyMd">
+                  Measuring the exact size of this run…
+                </Text>
+              </InlineStack>
+            ) : estimate && estimate.calls === 0 ? (
+              <BlockStack gap="300">
+                <Banner tone="warning" title="There is nothing to curate right now">
+                  <Text as="p" variant="bodySm">
+                    No product could be prepared for a run. A product needs at least 3
+                    published reviews, and must still exist in Shopify.
+                  </Text>
+                </Banner>
+                {estimate.notes.map((note, index) => (
+                  <Text key={index} as="p" variant="bodySm" tone="subdued">
+                    {note}
+                  </Text>
+                ))}
+              </BlockStack>
+            ) : estimate ? (
+              <BlockStack gap="300">
+                <Text as="p" variant="bodyMd">
+                  {estimate.calls} AI call(s) across {estimate.products} product(s) — one
+                  call per product per language.
+                </Text>
+                <BlockStack gap="050">
+                  <Text as="p" variant="bodySm">
+                    Input: {estimate.inputTokens.toLocaleString("en-US")} tokens
+                  </Text>
+                  <Text as="p" variant="bodySm">
+                    Output: about {estimate.outputTokens.toLocaleString("en-US")} tokens
+                  </Text>
+                </BlockStack>
+                {estimate.priced ? (
+                  <BlockStack gap="050">
+                    <Text as="p" variant="bodyMd" fontWeight="semibold">
+                      Run in background (half price):{" "}
+                      {formatUsd(estimate.batchCostUsd ?? 0)}
+                    </Text>
+                    <Text as="p" variant="bodyMd">
+                      Run now: {formatUsd(estimate.instantCostUsd ?? 0)}
+                    </Text>
+                  </BlockStack>
+                ) : (
+                  <Text as="p" variant="bodySm" tone="caution">
+                    No cost is shown: the configured model ({estimate.model}) has no
+                    published price in this app, so any dollar figure would be a guess.
+                    The token counts above still apply.
+                  </Text>
+                )}
+                {estimate.missingTranslations > 0 ? (
+                  <Text as="p" variant="bodySm">
+                    {estimate.missingTranslations} review translation(s) are missing and
+                    would be made first
+                    {estimate.translationCostUsd != null
+                      ? `, costing about ${formatUsd(estimate.translationCostUsd)} on top`
+                      : ""}
+                    . Each translation is billed once, then cached forever.
+                  </Text>
+                ) : null}
+                {estimate.trimmedProducts > 0 ? (
+                  <Banner tone="warning">
+                    <Text as="p" variant="bodySm">
+                      {estimate.trimmedProducts} product(s) have more reviews than fit in
+                      one request. Review texts are shortened first; if that is still not
+                      enough, reviews are dropped keeping a spread across all star ratings.
+                      The status table shows how many were read for each one.
+                    </Text>
+                  </Banner>
+                ) : null}
+                {estimate.notes.map((note, index) => (
+                  <Text key={index} as="p" variant="bodySm" tone="subdued">
+                    {note}
+                  </Text>
+                ))}
+                {estimate.budget.wouldExceed ? (
+                  <Banner
+                    tone={estimate.budget.batchWouldExceed ? "critical" : "warning"}
+                    title={
+                      estimate.budget.batchWouldExceed
+                        ? "This run would pass your spending limit"
+                        : "Only the background run fits your spending limit"
+                    }
+                  >
+                    <Text as="p" variant="bodySm">
+                      You have spent {formatUsd(estimate.budget.spent)} on AI curation
+                      this month and your limit is{" "}
+                      {formatUsd(estimate.budget.ceiling ?? 0)}.{" "}
+                      {estimate.budget.batchWouldExceed
+                        ? "Raise the limit — or clear it for no limit — and save, then measure again."
+                        : "Running now would pass it, but the half-price background run still fits."}
+                    </Text>
+                  </Banner>
+                ) : null}
+                <Text as="p" variant="bodySm" tone="subdued">
+                  Prices are Anthropic list prices as of {estimate.pricesAsOf}.{" "}
+                  {estimate.exactPairs === 0
+                    ? "No call could be measured, so the input figure is an approximation too."
+                    : `Input tokens measured on ${estimate.exactPairs} of ${estimate.totalPairs} calls; output is an estimate.`}
+                  {estimate.introApplied
+                    ? " The cost above uses Anthropic's current promotional rate for this model."
+                    : ""}
+                </Text>
+                {source !== curation.source ? (
+                  <Text as="p" variant="bodySm" tone="caution">
+                    You changed "What the agents read" without saving — save the curation
+                    settings first, or this run still uses the saved setting.
+                  </Text>
+                ) : null}
+              </BlockStack>
+            ) : (
+              <Text as="p" variant="bodyMd">
+                This run could not be measured, so there is no cost to approve. Close this
+                and try again in a minute.
+              </Text>
+            )}
+          </Modal.Section>
+        </Modal>
 
         {curation.failures.length > 0 ? (
           <Banner tone="warning" title="Some recent runs did not produce a curation">
@@ -1356,6 +1897,81 @@ function CurationCard({
             </BlockStack>
           </Banner>
         ) : null}
+
+        {/* v1.20 (SPEC-1.20 §4/§5): batches submitted to Anthropic. Their
+            status is refreshed on every page load; the results themselves are
+            applied by the background scheduler, which checks every few
+            minutes while a batch is open. */}
+        <BlockStack gap="200">
+          <Divider />
+          <Text as="h3" variant="headingSm">
+            Background runs
+          </Text>
+          {curation.batches.length === 0 ? (
+            <Text as="p" variant="bodySm" tone="subdued">
+              No background runs yet — "Run in background (half price)" in the preview
+              starts one.
+            </Text>
+          ) : (
+            <BlockStack gap="200">
+              {curation.batches.map((batch) => {
+                const badge = BATCH_BADGES[batch.status];
+                return (
+                  <InlineStack key={batch.id} gap="200" blockAlign="center" wrap>
+                    {badge ? (
+                      <Badge tone={badge.tone}>{badge.label}</Badge>
+                    ) : (
+                      <Badge>{batch.status}</Badge>
+                    )}
+                    <Text as="span" variant="bodySm">
+                      {pluralize(batch.requestCount, "call")}
+                    </Text>
+                    <Text as="span" variant="bodySm" tone="subdued">
+                      {/* Before the results are applied these are Anthropic's
+                          own request counts — "answered", not yet "curated".
+                          After applying, they are what this app stored. */}
+                      {batch.appliedAt
+                        ? `${batch.succeeded} curated · ${batch.errored} failed`
+                        : `${batch.succeeded} answered · ${batch.errored} failed so far`}
+                    </Text>
+                    {batch.costUsd > 0 ? (
+                      <Text as="span" variant="bodySm">
+                        {formatUsd(batch.costUsd)}
+                      </Text>
+                    ) : null}
+                    <Text as="span" variant="bodySm" tone="subdued">
+                      Submitted {formatDateTime(batch.submittedAt)}
+                    </Text>
+                    {batch.status === "ended" && !batch.appliedAt ? (
+                      <Button
+                        size="slim"
+                        loading={cancelFetcher.state !== "idle"}
+                        onClick={() =>
+                          cancelFetcher.submit({ intent: "apply-batches" }, { method: "post" })
+                        }
+                      >
+                        Apply results now
+                      </Button>
+                    ) : batch.status === "in_progress" ? (
+                      <Button
+                        size="slim"
+                        loading={cancelFetcher.state !== "idle"}
+                        onClick={() =>
+                          cancelFetcher.submit(
+                            { intent: "cancel-batch", batchId: batch.anthropicBatchId },
+                            { method: "post" },
+                          )
+                        }
+                      >
+                        Cancel
+                      </Button>
+                    ) : null}
+                  </InlineStack>
+                );
+              })}
+            </BlockStack>
+          )}
+        </BlockStack>
 
         {curation.rows.length > 0 ? (
           <BlockStack gap="200">
@@ -1388,7 +2004,19 @@ function CurationCard({
                     </IndexTable.Cell>
                     <IndexTable.Cell>{row.locale}</IndexTable.Cell>
                     <IndexTable.Cell>
-                      {row.ordered} of {row.reviewCount}
+                      <BlockStack gap="0">
+                        <Text as="span" variant="bodySm">
+                          {row.ordered} of {row.reviewCount}
+                        </Text>
+                        {/* v1.20: when the payload had to be trimmed, say so
+                            here rather than letting the post-trim number read
+                            as the product's whole review set. */}
+                        {row.readOf ? (
+                          <Text as="span" variant="bodySm" tone="caution">
+                            read {row.reviewCount} of {row.readOf}
+                          </Text>
+                        ) : null}
+                      </BlockStack>
                     </IndexTable.Cell>
                     <IndexTable.Cell>
                       <Text as="span" variant="bodySm">
@@ -1437,15 +2065,12 @@ function CurationCard({
                           </Text>
                         </div>
                         <InlineStack gap="200">
+                          {/* Through the preview like every other run: no
+                              curation starts without a cost on screen first. */}
                           <Button
                             size="slim"
                             loading={busy}
-                            onClick={() =>
-                              curateFetcher.submit(
-                                { intent: "curate", productId: row.productId },
-                                { method: "post" },
-                              )
-                            }
+                            onClick={() => openEstimate(row.productId)}
                           >
                             Re-curate this product
                           </Button>

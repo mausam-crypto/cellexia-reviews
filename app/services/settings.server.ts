@@ -189,6 +189,19 @@ export async function updateSettings(shop: string, patch: Partial<Setting>): Pro
     else if (field === "") data.curationOverviewField = "accentuate.overview";
   }
 
+  // v1.20 (SPEC-1.20 §3): optional curation spend ceiling. null clears it;
+  // a negative or non-finite value is dropped rather than stored.
+  if (patch.curationBudgetUsd !== undefined) {
+    if (patch.curationBudgetUsd === null) {
+      data.curationBudgetUsd = null;
+    } else {
+      const value = Number(patch.curationBudgetUsd);
+      if (Number.isFinite(value) && value >= 0) {
+        data.curationBudgetUsd = Math.round(value * 100) / 100;
+      }
+    }
+  }
+
   // v1.19 (SPEC-1.19 §6): brand-page feature toggles — canonicalized to the
   // two known boolean keys, anything else dropped.
   if (typeof patch.brandPageConfig === "string") {

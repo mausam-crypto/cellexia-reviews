@@ -30,8 +30,9 @@
 import type { Review } from "@prisma/client";
 import prisma from "~/db.server";
 import { SHOP_LOCALES } from "~/types/cellexia";
-import { callClaude, extractJson } from "./ai.server";
+import { callClaudeWithUsage, extractJson } from "./ai.server";
 import { getSettings } from "./settings.server";
+import { recordSpend } from "./spend.server";
 import { scrubDashes } from "./synthetic-prompts.server";
 
 /** Per-review translation payload returned to the proxy route (§6). */
@@ -117,6 +118,10 @@ export async function translateReviews(
 
   const settings = await getSettings(shop);
   let translated: Record<string, ReviewTranslation> = {};
+  // v1.20 (SPEC-1.20 §3): Claude translations are billed to the same API key
+  // as curation, so they belong on the same ledger — otherwise a curation run
+  // in "all reviews, translated" mode spends money the ceiling cannot see.
+  const claudeUsage = { inputTokens: 0, outputTokens: 0 };
   try {
     switch (settings.translationProvider) {
       case "anthropic":
@@ -125,6 +130,7 @@ export async function translateReviews(
           settings.aiModel,
           missing,
           target,
+          claudeUsage,
         );
         break;
       case "deepl":
@@ -139,6 +145,9 @@ export async function translateReviews(
   } catch (error) {
     console.error("[cellexia] translation provider failed", error);
     translated = {};
+  }
+  if (claudeUsage.inputTokens > 0 || claudeUsage.outputTokens > 0) {
+    await recordSpend(shop, settings.aiModel, claudeUsage, false);
   }
 
   for (const [reviewId, raw] of Object.entries(translated)) {
@@ -212,6 +221,8 @@ async function translateWithAnthropic(
   model: string,
   reviews: Review[],
   target: string,
+  /** Accumulates BILLED usage so the caller can charge it to the ledger. */
+  usage: { inputTokens: number; outputTokens: number },
 ): Promise<Record<string, ReviewTranslation>> {
   const out: Record<string, ReviewTranslation> = {};
   if (!apiKey) return out;
@@ -223,13 +234,20 @@ async function translateWithAnthropic(
       body: review.body.slice(0, 5000),
       reply: review.reply,
     }));
-    const raw = await callClaude(
+    const call = await callClaudeWithUsage(
       apiKey,
       model,
       TRANSLATE_SYSTEM_PROMPT,
       `Target locale: "${target}"\n\nReviews:\n${JSON.stringify(payload)}`,
       6000,
     );
+    // Tokens are billed whether or not the text came back usable, so they are
+    // added to the ledger before anything else can `continue` past them.
+    if (call) {
+      usage.inputTokens += call.usage.inputTokens;
+      usage.outputTokens += call.usage.outputTokens;
+    }
+    const raw = call?.text;
     if (!raw) continue;
 
     const parsed = extractJson(raw) as { translations?: unknown } | null;

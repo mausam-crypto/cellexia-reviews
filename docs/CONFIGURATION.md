@@ -597,8 +597,8 @@ language, when curation ran, the model used, how many reviews it ordered, whethe
 changed since (a freshness badge), and the agent's full reasoning — written in that
 language — behind the order it chose. You can also give all agents your own guidance (e.g.
 "our buyers worry most about sensitive skin"). Curation uses your Claude API key (one AI
-call per product per language, capped at 300 per day), and your hand-picked featured
-reviews always stay on top of whatever the agent decides.
+call per product per language), and your hand-picked featured reviews always stay on top of
+whatever the agent decides.
 
 **What the agents read (since 1.18.0).** By default each agent judges what its language's
 shoppers actually see: reviews written in that language plus existing translations, with
@@ -618,8 +618,68 @@ Curate; the freshness badge tells you when a re-curate is worth it), **Daily**, 
 **Weekly**. With Daily/Weekly on, the app checks in the background about once an hour and
 re-runs ONLY curations whose reviews actually changed since they last ran, at most once
 per day/week per product and language. The first curation of a product is never automatic —
-you always start it yourself — and automatic runs respect the same 300-per-day cap and
+you always start it yourself — and automatic runs obey the same monthly spending limit and
 show up in the same status table and failure list as manual ones.
+
+### Every review, a cost preview and a spending limit (since 1.20.0)
+
+**Every agent reads every review.** Before 1.20 an agent saw at most the 60 most recent
+reviews of a product and the app refused more than 300 curation runs a day. Both limits are
+gone. Each agent is now handed the product's complete published review set, and the only
+ceiling left is the model's context window: if a product's reviews genuinely will not fit in
+one call, the app first shortens the longest review texts (2000, then 1200, then 800
+characters each — enough to judge a review by), and only if that still does not fit does it
+drop reviews, keeping a deliberate spread across 5, 4, 3, 2 and 1 stars rather than just the
+newest. When that happens the table says so ("read 640 of 812"), so you are never quietly
+shown a partial answer.
+
+**Press "Estimate cost" before you spend anything.** The button builds exactly the payload
+each agent would receive, sends it to Anthropic's free token-counting endpoint, and shows you
+the real number of input tokens, the number of product-and-language runs, and the price in
+dollars at your model's published rates — before a single billable call. It translates
+nothing and generates nothing, so the preview itself is free. On a large catalogue it measures
+a sample exactly and extrapolates the rest, and says which of the two each number is. If new
+reviews still need translating (the "All reviews, translated into each language" mode), the
+estimate says how many and prices that separately, because that is billed too.
+
+Then you choose how to run it:
+
+| Choice | What happens | Cost |
+| --- | --- | --- |
+| **Run now** | Every run happens immediately; the table fills in as it goes. | Standard rates |
+| **Run in the background** | The work is submitted to Anthropic's batch service and comes back within 24 hours (usually far sooner). The app checks on it by itself and applies the results when they land — you can close the tab. | **50% cheaper** |
+
+Only one background run can be going at a time — that is what stops a double-click billing
+the same work twice. It appears under **Background runs** with its status, how many runs
+succeeded or failed, and what it cost, and you can cancel it while it is still going. Once
+Anthropic has finished it, the app applies the results by itself within a few minutes; if you
+would rather not wait, **Apply results now** on that run does it immediately. (Opening the
+page only refreshes the run's status — applying a large batch means writing every curation in
+it, far too much work to hold a page load open for.)
+
+**The monthly spending limit.** Set a dollar amount in **"Monthly spending limit"** and the
+app tracks what curation has actually cost this calendar month against it — the real billed
+tokens of every run, not an estimate. When a run would take you over, it is refused with a
+plain message instead of silently spending. Leave the field empty for no limit. The card
+always shows the running total, so you can see what the feature costs you.
+
+Three details worth knowing:
+
+- **Translations count.** In "All reviews, translated into each language" mode, a run pays
+  for the translations it needs on the same Claude key, so they are billed to the same limit.
+  DeepL and Google are your own separate accounts: they are left out of both the limit and
+  the quoted cost, and the preview says so instead of quoting a figure it cannot know.
+- **A background run reserves its cost up front**, because a batch is not billed until it
+  comes back. Otherwise several background runs started in a row would each be checked
+  against a total that had not moved yet. The reservation is corrected to the real cost when
+  the results land, and released if you cancel.
+- **Each option is judged on its own price.** A limit that cannot fit "Run now" often fits
+  the half-price background run, and the app will tell you exactly that rather than refusing
+  both.
+
+If you set a model the app does not have a published price for, it says "cost unknown" rather
+than inventing a number, and a spending limit cannot be enforced on it — both the preview and
+the limit field tell you this before you run.
 
 ### The six classic ranking systems
 

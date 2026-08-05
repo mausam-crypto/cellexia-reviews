@@ -157,6 +157,35 @@ model Setting {
   curationSource       String  @default("as_seen")
   curationRefresh      String  @default("manual")
   brandPageConfig      String  @default("{}")
+  curationBudgetUsd    Float?
+  curationSpendMonth   String  @default("")
+  curationBatchLock    DateTime?
+  curationSpendUsd     Float   @default(0)
+}
+
+model CurationBatch {
+  id               String    @id @default(cuid())
+  shop             String
+  anthropicBatchId String    @unique
+  status           String    @default("in_progress")
+  model            String
+  requestCount     Int
+  succeeded        Int       @default(0)
+  errored          Int       @default(0)
+  expired          Int       @default(0)
+  pairs            String
+  inputTokens      Int       @default(0)
+  outputTokens     Int       @default(0)
+  costUsd          Float     @default(0)
+  reservedUsd      Float     @default(0)
+  reservedMonth    String    @default("")
+  error            String?
+  submittedAt      DateTime  @default(now())
+  endedAt          DateTime?
+  claimedAt        DateTime?
+  appliedAt        DateTime?
+
+  @@index([shop, status])
 }
 
 model BrandAnalysis {
@@ -193,6 +222,7 @@ model AiCuration {
   rationale   String   @default("")
   model       String?
   reviewCount Int      @default(0)
+  sourceCount Int      @default(0)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 

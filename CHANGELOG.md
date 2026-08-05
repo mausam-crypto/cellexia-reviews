@@ -4,6 +4,57 @@ All notable changes to Cellexia Reviews are documented here. The version number 
 `package.json` and stamped into the release ZIP built by `npm run package`
 (`dist/cellexia-reviews-v<version>.zip`).
 
+## 1.20.0 — 2026-08-05
+
+### Changed
+
+- **The AI curator now reads every review — the two old limits are gone.** Until now each
+  agent saw at most the 60 most recent reviews of a product, and the app refused more than
+  300 curation runs a day. Both are removed. Every agent is handed the product's complete
+  published review set, and the only ceiling left is the model's own context window: if a
+  product's reviews genuinely will not fit in one call, the app first shortens the longest
+  review texts (2000, then 1200, then 800 characters each — still plenty to judge a review
+  by), and only if that is still not enough does it drop reviews, keeping a deliberate spread
+  across 5, 4, 3, 2 and 1 stars instead of just the newest. Whenever that happens the status
+  table says so ("read 640 of 812"), so a partial reading is never presented as a full one.
+
+### Added
+
+- **A cost preview that costs nothing.** The new **Estimate cost** button builds exactly the
+  payload every agent would receive, measures it with Anthropic's free token-counting
+  endpoint, and shows the real input-token count, the number of product-and-language runs and
+  the price in dollars at your model's published rates — before a single billable call is
+  made. It translates nothing and generates nothing. On a large catalogue it measures a
+  sample exactly and extrapolates the rest, and states plainly which numbers are which. If
+  reviews still need translating (in "All reviews, translated into each language" mode) it
+  counts them and prices that separately, because that is billed too. An unknown model shows
+  "cost unknown" rather than an invented number.
+- **Background runs at half price.** From the preview you can choose **Run now** (immediate,
+  standard rates) or **Run in the background**, which submits the work to Anthropic's batch
+  service at a **50% discount**. Results come back within 24 hours — usually much sooner — and
+  the app polls and applies them by itself within a few minutes, so you can close the tab —
+  or press **Apply results now** if you would rather not wait. The card lists every background
+  run with its status, how many runs succeeded or failed, and what it cost, and a running
+  batch can be cancelled.
+- **A monthly spending limit.** Set a dollar amount and the app tracks what curation has
+  actually cost this calendar month against it — real billed tokens, not estimates — and
+  refuses a run that would take you over instead of quietly spending. Leave it empty for no
+  limit. The running total is always on screen. Automatic (Daily/Weekly) refreshes obey the
+  same limit, which is what now bounds them in place of the deleted daily cap.
+  - Translations count too. In "All reviews, translated into each language" mode a run pays
+    for the translations it needs, on the same Claude key, so those are billed to the same
+    limit. (DeepL and Google are your own separate accounts and are excluded, with the
+    preview saying so rather than quoting you a made-up figure.)
+  - A background run **reserves** its estimated cost the moment it is submitted, because a
+    batch is not billed until it comes back. Without that, three background runs started in
+    a row would each be checked against a total that had not moved yet. The reservation is
+    corrected to the real cost when the results land, and given back if you cancel.
+  - Only one background run at a time, so a double-click or a browser retry cannot bill the
+    same work twice.
+  - If you set a model this app has no published price for, the card says plainly that costs
+    cannot be measured and the limit cannot be enforced for it, instead of leaving you with a
+    limit that quietly does nothing.
+
 ## 1.19.2 — 2026-08-03
 
 ### Fixed

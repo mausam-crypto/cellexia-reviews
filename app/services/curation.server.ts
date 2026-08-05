@@ -10,8 +10,9 @@
  * validated order + rationale in AiCuration.
  *
  * queueCuration(shop, admin, productIds?) fans out (product × qualifying
- * locale) tasks through an in-process queue: concurrency 2, per-shop daily
- * cap (CURATION_DAILY_CAP attempts), per-(product, locale) debounce 10 min.
+ * locale) tasks through an in-process queue: concurrency 2, per-(product,
+ * locale) debounce 10 min, and (v1.20) the merchant's optional spend ceiling
+ * instead of an invented per-day cap.
  * Admin-triggered ONLY (SPEC-1.17 §0.1) — nothing on any proxy path calls
  * into this module.
  *
@@ -23,9 +24,11 @@ import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
 
 import prisma from "~/db.server";
 import { SHOP_LOCALES } from "~/types/cellexia";
-import { callClaude, extractJson } from "./ai.server";
+import { callClaudeWithUsage, extractJson } from "./ai.server";
 import { curationPromptFor } from "./curation-prompts.server";
+import { approxTokens, costUsd } from "./pricing.server";
 import { getSettings } from "./settings.server";
+import { checkBudget, recordSpend } from "./spend.server";
 import { scrubDashes } from "./synthetic-prompts.server";
 import { translateReviews } from "./translate.server";
 
@@ -38,13 +41,26 @@ export function asCurationSource(raw: unknown): CurationSource {
 
 type AdminClient = Pick<AdminApiContext, "graphql">;
 
-const MAX_CANDIDATES = 60;
-const MAX_BODY_CHARS = 800;
-const MAX_DESCRIPTION_CHARS = 4000;
+/**
+ * v1.20 (SPEC-1.20 §1): the 60-review cap is gone — the agent sees EVERY
+ * published review. Volume is bounded by a token budget instead, a third of
+ * the model's 1M context so there is ample room for output and prompt growth.
+ */
+export const MAX_PAYLOAD_TOKENS = 400_000;
+/**
+ * The review lines are not the whole request: the locale's system prompt, the
+ * product description and overview (8000 chars each) and the merchant's
+ * guidance also go on the wire. Reserve room for them so the budget bounds
+ * the REQUEST rather than one part of it.
+ */
+const NON_REVIEW_TOKEN_RESERVE = 12_000;
+const REVIEW_TOKEN_BUDGET = MAX_PAYLOAD_TOKENS - NON_REVIEW_TOKEN_RESERVE;
+/** Body length ladder: full-ish, then tighter, before any review is dropped. */
+const BODY_CHAR_LADDER = [2000, 1200, 800] as const;
+const MAX_DESCRIPTION_CHARS = 8000;
 const MIN_QUALIFYING_LOCAL_TEXTS = 5;
 export const MIN_ORDER = 3;
 const MAX_ORDER = 30;
-export const CURATION_DAILY_CAP = 300;
 const CURATION_CONCURRENCY = 2;
 const DEBOUNCE_MS = 10 * 60 * 1000;
 
@@ -164,11 +180,13 @@ export async function buildCandidates(
   productId: string,
   locale: string,
   source: CurationSource = "as_seen",
-): Promise<{ candidates: CurationCandidate[]; localTexts: number }> {
+  options: { translate?: boolean } = {},
+): Promise<{ candidates: CurationCandidate[]; localTexts: number; trimmedFrom?: number | null; missingTranslations?: number }> {
+  // EVERY published, non-synthetic review — no recency window (SPEC-1.20 §1).
+  // Synthetic QA rows never reach an agent that shapes what shoppers see.
   const rows = await prisma.review.findMany({
-    where: { shop, productId: String(productId), status: "PUBLISHED" },
+    where: { shop, productId: String(productId), status: "PUBLISHED", isSynthetic: false },
     orderBy: { createdAt: "desc" },
-    take: MAX_CANDIDATES,
     select: {
       id: true,
       rating: true,
@@ -178,6 +196,7 @@ export async function buildCandidates(
       verified: true,
       createdAt: true,
       variantTitle: true,
+      helpfulCount: true,
       media: { select: { id: true }, take: 1 },
     },
   });
@@ -197,24 +216,32 @@ export async function buildCandidates(
   // Skip the translation block entirely when the run is guaranteed to fail
   // no_reviews (< MIN_ORDER candidates) — never bill translations for a run
   // that can't produce a curation.
+  let missingTranslations = 0;
   if (source === "all_translated" && rows.length >= MIN_ORDER) {
     const missing = foreignIds.filter((id) => !byReview.get(id)?.body);
-    // translateReviews caps at 20 ids per call — chunk. Full bodies are
-    // translated (and cached); the 800-char payload slice happens below.
-    for (let i = 0; i < missing.length; i += 20) {
-      try {
-        const got = await translateReviews(shop, missing.slice(i, i + 20), locale);
-        for (const [id, tr] of Object.entries(got)) {
-          if (tr?.body) byReview.set(id, { title: tr.title ?? null, body: tr.body });
+    missingTranslations = missing.length;
+    // Dry run (the cost estimate, SPEC-1.20 §0): count what WOULD be
+    // translated and translate NOTHING — a preview must never bill the
+    // merchant. Those reviews then fall through as marked-original below,
+    // which is exactly how a real run treats an untranslatable review.
+    if (options.translate !== false) {
+      // translateReviews caps at 20 ids per call — chunk. Full bodies are
+      // translated (and cached); the payload slice happens below.
+      for (let i = 0; i < missing.length; i += 20) {
+        try {
+          const got = await translateReviews(shop, missing.slice(i, i + 20), locale);
+          for (const [id, tr] of Object.entries(got)) {
+            if (tr?.body) byReview.set(id, { title: tr.title ?? null, body: tr.body });
+          }
+        } catch (error) {
+          console.error("[cellexia] curation translate-all chunk failed", error);
         }
-      } catch (error) {
-        console.error("[cellexia] curation translate-all chunk failed", error);
       }
     }
   }
 
   let localTexts = 0;
-  const candidates: CurationCandidate[] = rows.map((r) => {
+  const built = rows.map((r) => {
     let title = r.title;
     let body = r.body;
     let textNote: string;
@@ -233,18 +260,93 @@ export async function buildCandidates(
       }
     }
     return {
-      id: r.id,
+      candidate: {
+        id: r.id,
+        rating: r.rating,
+        title,
+        body,
+        verified: r.verified,
+        date: r.createdAt.toISOString().slice(0, 10),
+        variant: r.variantTitle,
+        hasMedia: r.media.length > 0,
+        textNote,
+      } satisfies CurationCandidate,
       rating: r.rating,
-      title,
-      body: body.slice(0, MAX_BODY_CHARS),
-      verified: r.verified,
-      date: r.createdAt.toISOString().slice(0, 10),
-      variant: r.variantTitle,
-      hasMedia: r.media.length > 0,
-      textNote,
+      helpfulCount: r.helpfulCount,
     };
   });
-  return { candidates, localTexts };
+
+  const { candidates, trimmedFrom } = fitToBudget(built);
+  return { candidates, localTexts, trimmedFrom, missingTranslations };
+}
+
+/**
+ * Fits the candidate set inside MAX_PAYLOAD_TOKENS (SPEC-1.20 §1).
+ *
+ * Degrades in the spec's order: shorten bodies down the ladder first, and
+ * only if that is still not enough drop reviews from the end of a COVERAGE
+ * ordering — an interleave by rating band, so a trim keeps the full 1-5 star
+ * spread instead of leaving the agent a wall of recent 5-star reviews. The
+ * returned candidates stay in their natural (newest-first) order; coverage
+ * ordering decides only what survives.
+ */
+function fitToBudget(
+  built: Array<{ candidate: CurationCandidate; rating: number; helpfulCount: number }>,
+): { candidates: CurationCandidate[]; trimmedFrom: number | null } {
+  const sizeOf = (items: CurationCandidate[], bodyChars: number) =>
+    items.reduce(
+      (sum, c) => sum + approxTokens(JSON.stringify({ ...c, body: c.body.slice(0, bodyChars) })),
+      0,
+    );
+
+  const all = built.map((b) => b.candidate);
+  for (const bodyChars of BODY_CHAR_LADDER) {
+    if (sizeOf(all, bodyChars) <= REVIEW_TOKEN_BUDGET) {
+      return {
+        candidates: all.map((c) => ({ ...c, body: c.body.slice(0, bodyChars) })),
+        trimmedFrom: null,
+      };
+    }
+  }
+
+  // Still over budget at the tightest body length: drop by coverage order.
+  const tightest = BODY_CHAR_LADDER[BODY_CHAR_LADDER.length - 1];
+  const byBand = new Map<number, typeof built>();
+  for (const item of built) {
+    const band = byBand.get(item.rating) ?? [];
+    band.push(item);
+    byBand.set(item.rating, band);
+  }
+  for (const band of byBand.values()) {
+    band.sort((a, b) => b.helpfulCount - a.helpfulCount);
+  }
+  // Round-robin across rating bands (5,4,3,2,1) so every band is represented.
+  const bands = [5, 4, 3, 2, 1].map((r) => byBand.get(r) ?? []);
+  const coverage: typeof built = [];
+  for (let i = 0; coverage.length < built.length; i += 1) {
+    let added = false;
+    for (const band of bands) {
+      if (i < band.length) {
+        coverage.push(band[i]);
+        added = true;
+      }
+    }
+    if (!added) break;
+  }
+
+  const keptIds = new Set<string>();
+  let used = 0;
+  for (const item of coverage) {
+    const trimmed = { ...item.candidate, body: item.candidate.body.slice(0, tightest) };
+    const cost = approxTokens(JSON.stringify(trimmed));
+    if (used + cost > REVIEW_TOKEN_BUDGET) break;
+    used += cost;
+    keptIds.add(item.candidate.id);
+  }
+  const candidates = all
+    .filter((c) => keptIds.has(c.id))
+    .map((c) => ({ ...c, body: c.body.slice(0, tightest) }));
+  return { candidates, trimmedFrom: candidates.length < all.length ? all.length : null };
 }
 
 /**
@@ -262,14 +364,15 @@ export async function qualifyingLocales(
   source: CurationSource = "as_seen",
 ): Promise<string[]> {
   const rows = await prisma.review.findMany({
-    where: { shop, productId: String(productId), status: "PUBLISHED" },
+    // Same filter as buildCandidates: qualification must be decided on the
+    // rows the agent will actually receive, never on synthetic QA rows.
+    where: { shop, productId: String(productId), status: "PUBLISHED", isSynthetic: false },
     orderBy: { createdAt: "desc" },
-    take: MAX_CANDIDATES,
     select: { id: true, language: true },
   });
   // Fewer than MIN_ORDER reviews can never produce a curation — qualifying
   // nothing here keeps guaranteed no_reviews failures out of the queue, the
-  // daily cap, and the failures banner.
+  // spend ceiling, and the failures banner.
   if (rows.length < MIN_ORDER) return [];
   if (source === "all_translated") return [...SHOP_LOCALES];
   const translations = await prisma.translationCache.findMany({
@@ -295,27 +398,56 @@ export async function qualifyingLocales(
 
 export type CurationResult =
   | { status: "ok"; ordered: number }
-  | { status: "no_ai" | "no_reviews" | "no_product" | "failed" };
+  | { status: "no_ai" | "no_reviews" | "no_product" | "failed" | "over_budget" };
 
-export async function curateProductLocale(
+/**
+ * v1.20 (SPEC-1.20 §4): the payload half of a curation run, shared by the
+ * instant path and the Message Batches path so both send byte-identical
+ * requests. Returns null with a status when the pair cannot be run at all.
+ */
+export interface CurationRequest {
+  system: string;
+  userContent: string;
+  model: string;
+  maxTokens: number;
+  targetLocale: string;
+  candidates: CurationCandidate[];
+  trimmedFrom: number | null;
+}
+
+/**
+ * Memo for one bulk operation. The product description and overview are the
+ * SAME for all 17 locales, so without this a 40-product "Curate all" makes 680
+ * identical Shopify Admin calls — slow enough to time the action out and
+ * enough to hit Shopify's rate limit. Callers that loop over pairs create one
+ * and pass it through; single runs pass nothing and fetch normally.
+ */
+export type ProductContextCache = Map<string, ProductContext>;
+
+export async function buildCurationRequest(
   shop: string,
   admin: AdminClient,
   productId: string,
   locale: string,
-): Promise<CurationResult> {
+  options: { translate?: boolean; contextCache?: ProductContextCache } = {},
+): Promise<{ status: "ok"; request: CurationRequest } | { status: "no_ai" | "no_reviews" | "no_product" }> {
   const targetLocale = (SHOP_LOCALES as readonly string[]).includes(locale) ? locale : "en";
   const settings = await getSettings(shop);
   if (settings.aiProvider !== "anthropic" || !settings.anthropicApiKey) return { status: "no_ai" };
 
-  const { candidates } = await buildCandidates(
+  const { candidates, trimmedFrom } = await buildCandidates(
     shop,
     productId,
     targetLocale,
     asCurationSource(settings.curationSource),
+    { translate: options.translate !== false },
   );
   if (candidates.length < MIN_ORDER) return { status: "no_reviews" };
 
-  const context = await fetchProductContext(admin, productId, settings.curationOverviewField);
+  const cached = options.contextCache?.get(productId);
+  const context =
+    cached ?? (await fetchProductContext(admin, productId, settings.curationOverviewField));
+  if (!cached) options.contextCache?.set(productId, context);
   // A real product always has a title; a fully empty context means the Admin
   // API call failed (product deleted, transient error, or the app was
   // uninstalled while the task sat in the queue) — never call the model
@@ -346,18 +478,75 @@ export async function curateProductLocale(
     (guidance ? `Merchant guidance:\n${guidance}\n\n` : "") +
     `Reviews (${candidates.length}, one JSON object per line):\n${lines}`;
 
-  const raw = await callClaude(
-    settings.anthropicApiKey,
-    settings.aiModel,
-    curationPromptFor(targetLocale),
-    userContent,
-    2500,
-  );
-  if (!raw) return { status: "failed" };
+  return {
+    status: "ok",
+    request: {
+      system: curationPromptFor(targetLocale),
+      userContent,
+      model: settings.aiModel,
+      maxTokens: 2500,
+      targetLocale,
+      candidates,
+      trimmedFrom: trimmedFrom ?? null,
+    },
+  };
+}
 
-  const parsed = extractJson(raw) as { order?: unknown; rationale?: unknown } | null;
+/**
+ * v1.20: rebuilds ONLY what validating a response needs — the candidate id set
+ * and the trim figure. Used by the batch apply path, which runs up to 24 hours
+ * after submission: it must not depend on the Shopify Admin API (a transient
+ * Admin failure there would throw away a result the merchant has already paid
+ * for) and must not re-translate (that would bill again for text the run
+ * already has).
+ */
+export async function rebuildCurationTarget(
+  shop: string,
+  productId: string,
+  locale: string,
+): Promise<{ status: "ok"; request: CurationRequest } | { status: "no_reviews" }> {
+  const targetLocale = (SHOP_LOCALES as readonly string[]).includes(locale) ? locale : "en";
+  const settings = await getSettings(shop);
+  const { candidates, trimmedFrom } = await buildCandidates(
+    shop,
+    productId,
+    targetLocale,
+    asCurationSource(settings.curationSource),
+    { translate: false },
+  );
+  if (candidates.length < MIN_ORDER) return { status: "no_reviews" };
+  return {
+    status: "ok",
+    request: {
+      // Prompt and product context are irrelevant once the response exists;
+      // only candidates/targetLocale/model/trimmedFrom are read from here.
+      system: "",
+      userContent: "",
+      model: settings.aiModel,
+      maxTokens: 0,
+      targetLocale,
+      candidates,
+      trimmedFrom: trimmedFrom ?? null,
+    },
+  };
+}
+
+/**
+ * v1.20: the validate-and-store half, shared by instant and batch results —
+ * so a batch-produced curation is subject to exactly the same id validation,
+ * MIN_ORDER floor and dash scrub as an instant one.
+ */
+export async function applyCurationResponse(
+  shop: string,
+  productId: string,
+  request: CurationRequest,
+  rawText: string,
+  /** Batch results override these with the figures from SUBMIT time. */
+  options: { sourceCount?: number; reviewCount?: number } = {},
+): Promise<CurationResult> {
+  const parsed = extractJson(rawText) as { order?: unknown; rationale?: unknown } | null;
   if (!parsed) return { status: "failed" };
-  const validIds = new Set(candidates.map((c) => c.id));
+  const validIds = new Set(request.candidates.map((c) => c.id));
   const order: string[] = [];
   if (Array.isArray(parsed.order)) {
     for (const id of parsed.order) {
@@ -368,36 +557,98 @@ export async function curateProductLocale(
   if (order.length < MIN_ORDER) return { status: "failed" };
   const rationale = scrubDashes(
     typeof parsed.rationale === "string" ? parsed.rationale.trim().slice(0, 2000) : "",
-    targetLocale,
+    request.targetLocale,
   );
 
+  const row = {
+    orderedIds: JSON.stringify(order),
+    rationale,
+    model: request.model,
+    // Both numbers must come from the SAME moment, or a batch applied after a
+    // review was deleted would show a trim ("read 7 of 8") that never
+    // happened.
+    reviewCount: options.reviewCount ?? request.candidates.length,
+    // The staleness anchor is what was PUBLISHED, not what was read. Without
+    // the distinction a trimmed run is stale the instant it completes, and
+    // the auto-refresh sweep re-bills the biggest product every window.
+    sourceCount:
+      options.sourceCount ?? request.trimmedFrom ?? request.candidates.length,
+  };
   await prisma.aiCuration.upsert({
-    where: { shop_productId_locale: { shop, productId: String(productId), locale: targetLocale } },
-    update: {
-      orderedIds: JSON.stringify(order),
-      rationale,
-      model: settings.aiModel,
-      reviewCount: candidates.length,
+    where: {
+      shop_productId_locale: { shop, productId: String(productId), locale: request.targetLocale },
     },
-    create: {
-      shop,
-      productId: String(productId),
-      locale: targetLocale,
-      orderedIds: JSON.stringify(order),
-      rationale,
-      model: settings.aiModel,
-      reviewCount: candidates.length,
-    },
+    update: row,
+    create: { shop, productId: String(productId), locale: request.targetLocale, ...row },
   });
   return { status: "ok", ordered: order.length };
 }
+
+export async function curateProductLocale(
+  shop: string,
+  admin: AdminClient,
+  productId: string,
+  locale: string,
+): Promise<CurationResult> {
+  // Check the ceiling BEFORE assembling. Assembly can translate, and
+  // translation is billed to the same key — so a shop already at its limit
+  // must be turned away here, not after it has paid for translations it will
+  // not get to use. The precise check against this run's own cost follows.
+  const preflight = await checkBudget(shop, 0);
+  if (!preflight.ok) return { status: "over_budget" };
+
+  const built = await buildCurationRequest(shop, admin, productId, locale);
+  if (built.status !== "ok") return { status: built.status };
+  const { request } = built;
+
+  const settings = await getSettings(shop);
+  const apiKey = settings.anthropicApiKey;
+  if (!apiKey) return { status: "no_ai" };
+
+  // v1.20 (SPEC-1.20 §3): refuse rather than overspend. The estimate uses the
+  // measured payload; actual spend is recorded from billed usage below.
+  const estimated = costUsd({
+    model: request.model,
+    inputTokens: approxTokens(request.system + request.userContent),
+    outputTokens: OUTPUT_TOKENS_PER_CALL,
+  });
+  const budget = await checkBudget(shop, estimated ?? 0);
+  if (!budget.ok) return { status: "over_budget" };
+
+  const result = await callClaudeWithUsage(
+    apiKey,
+    request.model,
+    request.system,
+    request.userContent,
+    request.maxTokens,
+  );
+  if (!result) return { status: "failed" };
+  await recordSpend(shop, request.model, result.usage, false);
+  if (!result.text) return { status: "failed" };
+
+  return applyCurationResponse(shop, productId, request, result.text);
+}
+
+
+/* ------------------------------------------------------------------------- *
+ * Spend ceiling (SPEC-1.20 §3) — replaces the old 300/day cap
+ * ------------------------------------------------------------------------- */
+
+/** Measured average output of a curation call (order + rationale). */
+export const OUTPUT_TOKENS_PER_CALL = 900;
+
+/**
+ * The ledger itself lives in spend.server so translate.server can record its
+ * own billed usage without a circular import. Re-exported here because every
+ * curation caller already reaches for it through this module.
+ */
+export { checkBudget, recordSpend };
 
 /* ------------------------------------------------------------------------- *
  * Queue (admin-triggered only)
  * ------------------------------------------------------------------------- */
 
 const debounceMap = new Map<string, number>();
-const dailyMap = new Map<string, { day: string; count: number }>();
 let inFlight = 0;
 const queue: Array<{ shop: string; admin: AdminClient; productId: string; locale: string }> = [];
 /** Keys currently queued or in flight — blocks double-queueing a pair that
@@ -412,29 +663,7 @@ export function lastCurationAttempt(shop: string, productId: string, locale: str
   return lastAttemptMap.get(`${shop}|${productId}|${locale}`) ?? 0;
 }
 
-/** Non-incrementing view of today's remaining cap — the sweep short-circuits
- * on 0 so a cap-starved backlog costs no qualification queries. */
-export function remainingDailyCap(shop: string): number {
-  const day = new Date().toISOString().slice(0, 10);
-  const entry = dailyMap.get(shop);
-  if (!entry || entry.day !== day) return CURATION_DAILY_CAP;
-  return Math.max(0, CURATION_DAILY_CAP - entry.count);
-}
 
-function underDailyCap(shop: string): boolean {
-  const day = new Date().toISOString().slice(0, 10);
-  const entry = dailyMap.get(shop);
-  if (!entry || entry.day !== day) {
-    if (dailyMap.size > 200) {
-      for (const [k, v] of dailyMap) if (v.day !== day) dailyMap.delete(k);
-    }
-    dailyMap.set(shop, { day, count: 1 });
-    return true;
-  }
-  if (entry.count >= CURATION_DAILY_CAP) return false;
-  entry.count += 1;
-  return true;
-}
 
 /** Recent non-ok runs per shop so the admin card can show them (in-process). */
 const recentFailures = new Map<string, Array<{ productId: string; locale: string; status: string; at: number }>>();
@@ -456,6 +685,21 @@ function clearFailure(shop: string, productId: string, locale: string): void {
   const next = list.filter((f) => !(f.productId === productId && f.locale === locale));
   if (next.length > 0) recentFailures.set(shop, next);
   else recentFailures.delete(shop);
+}
+
+/**
+ * v1.20: lets the batch path record a failed (product, locale) into the same
+ * recent-failures list instant runs use, and clear its debounce stamp so the
+ * merchant can retry immediately — identical semantics to an instant failure.
+ */
+export function recordExternalFailure(
+  shop: string,
+  productId: string,
+  locale: string,
+  status: string,
+): void {
+  recordFailure(shop, productId, locale, status);
+  debounceMap.delete(`${shop}|${productId}|${locale}`);
 }
 
 export function recentCurationFailures(shop: string) {
@@ -496,7 +740,10 @@ function pump(): void {
 export interface QueueSummary {
   queued: number;
   skippedDebounce: number;
+  /** Pairs not queued because the shop's spend ceiling is already reached. */
   skippedCap: number;
+  /** Set when the ceiling blocked the run, so the admin can say so exactly. */
+  budget?: { spent: number; ceiling: number };
   products: number;
   /** false ⇒ no Claude key configured; nothing was queued. */
   aiReady: boolean;
@@ -522,16 +769,22 @@ export async function queueCuration(
   if (!ids || ids.length === 0) {
     const groups = await prisma.review.groupBy({
       by: ["productId"],
-      where: { shop, status: "PUBLISHED" },
+      // v1.20: same filter as the estimate and the batch path, so "Run now"
+      // and "Run in background" always cover the identical product set.
+      where: { shop, status: "PUBLISHED", isSynthetic: false },
     });
     ids = groups.map((g) => g.productId);
   }
   const summary: QueueSummary = { queued: 0, skippedDebounce: 0, skippedCap: 0, products: ids.length, aiReady: true };
+  const budget = await checkBudget(shop, 0);
+  if (!budget.ok && budget.ceiling != null) {
+    summary.budget = { spent: budget.spent, ceiling: budget.ceiling };
+  }
   const source = asCurationSource(settings.curationSource);
   const now = Date.now();
   for (const productId of ids) {
     const locales = await qualifyingLocales(shop, productId, source);
-    enqueuePairs(shop, admin, locales.map((locale) => ({ productId, locale })), summary, now);
+    enqueuePairs(shop, admin, locales.map((locale) => ({ productId, locale })), summary, now, !budget.ok);
   }
   pump();
   return summary;
@@ -544,6 +797,7 @@ function enqueuePairs(
   pairs: Array<{ productId: string; locale: string }>,
   summary: QueueSummary,
   now: number,
+  budgetExhausted = false,
 ): void {
   for (const { productId, locale } of pairs) {
     if (!(SHOP_LOCALES as readonly string[]).includes(locale)) continue;
@@ -554,7 +808,7 @@ function enqueuePairs(
       summary.skippedDebounce += 1;
       continue;
     }
-    if (!underDailyCap(shop)) {
+    if (budgetExhausted) {
       summary.skippedCap += 1;
       continue;
     }
@@ -598,7 +852,11 @@ export async function queueCurationPairs(
     products: new Set(pairs.map((p) => p.productId)).size,
     aiReady: true,
   };
-  enqueuePairs(shop, admin, pairs, summary, Date.now());
+  const budget = await checkBudget(shop, 0);
+  if (!budget.ok && budget.ceiling != null) {
+    summary.budget = { spent: budget.spent, ceiling: budget.ceiling };
+  }
+  enqueuePairs(shop, admin, pairs, summary, Date.now(), !budget.ok);
   pump();
   return summary;
 }
@@ -611,7 +869,9 @@ export async function curationStatus(shop: string) {
   });
   const counts = await prisma.review.groupBy({
     by: ["productId"],
-    where: { shop, status: "PUBLISHED" },
+    // Must match buildCandidates' filter exactly: it excludes synthetic rows,
+    // so counting them here would mark every such product permanently stale.
+    where: { shop, status: "PUBLISHED", isSynthetic: false },
     _count: { _all: true },
     _max: { createdAt: true },
   });
@@ -629,20 +889,24 @@ export async function curationStatus(shop: string) {
     const stats = statsByProduct.get(row.productId);
     const publishedNow = stats?.count ?? 0;
     const newest = stats?.newest ?? null;
+    // Rows written before 1.20.0 have no sourceCount; for them the count the
+    // agent read IS the count that was published, so it is the right anchor.
+    const sourceCount = row.sourceCount || row.reviewCount;
     return {
       productId: row.productId,
       locale: row.locale,
       ordered,
       reviewCount: row.reviewCount,
+      // How many were published when this ran — non-null only when the
+      // payload had to be trimmed, i.e. when the agent read fewer than all.
+      readOf: sourceCount > row.reviewCount ? sourceCount : null,
       publishedNow,
-      // Two staleness signals: the published count moved against the stored
-      // count (compared under the MAX_CANDIDATES cap, so a product with more
-      // than 60 reviews is not permanently stale), OR any review was
-      // published after this curation ran (catches new arrivals past the
-      // cap, where the count alone stays pinned at 60). Deletions past the
-      // cap remain deliberately quiet.
+      // v1.20: no candidate cap any more, so the published count compares
+      // directly — against what was PUBLISHED at run time, so a trimmed run
+      // is not born stale. Either signal marks the row stale: the count
+      // moved, or a review was published after this curation ran.
       stale:
-        Math.min(publishedNow, MAX_CANDIDATES) !== row.reviewCount ||
+        publishedNow !== sourceCount ||
         (newest !== null && newest.getTime() > row.updatedAt.getTime()),
       rationale: row.rationale,
       model: row.model,

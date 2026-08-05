@@ -373,3 +373,65 @@ console.log(`Locale check passed: ${filesChecked} file(s) OK.`);
   }
   console.log("HTML-entity check passed: no entities in locale strings.");
 }
+
+/* ------------------------------------------------------------------------- *
+ * Schema `t:` key guard (v1.19.2 — deploy audit).
+ *
+ * A block's {% schema %} may reference labels as "t:cellexia.x.y". Shopify
+ * resolves those against the extension's *.schema.json locale files, and a
+ * key that exists in NONE of them renders as the RAW KEY in the merchant's
+ * theme editor. Cross-locale parity (checked above) cannot catch it: if the
+ * key is missing everywhere, every file agrees. That is exactly how the app
+ * embed's "Show the review Q&A box" toggle shipped unlabeled for two
+ * releases. This closes the gap.
+ * ------------------------------------------------------------------------- */
+{
+  const offenders = [];
+  for (const entry of extensionDirs) {
+    const extension = entry.name;
+    const blocksDir = path.join(EXTENSIONS_DIR, extension, "blocks");
+    const localesDir = path.join(EXTENSIONS_DIR, extension, "locales");
+    if (!fs.existsSync(blocksDir) || !fs.existsSync(localesDir)) continue;
+
+    const schemaLocales = new Map();
+    for (const file of fs.readdirSync(localesDir).filter((f) => f.endsWith(".schema.json"))) {
+      try {
+        const flat = {};
+        const walk = (node, prefix) => {
+          for (const [key, value] of Object.entries(node)) {
+            if (value && typeof value === "object") walk(value, `${prefix}${key}.`);
+            else flat[`${prefix}${key}`] = value;
+          }
+        };
+        walk(JSON.parse(fs.readFileSync(path.join(localesDir, file), "utf8")), "");
+        schemaLocales.set(file, flat);
+      } catch {
+        /* parse errors already reported above */
+      }
+    }
+
+    for (const file of fs.readdirSync(blocksDir).filter((f) => f.endsWith(".liquid"))) {
+      const source = fs.readFileSync(path.join(blocksDir, file), "utf8");
+      const schemaBlock = /\{%\s*schema\s*%\}([\s\S]*?)\{%\s*endschema\s*%\}/.exec(source);
+      if (!schemaBlock) continue;
+      for (const match of schemaBlock[1].matchAll(/"t:([^"]+)"/g)) {
+        const key = match[1];
+        const missing = [...schemaLocales.entries()]
+          .filter(([, flat]) => !(key in flat))
+          .map(([name]) => name.replace(".schema.json", ""));
+        if (missing.length > 0) {
+          offenders.push(
+            `blocks/${file}: "t:${key}" missing in ${missing.length}/${schemaLocales.size} schema locales (${missing.slice(0, 4).join(", ")}${missing.length > 4 ? ", …" : ""})`,
+          );
+        }
+      }
+    }
+  }
+  if (offenders.length > 0) {
+    console.error("");
+    console.error("Schema t: key check failed — the theme editor would show raw keys:");
+    for (const line of offenders.slice(0, 20)) console.error(`  - ${line}`);
+    process.exit(1);
+  }
+  console.log("Schema t: key check passed: every block setting label resolves.");
+}

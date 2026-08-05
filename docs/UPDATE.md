@@ -42,6 +42,14 @@ npm run deploy
 Order matters: deploy the backend and the extension in the same maintenance window — the
 extension's JS talks to the backend's JSON API and the two are versioned together.
 
+**Optional scope since 1.19.0 — `write_content`**: the **Reviews page** screen can create
+`/pages/cellexia-reviews` for you with one click. The Admin API's `pageCreate` needs the
+`write_content` scope; without it the app detects the missing permission and shows the
+manual "create the page yourself" steps instead (30 seconds, same result). To grant it,
+add `write_content` to the `scopes` line in `shopify.app.toml` (and the `SCOPES` env var),
+run `shopify app deploy`, then open the app once in the Shopify admin and approve the new
+permission prompt. Nothing else in the app uses this scope.
+
 **Optional scope since 1.14.0 — `read_markets`**: the "go live in selected markets" picker
 can list your Shopify Markets by name. That needs the `read_markets` access scope, which
 this app historically shipped without. To grant it: add `read_markets` to the `scopes` line

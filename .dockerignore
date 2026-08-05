@@ -9,10 +9,10 @@ dist
 .env
 .env.*
 !.env.example
-*.sqlite
-*.sqlite-journal
-*.log
-.DS_Store
+**/*.sqlite
+**/*.sqlite-journal
+**/*.log
+**/.DS_Store
 npm-debug.log
 Dockerfile
 .dockerignore

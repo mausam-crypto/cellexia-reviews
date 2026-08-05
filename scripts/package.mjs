@@ -120,6 +120,58 @@ for (const [rel, cap] of ASSET_BUDGETS) {
   }
 }
 
+// v1.19.1 — SHOPIFY PLATFORM LIMITS for theme app extensions. These are not
+// our budgets: exceeding any of them makes `shopify app deploy` REJECT the
+// extension, so they are hard release gates.
+//   - each locale file        <= 15 KB   (raised from 7 KB by Shopify)
+//   - all locale data summed  <= 256 KB
+//   - all Liquid summed       <= 100 KB
+//   - whole extension         <= 10 MB
+// https://shopify.dev/docs/apps/build/online-store/theme-app-extensions/configuration
+const EXT_DIR = path.join(ROOT, "extensions/cellexia-reviews");
+const KIB = 1024;
+const platformFailures = [];
+
+const localeFiles = fs
+  .readdirSync(path.join(EXT_DIR, "locales"))
+  .filter((f) => f.endsWith(".json"))
+  .map((f) => ({ rel: `locales/${f}`, size: fs.statSync(path.join(EXT_DIR, "locales", f)).size }));
+for (const { rel, size } of localeFiles) {
+  if (size > 15 * KIB) {
+    platformFailures.push(`${rel} is ${size.toLocaleString("en-US")} bytes (Shopify caps each locale file at 15 KB)`);
+  }
+}
+const localeTotal = localeFiles.reduce((sum, f) => sum + f.size, 0);
+if (localeTotal > 256 * KIB) {
+  platformFailures.push(
+    `locale data totals ${localeTotal.toLocaleString("en-US")} bytes (Shopify caps the total at 256 KB)`,
+  );
+}
+
+let liquidTotal = 0;
+for (const dir of ["blocks", "snippets"]) {
+  const abs = path.join(EXT_DIR, dir);
+  if (!fs.existsSync(abs)) continue;
+  for (const f of fs.readdirSync(abs)) {
+    if (f.endsWith(".liquid")) liquidTotal += fs.statSync(path.join(abs, f)).size;
+  }
+}
+if (liquidTotal > 100 * KIB) {
+  platformFailures.push(
+    `Liquid totals ${liquidTotal.toLocaleString("en-US")} bytes (Shopify caps the total at 100 KB)`,
+  );
+}
+
+if (platformFailures.length > 0) {
+  console.error("SHOPIFY EXTENSION LIMIT EXCEEDED — the app would fail to deploy:");
+  for (const line of platformFailures) console.error(`  - ${line}`);
+  process.exit(1);
+}
+console.log(
+  `  extension limits OK: largest locale ${Math.max(...localeFiles.map((f) => f.size)).toLocaleString("en-US")} B / 15 KB · ` +
+    `locales total ${(localeTotal / KIB).toFixed(1)} KB / 256 KB · Liquid ${(liquidTotal / KIB).toFixed(1)} KB / 100 KB`,
+);
+
 let fileCount = 0;
 for (const file of walk(ROOT)) {
   archive.file(file.abs, { name: `${TOP_FOLDER}/${file.rel}` });

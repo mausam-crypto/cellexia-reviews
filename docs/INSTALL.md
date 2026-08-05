@@ -11,8 +11,9 @@ What you are installing:
    **app proxy** so the storefront can call the backend.
 3. A **theme app extension** (deployed to Shopify by the CLI): an **app embed** that mounts the
    widget on product pages automatically and adds star badges to product cards site-wide
-   (works on every theme, one toggle), plus two **app blocks** for precise manual placement on
-   themes that support them. The merchant enables either — or both — in the theme editor.
+   (works on every theme, one toggle), plus four **app blocks** for precise manual placement on
+   themes that support them: the review widget, the star badge, the brand-wide "Overall
+   reviews" block, and the "Cellexia Reviews page" section (1.19.0). The merchant enables either — or both — in the theme editor.
 
 **Pre-flight — decide these five things before you start** (everything else follows mechanically):
 
@@ -47,7 +48,7 @@ If something fails at any step, §11 (Troubleshooting) maps every anticipated sy
 ## 2. Local setup and app creation
 
 ```bash
-cd cellexia-review-app-ok-ok   # repo root
+cd cellexia-reviews   # the folder the release ZIP extracts to
 npm install
 cp .env.example .env
 cp shopify.app.example.toml shopify.app.toml
@@ -104,7 +105,7 @@ Optional — an offline visual preview of the storefront widget (no Shopify at a
 | `SHOPIFY_API_KEY` | Yes | The app's Client ID. Partner Dashboard → Apps → your app → *Client credentials* (it is also written into `shopify.app.toml` as `client_id` by `npm run config:link`). |
 | `SHOPIFY_API_SECRET` | Yes | The app's Client secret, from the same page. Also used to verify app-proxy HMAC signatures — the storefront API returns 401 without it. |
 | `SHOPIFY_APP_URL` | Yes | Public HTTPS URL of the deployed backend, e.g. `https://cellexia-reviews.fly.dev`. No trailing slash. |
-| `SCOPES` | Yes | `read_orders,read_products,write_products,read_files,write_files` |
+| `SCOPES` | Yes | `read_orders,read_products,write_products,read_files,write_files,read_markets,write_content` |
 | `DATABASE_URL` | Only if you change the datasource (see §4) | e.g. `file:/data/production.sqlite` or a Postgres connection string. |
 | `CELLEXIA_ALLOW_UNSIGNED` | Never in production | `1` disables app-proxy signature verification. Local development/demo only. |
 | `CELLEXIA_CLIENT_IP_HEADER` | Optional | Name of a platform-guaranteed client-IP header used for rate-limit buckets, e.g. `fly-client-ip` (Fly.io), `true-client-ip` (Render), `cf-connecting-ip` (Cloudflare). Leave unset unless your platform sets one — trusting an arbitrary header would let clients spoof their IP. |
@@ -222,7 +223,7 @@ fly secrets set \
   SHOPIFY_API_KEY=<client id> \
   SHOPIFY_API_SECRET=<client secret> \
   SHOPIFY_APP_URL=https://<app-name>.fly.dev \
-  SCOPES=read_orders,read_products,write_products,read_files,write_files \
+  SCOPES=read_orders,read_products,write_products,read_files,write_files,read_markets,write_content \
   DATABASE_URL=file:/data/production.sqlite
 
 fly deploy
@@ -261,7 +262,7 @@ redirect_urls = [
 ]
 
 [access_scopes]
-scopes = "read_orders,read_products,write_products,read_files,write_files"
+scopes = "read_orders,read_products,write_products,read_files,write_files,read_markets,write_content"
 
 [app_proxy]
 url = "https://YOUR-APP-URL/proxy"
@@ -301,7 +302,7 @@ Confirm the release when prompted. Re-run `npm run deploy` any time you change
    enter the merchant's store domain (this app is a single-store custom app).
 2. Open the generated install link as the store owner and click **Install**.
 3. Approve the requested scopes: `read_orders`, `read_products`, `write_products`,
-   `read_files`, `write_files`.
+   `read_files`, `write_files`, `read_markets`, `write_content`.
 4. The embedded admin opens. On first load the app registers its webhooks, creates the
    `cellexia` product metafield definitions, syncs the store's settings (including the preview
    token) to shop metafields, and detects its own app-proxy subpath — all automatically.
@@ -396,6 +397,18 @@ carries it). On the real storefront, block and embed alike stay invisible until 
 
 ---
 
+### 8c. The "Cellexia Reviews" page (1.19.0, optional but recommended)
+
+A dedicated SEO page at `/pages/cellexia-reviews` that search engines and AI assistants can
+read. It is a separate app section, so it does not affect the widget or the badges.
+
+Full walkthrough with screenshots of every field: **docs/CONFIGURATION.md §7b**. In short,
+from the app's **Reviews page** screen: **create the page** (one click — needs the
+`write_content` scope, otherwise the screen shows the 30-second manual steps), **add the
+section on its own page template** in the theme editor (the checklist spells out how to avoid
+putting it on every page), **generate the analysis**, then **publish the page data**. Step 5 of
+the same checklist covers robots.txt for AI crawlers and adding the page to your menus.
+
 ## 9. Preview, then go live
 
 Adding the blocks changed nothing for visitors yet: the store is still **Not live**, and while
@@ -426,6 +439,14 @@ with **Settings → Data → Regenerate preview link**. Merchant-facing detail:
 Work through every line; each has an unambiguous pass signal. **Start with the storefront
 connection test** — it covers, in one click, most of what the rest of this list checks by hand.
 
+- [ ] **Reviews page renders** *(only if you set it up in §8c)*: open
+      `https://<store-domain>/pages/cellexia-reviews` in a private window. Pass signal: the
+      heading "Cellexia Reviews" with your real average and review count in the first
+      paragraph, the rating breakdown, and review cards — all present with JavaScript
+      disabled (that is what makes it crawlable).
+- [ ] **Review archive renders** *(same)*: click "Browse all N Cellexia reviews" at the bottom
+      of that page. Pass signal: a themed page of reviews with numbered page links, not a
+      JSON response or a 404.
 - [ ] **Storefront connection test passes** *(do this first)*: Shopify admin → Apps →
       Cellexia Reviews → Dashboard → the **Storefront connection** card at the top →
       **Run test again**. Pass signal: the banner reads **"Storefront connection verified"**.
@@ -528,7 +549,7 @@ extension, review data, metafield sync, database, live state) and prints the fix
 | `npm install` fails on engine warnings, or `npm run build` dies with a `[vite:css-post] css content … was not found` error | Wrong Node version. Use Node 20 or 22 LTS (`nvm use` reads the included `.nvmrc`). Node 23.2.0 specifically is broken — any other 23.3+ works but LTS is safer. |
 | `npm ci` fails with `EUSAGE … requires package-lock.json` inside Docker | You deleted or regenerated the repo without `package-lock.json`. Restore it from the ZIP — the Dockerfile depends on it. |
 | `npm run dev` asks to create an app, then errors on organization selection | Your Partner account has no development store or you picked the wrong org. Create a development store first (Partner Dashboard → Stores). |
-| `prisma migrate deploy` says "No migration found" | You are not running it from the repo root, or `prisma/migrations/` was not copied. The ZIP contains 6 migration folders — verify they exist before deploying. |
+| `prisma migrate deploy` says "No migration found" | You are not running it from the repo root, or `prisma/migrations/` was not copied. Verify `prisma/migrations/` exists and contains every folder present in the release ZIP. |
 | Container boots then exits immediately; logs show a Prisma connection error | `DATABASE_URL` points at a path/DB that doesn't exist in the container. SQLite: the volume isn't mounted at `/data` (§5), or you forgot `DATABASE_URL=file:/data/production.sqlite` after switching the datasource to `env("DATABASE_URL")`. |
 | Deploy works but everything resets after each redeploy (reviews vanish) | SQLite is on the container's ephemeral disk, not a volume. §4 Option A — mount a persistent volume and point `DATABASE_URL` at it. |
 

@@ -8,7 +8,7 @@ One page for the developer taking delivery of Cellexia Reviews. Read this first,
 A complete, self-hosted **custom Shopify review app** for the Cellexia store:
 
 - **This repository** (or its release ZIP `dist/cellexia-reviews-v<version>.zip`): a Remix
-  backend (official Shopify app template structure), a theme app extension with two storefront
+  backend (official Shopify app template structure), a theme app extension with four storefront
   app blocks and an app embed, 17 storefront languages, Prisma database schema, Dockerfile,
   docs.
 - **Storefront**: Amazon-style review widget + star badge, added as app blocks in the theme

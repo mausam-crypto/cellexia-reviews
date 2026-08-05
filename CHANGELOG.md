@@ -4,6 +4,71 @@ All notable changes to Cellexia Reviews are documented here. The version number 
 `package.json` and stamped into the release ZIP built by `npm run package`
 (`dist/cellexia-reviews-v<version>.zip`).
 
+## 1.19.2 — 2026-08-03
+
+### Fixed
+
+- **Deployment audit fixes.** A full pre-deployment review of the app, the theme extension,
+  the database migrations and the handover docs found and fixed:
+  - **Webhook API version mismatch**: `shopify.app.toml` declared webhooks at API version
+    2025-01 while the app itself calls 2025-07, so webhook payloads could arrive shaped for a
+    different version than the code expects. Both are now 2025-07.
+  - **The "Create the page" button needed a permission that was never requested.** Creating
+    `/pages/cellexia-reviews` from the admin uses Shopify's `pageCreate`, which requires the
+    `write_content` scope. It is now requested (and documented as optional — without it the
+    app still shows the manual steps). Adding a permission means approving the app once more
+    after deploying.
+  - **An app-embed setting had no label in any language.** The "Show the review Q&A box"
+    toggle (added in 1.16.0) referenced translation keys that existed in none of the 17
+    files, so the theme editor showed a raw key instead of a label. Labels and help text
+    added in all 17 languages.
+  - **Silent data loss on redeploy is now impossible to miss.** The deploy walkthroughs hand
+    you a `DATABASE_URL`, but Prisma ignores it until the database section of
+    `prisma/schema.prisma` is switched to read it (INSTALL.md §4) — the app would run fine and
+    lose every review on the next redeploy. Startup now refuses to boot with a precise
+    explanation when `DATABASE_URL` is set but ignored.
+  - **The dev database could be baked into the Docker image**: `.dockerignore` used `*.sqlite`,
+    which does not match `prisma/dev.sqlite` (Docker patterns do not cross `/`). Fixed, along
+    with the same latent issue for `*.log` and `.DS_Store`.
+  - **Documentation corrections**: the permission list was stale in five places, the install
+    steps told you to `cd` into a folder the ZIP never creates, the extension was described as
+    having two app blocks (it has four), the troubleshooting table quoted a migration count
+    less than half the real number, and the 1.19.0 reviews page was missing from both the
+    install steps and the final verification checklist.
+
+### Added
+
+- **Two more release gates.** Packaging/verification now fails if a block setting references a
+  translation key that exists in no locale file (the exact defect above, which cross-language
+  parity checks cannot catch), and startup blocks the ignored-`DATABASE_URL` case described
+  above.
+
+## 1.19.1 — 2026-08-02
+
+### Fixed
+
+- **The extension now deploys: locale data was over Shopify's platform limits.** Shopify
+  caps each theme-app-extension locale file at 15 KB and ALL locale data at 256 KB
+  combined; after 1.19.0 the Greek, Arabic and Japanese files were individually over the
+  per-file cap and the total had reached 325 KB, so `shopify app deploy` refused the
+  extension. Locale files are now stored compactly (identical content, no wasted
+  whitespace) and the reviews page's own labels are written directly into the section
+  instead of being duplicated across 17 translation files. Largest file is now 12.5 KB
+  and the total 202 KB, leaving real headroom on both limits. Nothing else changed for
+  shoppers, and every other translation in the app is untouched.
+- **Note on the reviews page's language.** Its headings and labels are now English, which
+  matches the page's purpose (ranking for the English search "cellexia reviews") and the
+  AI analysis, which was already written in English by design. Reviews themselves still
+  appear in the language they were written in, and the rest of the app remains fully
+  translated in all 17 languages.
+
+### Added
+
+- **Release gates for Shopify's platform limits.** Packaging now fails loudly if any
+  locale file exceeds 15 KB, if total locale data exceeds 256 KB, or if the extension's
+  Liquid exceeds 100 KB, so a future update can never again produce a ZIP that cannot be
+  deployed.
+
 ## 1.19.0 — 2026-08-02
 
 ### Added

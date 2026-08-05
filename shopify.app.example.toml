@@ -22,7 +22,17 @@ include_config_on_deploy = true
 # Shopify Markets by name for the "go live in selected markets" picker.
 # Without it the picker still works via detected/manual market handles.
 # Removing it from this line is safe.
-scopes = "read_orders,read_products,write_products,read_files,write_files,read_markets"
+#
+# write_content is OPTIONAL (since 1.19.0): it lets the "Reviews page" screen
+# CREATE /pages/cellexia-reviews for you with one click (Admin API pageCreate
+# requires write_content or write_online_store_pages). Without it the app
+# detects the missing permission and shows the 30-second manual steps
+# instead — nothing else in the app uses it.
+#
+# NOTE: changing this line changes the app's permissions, so Shopify asks the
+# merchant to approve the app again on the next install/open. Deploy the app,
+# then open it once in the Shopify admin and accept the prompt.
+scopes = "read_orders,read_products,write_products,read_files,write_files,read_markets,write_content"
 
 [auth]
 redirect_urls = [
@@ -32,7 +42,11 @@ redirect_urls = [
 ]
 
 [webhooks]
-api_version = "2025-01"
+# Must match the Admin API version the app's runtime client uses
+# (app/shopify.server.ts pins LATEST_API_VERSION from @shopify/shopify-api,
+# which is 2025-07 for the version in package.json). A mismatch means webhook
+# payloads arrive shaped for a different version than the code expects.
+api_version = "2025-07"
 
   [[webhooks.subscriptions]]
   topics = [ "app/uninstalled" ]

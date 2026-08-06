@@ -110,7 +110,10 @@ archive.pipe(output);
 // v1.16: JS 128→132 KiB + CSS 60→64 KiB for the review Q&A box and the
 // Amazon summary polish (recorded in CHANGELOG).
 const ASSET_BUDGETS = [
-  ["extensions/cellexia-reviews/assets/cellexia-reviews.js", 135168],
+  // Raised 132k→137k for v1.22's card badge position feature (price finder +
+  // position resolution). Raise this ONLY for a deliberate feature, never to
+  // absorb drift — that is the whole point of the gate.
+  ["extensions/cellexia-reviews/assets/cellexia-reviews.js", 140288],
   ["extensions/cellexia-reviews/assets/cellexia-reviews.css", 65536],
   // v1.19 (SPEC-1.19 §9): the brand reviews page's own standalone assets.
   ["extensions/cellexia-reviews/assets/cellexia-reviews-page.js", 49152],

@@ -2704,6 +2704,44 @@ function cardTagline(card, titleEl) {
  }
  return null;
 }
+/* v1.22 card_badge_position=under_price: the card's price container. The
+   OUTERMOST matching node wins (themes nest span.money inside div.price and
+   the badge belongs after the whole price block, sale + compare-at). Prefers
+   a node AFTER the title; none ⇒ null (caller falls back, never no badge). */
+function cardPrice(card, titleEl) {
+ if (!card) return null;
+ var list;
+ try { list = card.querySelectorAll('[class*="price"],.money'); } catch (e) { return null; }
+ /* A candidate must look like a PRICE, not merely price-adjacent: sale pills
+    ("-20%", class price-badge), unit prices and compare-at labels all carry
+    price-ish classes and digits. And it must be VISIBLE: themes render the
+    price twice for breakpoints, and anchoring the badge inside the hidden
+    copy shows it on one viewport and not the other. */
+ function priceOk(n) {
+  var cls = String(n.className || "");
+  if (/badge|label|flash|save|discount|unit|compare/i.test(cls)) return false;
+  var txt = (n.textContent || "").trim();
+  if (!/[\d\u0660-\u0669\u06F0-\u06F9]/.test(txt)) return false;
+  if (/^[\u2212\u2013-]?\s*[\d\u0660-\u0669\u06F0-\u06F9]+\s*%$/.test(txt)) return false;
+  return !(n.offsetParent === null && !n.getClientRects().length);
+ }
+ var best = null;
+ for (var i = 0; i < list.length; i++) {
+  var n = list[i];
+  try {
+   if (n.closest(".cx") || !priceOk(n)) continue;
+   var top = n, par = n.parentElement;
+   while (par && par !== card && (par.matches('[class*="price"]') || par.matches(".money")) &&
+    !(titleEl && par.contains(titleEl))) {
+    top = par; par = par.parentElement;
+   }
+   if (!priceOk(top)) continue;
+   if (titleEl && (titleEl.compareDocumentPosition(top) & 4)) return top;
+   if (!best) best = top;
+  } catch (e) {}
+ }
+ return best;
+}
 /* v1.10 (SPEC-1.10 §1) pdp_badge_position=under_tagline: .pdp__blurb →
    .product__subtitle → first <p> sibling after the title; none ⇒ under_title
    (never fail). Elements FOLLOWING the title in document order win. */
@@ -2922,10 +2960,15 @@ function initBadges(cfgE, I) {
     if (en.card && en.card.querySelector(".cx-badge-inline--card")) continue;
     var b = buildInlineBadge(Number(stats.average) || 0, Number(stats.count) || 0, s.badge_style, cfgE.skin, I, null);
     b.className += " cx-badge-inline--card";
-    // v1.16.1 fix: the position setting applies to CARD badges too — under
-    // the card's tagline when chosen (missing tagline ⇒ under the title).
+    // v1.22: cards have their own position setting; "inherit" (the default)
+    // follows the product-page one — byte-identical to the old behavior.
+    var pos = s.card_badge_position;
+    if (!pos || pos === "inherit") {
+     pos = s.pdp_badge_position === "under_tagline" ? "under_tagline" : "under_title";
+    }
     var anchor = tEl;
-    if (s.pdp_badge_position === "under_tagline") anchor = cardTagline(en.card, tEl) || tEl;
+    if (pos === "under_price") anchor = cardPrice(en.card, tEl) || cardTagline(en.card, tEl) || tEl;
+    else if (pos === "under_tagline") anchor = cardTagline(en.card, tEl) || tEl;
     insertAfter(b, anchor);
    } catch (e) { en.done = true; }
   }

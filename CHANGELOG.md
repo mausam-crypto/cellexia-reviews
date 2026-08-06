@@ -4,6 +4,24 @@ All notable changes to Cellexia Reviews are documented here. The version number 
 `package.json` and stamped into the release ZIP built by `npm run package`
 (`dist/cellexia-reviews-v<version>.zip`).
 
+## 1.22.0 — 2026-08-06
+
+### Added
+
+- **Choose where the star badge sits inside product cards** on collections, the home page and
+  search results. New app-embed setting **"Star badge position on product lists"**: same as
+  the product page (the default — nothing changes on upgrade), under the product title, under
+  the tagline, or **under the price**. A card missing the chosen element falls back (price →
+  tagline → title); a badge is never dropped because of this setting. The price detection
+  ignores sale pills ("-20%"), unit prices, compare-at labels and the hidden duplicate price
+  many themes render for mobile/desktop — so the badge lands after the price a shopper
+  actually sees. Labels in all 17 admin languages (SPEC-1.22.md).
+
+### Internal
+
+- The widget JS size gate was raised deliberately (132 KiB → 137 KiB) for this feature — the
+  gate exists to catch accidental growth, and this note is its audit trail.
+
 ## 1.21.0 — 2026-08-06
 
 ### Changed

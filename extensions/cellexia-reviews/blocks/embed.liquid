@@ -184,6 +184,7 @@
     "badge_selector": {{ block.settings.badge_selector | default: '' | json }},
     "show_pdp_title_badge": {{ block.settings.show_pdp_title_badge | json }},
     "pdp_badge_position": {{ block.settings.pdp_badge_position | default: 'under_title' | json }},
+    "card_badge_position": {{ block.settings.card_badge_position | default: 'inherit' | json }},
     "pdp_badge_selector": {{ block.settings.pdp_badge_selector | default: '' | json }}
   },
   "skin": {{ cx_skin | json }},
@@ -324,6 +325,31 @@
         }
       ],
       "default": "stars_count"
+    },
+    {
+      "type": "select",
+      "id": "card_badge_position",
+      "label": "t:cellexia.embed_block.settings.card_badge_position.label",
+      "info": "t:cellexia.embed_block.settings.card_badge_position.info",
+      "options": [
+        {
+          "value": "inherit",
+          "label": "t:cellexia.embed_block.settings.card_badge_position.options__1.label"
+        },
+        {
+          "value": "under_title",
+          "label": "t:cellexia.embed_block.settings.card_badge_position.options__2.label"
+        },
+        {
+          "value": "under_tagline",
+          "label": "t:cellexia.embed_block.settings.card_badge_position.options__3.label"
+        },
+        {
+          "value": "under_price",
+          "label": "t:cellexia.embed_block.settings.card_badge_position.options__4.label"
+        }
+      ],
+      "default": "inherit"
     },
     {
       "type": "text",

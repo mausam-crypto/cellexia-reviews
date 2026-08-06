@@ -398,6 +398,7 @@ Expand the embed's row (▸) under App embeds to reach them:
 | Stars placement (CSS selector, optional) | empty | Advanced: the stars are inserted after the **first** element matching this selector, overriding the position choice above. See "Finding a CSS selector" below. |
 | Show star badges on product cards site-wide | On | Adds star ratings next to product names on the home page, collections, and search results for products with published reviews. |
 | Badge style | Stars and review count | **Stars and review count** shows the stars followed by the number of reviews in parentheses; **Stars only** drops the number. |
+| Star badge position on product lists | Same as product page | Where the stars sit **inside** each product card on collections, the home page and search results: same as the product-page setting, under the product title, under the tagline, or **under the price**. A card missing the chosen element falls back gracefully (price → tagline → title) — a badge is never dropped because of this setting. Since 1.22.0. |
 | Card title element (CSS selector, optional) | empty | Advanced: only needed if badges don't find your theme's product card titles automatically — enter the selector of the card-title element and badges attach right after it. |
 
 ### Positioning the product-page stars

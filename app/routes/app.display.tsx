@@ -618,7 +618,10 @@ function scopedProductIds(form: FormData): string[] | undefined {
     .split(",")
     .map((id) => id.trim())
     .filter(Boolean)
-    .slice(0, 2000);
+    // Sanity bound only — these ids came from this server one request ago.
+    // It must sit far above anything the estimate can measure in its time
+    // budget, or a truncated preview's run would be silently narrowed AGAIN.
+    .slice(0, 20_000);
   return ids.length > 0 ? ids : undefined;
 }
 
@@ -805,6 +808,10 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         const { pairs: _pairs, ...estimateSummary } = estimate;
         return json({ ok: true, estimate: estimateSummary });
       } catch (error) {
+        // shopify-app-remix asks for re-authentication by THROWING a Response.
+        // Turning that into a generic 500 would leave the merchant staring at
+        // "try again in a minute" forever instead of being reconnected.
+        if (error instanceof Response) throw error;
         console.error("Curation estimate failed", error);
         return json(
           {
@@ -1082,6 +1089,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     return json({ ok: false, message: "Unknown action" }, { status: 400 });
   } catch (error) {
+    // Same reason as above: a re-auth or redirect Response must pass through
+    // this catch-all, not be flattened into "Something went wrong".
+    if (error instanceof Response) throw error;
     console.error("Display order action failed", error);
     return json(
       { ok: false, message: "Something went wrong. Please try again." },
@@ -1450,8 +1460,18 @@ const BATCH_BADGES: Record<string, { tone: "attention" | "success" | "critical";
 const FAILURE_LABELS: Record<string, string> = {
   no_reviews: "not enough reviews",
   no_ai: "no Claude API key configured",
-  no_product: "product not found in Shopify — it may have been deleted",
+  no_product: "this product no longer exists in Shopify",
+  shopify_error: "Shopify did not answer — usually temporary, try again",
+  shopify_auth: "Shopify refused the request — reopen the app from Shopify admin to reconnect",
   failed: "the AI call failed — try again in a minute",
+  // v1.20.2: the old single "failed" hid five different problems behind one
+  // sentence whose advice was wrong for four of them.
+  ai_busy: "the AI service is busy — trying again in a few minutes usually works",
+  ai_auth: "your Claude API key was refused — check it in Settings",
+  ai_rejected: "the AI service rejected this request — re-run it; if it keeps happening, the reviews may not fit the model's limit",
+  ai_truncated: "the answer ran out of room before it finished — re-run it after updating the app",
+  ai_unparseable: "the AI's answer could not be read — re-running usually fixes it",
+  ai_bad_ids: "the AI's answer did not name enough real reviews — re-running usually fixes it",
   over_budget: "stopped by your monthly spending limit",
   // Statuses only a background run can produce.
   errored: "Anthropic returned an error for this one — try again",

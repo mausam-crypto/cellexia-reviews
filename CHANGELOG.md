@@ -4,6 +4,66 @@ All notable changes to Cellexia Reviews are documented here. The version number 
 `package.json` and stamped into the release ZIP built by `npm run package`
 (`dist/cellexia-reviews-v<version>.zip`).
 
+## 1.20.4 — 2026-08-05
+
+### Fixed
+
+- **The cost preview's Overview-field note counted deleted products as "empty Overview".** A
+  store with deleted products could be told its Overview field was empty on products that do
+  not exist — contradicting the deleted-products note in the same window. The note now counts
+  only products Shopify actually returned.
+- **A very large catalogue could have part of its run silently dropped.** When the preview
+  runs out of time on a huge catalogue it scopes the run to what it measured; an internal
+  cap could then trim that list again without saying so. The cap is now far above anything
+  the preview can measure.
+- **A failed packaging check no longer destroys the previous release ZIP** (internal tooling:
+  the new ZIP is built to a temporary name and only replaces the old one after every check
+  has passed).
+
+## 1.20.3 — 2026-08-05
+
+### Fixed
+
+- **The 1.20.2 truncation fix now covers every AI feature, not just curation.** The same
+  "thinks until the answer no longer fits" behaviour could bite the AI summary, the summary's
+  translations, the brand-page analysis, the shopper Q&A box on product pages, and the QA
+  review generator — anywhere the app asks the model for a structured answer within a fixed
+  output allowance. All of them now tell the model to answer directly, exactly as curation
+  does. Use this ZIP rather than the 1.20.2 one from earlier today.
+
+- **A run near your spending limit can no longer squeeze past it.** The pre-run check now
+  assumes the most a single call could bill rather than the typical figure, so the limit holds
+  even in the worst case. The preview still quotes the typical figure, which is what runs
+  actually cost.
+
+## 1.20.2 — 2026-08-05
+
+### Fixed
+
+- **Around 90% of curation runs were failing with "the AI call failed — try again in a
+  minute".** Root cause: on the Claude model this app uses, the AI now *thinks before
+  answering* by default, and that thinking is billed as output and counted against the same
+  small output allowance the app gives each curation call. Small products left enough room;
+  the big review sets 1.20.0 started sending made the AI think at length, use up the whole
+  allowance, and get cut off before the answer began — so the bigger the product, the more
+  certain the failure, which is exactly the ~90% pattern. Curation calls now tell the model to
+  answer directly (as it effectively did when this feature was built), and the output
+  allowance is larger so a full answer fits even in the most token-expensive languages.
+  Background (batch) runs send the identical instruction. Costs are unchanged — if anything
+  slightly lower, since billed thinking is gone.
+
+- **The Haiku model would have been handed requests it cannot accept.** Claude Haiku reads at
+  most a fifth of what the app's payload ceiling assumed. If you switched the AI model to
+  Haiku, any large product's run was rejected outright. The payload limit now follows the
+  selected model, trimming to fit before sending.
+
+- **"The AI call failed — try again in a minute" said the same thing for six different
+  problems**, and the advice was wrong for most of them. Failures now say what actually
+  happened: the AI service being busy (retry *is* right there — and the app now also waits as
+  long as the service asks before retrying, instead of a fixed 1.5 seconds), a refused API
+  key (check Settings), a rejected request, an answer that ran out of room, an answer that
+  could not be read, or an answer that did not name enough real reviews.
+
 ## 1.20.1 — 2026-08-05
 
 ### Fixed
@@ -35,6 +95,36 @@ All notable changes to Cellexia Reviews are documented here. The version number 
   three calls and the background run would submit zero. All three paths (preview, Run now, Run
   in the background) now share one definition, and packaging the app fails outright if the
   curator's review query ever drifts from the storefront's again.
+
+- **A Shopify hiccup no longer reports itself as a deleted product.** Every failure reading a
+  product from Shopify — an expired session, a missing permission, a rate limit, an outage —
+  was being turned into "product not found in Shopify, it may have been deleted". They now
+  read differently: a deleted product says so, and a Shopify error says it is usually
+  temporary and worth retrying. A session that needs re-authorising is also no longer
+  swallowed, so Shopify can prompt you to reconnect instead of the feature quietly not
+  working — it says to reopen the app from Shopify admin, which is the thing that fixes it.
+  A rate limit or an outage says "try again in a minute" instead, and only skips that one
+  product rather than abandoning the whole run. Shopify also reports some failures as a
+  *successful* response carrying an error inside it; those were reading as "product deleted"
+  too, and no longer do. The same distinction reaches the hourly background refresh, so a
+  Shopify problem there is never filed as a failed AI call that sends you to check your API
+  key.
+
+- **"No Claude API key is configured" was shown to stores that have one**, when the AI
+  provider was simply switched off in Settings. The two now read differently.
+
+- **The preview mentions an empty Overview field.** If the Overview field you configured has
+  no content on some products, the preview says so — curation still works from the product
+  description, but the agents are reading less than they could.
+
+### Worth knowing when you upgrade
+
+- **Products you have already curated will show "Reviews changed — re-curate", and that is
+  correct.** Those orders were decided from a smaller set of reviews than the agent can see
+  now — either because 1.20.0 was hiding your QA-generated reviews from it, or because before
+  1.20.0 it only ever read the 60 most recent. The badge is telling you the truth: a fresh run
+  will read more and can order better. Nothing re-runs on its own unless you have Automatic
+  refresh set to Daily or Weekly, and if you do, it still stops at your monthly spending limit.
 
 ## 1.20.0 — 2026-08-05
 

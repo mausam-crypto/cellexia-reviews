@@ -23,6 +23,7 @@ import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
 
 import prisma from "~/db.server";
 import {
+  anthropicMessageParams,
   applyCurationResponse,
   buildCurationRequest,
   rebuildCurationTarget,
@@ -195,12 +196,10 @@ async function buildAndSubmit(
     }
     requests.push({
       custom_id: customId,
-      params: {
-        model: built.request.model,
-        max_tokens: built.request.maxTokens,
-        system: built.request.system,
-        messages: [{ role: "user", content: built.request.userContent }],
-      },
+      // The SAME params builder the instant path uses — including the
+      // thinking override, without which a background run on Sonnet 5 thinks
+      // its max_tokens away and truncates exactly like the instant bug did.
+      params: anthropicMessageParams(built.request),
     });
     map[customId] = {
       productId: pair.productId,

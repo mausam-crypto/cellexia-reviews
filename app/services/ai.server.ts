@@ -22,6 +22,7 @@
  */
 import prisma from "~/db.server";
 import { SHOP_LOCALES } from "~/types/cellexia";
+import { thinkingParamFor } from "./pricing.server";
 import type { SummaryDTO, TopicDTO } from "~/types/cellexia";
 import { getSettings } from "./settings.server";
 import { scrubDashes } from "./synthetic-prompts.server";
@@ -138,11 +139,18 @@ export async function callClaude(
   userContent: string,
   maxTokens = 3000,
 ): Promise<string | null> {
+  // Every caller of this helper wants a strict-JSON answer inside a bounded
+  // max_tokens. On models where thinking is on by default it is billed as
+  // output AGAINST that bound, so a hard task can think the budget away and
+  // truncate — the v1.20.0 curation bug, which applies just the same to the
+  // summary, its translations, the brand analysis and the shopper Q&A.
+  const thinking = thinkingParamFor(model);
   const body = JSON.stringify({
     model,
     max_tokens: maxTokens,
     system,
     messages: [{ role: "user", content: userContent }],
+    ...(thinking ? { thinking } : {}),
   });
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -213,18 +221,40 @@ export interface ClaudeUsage {
  * spend accounting uses BILLED token counts rather than our estimate. Kept as
  * a sibling (not a replacement) so existing callers are untouched.
  */
+export type ClaudeCallResult =
+  | { ok: true; text: string; usage: ClaudeUsage; stopReason: string | null }
+  | {
+      ok: false;
+      /**
+       * Why, in terms a caller can route on:
+       * - rejected: the API said no to this request (HTTP 4xx other than
+       *   auth/429) — deterministic, retrying is pointless
+       * - auth: the key was refused (401/403)
+       * - busy: still 429/5xx after the retry — genuinely worth retrying later
+       * - network: the request never completed
+       */
+      kind: "rejected" | "auth" | "busy" | "network";
+      status?: number;
+    };
+
 export async function callClaudeWithUsage(
   apiKey: string,
   model: string,
   system: string,
   userContent: string,
   maxTokens = 3000,
-): Promise<{ text: string; usage: ClaudeUsage } | null> {
+  options: { thinking?: { type: "disabled" } | null } = {},
+): Promise<ClaudeCallResult> {
   const body = JSON.stringify({
     model,
     max_tokens: maxTokens,
     system,
     messages: [{ role: "user", content: userContent }],
+    // On models where thinking is on by default (Sonnet 5 and up), thinking
+    // is billed as OUTPUT and counts against max_tokens. A structured-JSON
+    // call with a small budget must turn it off, or a large task spends the
+    // whole budget thinking and truncates before the JSON starts.
+    ...(options.thinking ? { thinking: options.thinking } : {}),
   });
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
@@ -241,18 +271,28 @@ export async function callClaudeWithUsage(
 
       if (response.status === 429 || response.status >= 500) {
         if (attempt === 0) {
-          await sleep(1500);
+          // Uncapped payloads can exhaust the per-minute token allowance, and
+          // a fixed 1.5s nap almost never outlives that window. The API says
+          // exactly how long to wait — honour it (capped so a pathological
+          // header cannot hang the queue).
+          const retryAfter = Number(response.headers?.get?.("retry-after"));
+          const waitMs =
+            Number.isFinite(retryAfter) && retryAfter > 0
+              ? Math.min(retryAfter * 1000, 30_000)
+              : 1500;
+          await sleep(waitMs);
           continue;
         }
         console.error(`[cellexia] Claude API transient error ${response.status}`);
-        return null;
+        return { ok: false, kind: "busy", status: response.status };
       }
       if (!response.ok) {
         const detail = await response.text().catch(() => "");
         console.error(
           `[cellexia] Claude API error ${response.status}: ${detail.slice(0, 300)}`,
         );
-        return null;
+        const kind = response.status === 401 || response.status === 403 ? "auth" : "rejected";
+        return { ok: false, kind, status: response.status };
       }
 
       const data = (await response.json()) as {
@@ -264,29 +304,31 @@ export async function callClaudeWithUsage(
         inputTokens: toCount(data.usage?.input_tokens),
         outputTokens: toCount(data.usage?.output_tokens),
       };
-      // A refusal or truncation still consumed tokens — return the usage so
-      // the spend counter stays honest, with empty text for the caller.
-      if (data.stop_reason === "refusal") return { text: "", usage };
-      if (data.stop_reason === "max_tokens") {
-        console.error("[cellexia] Claude response truncated at max_tokens — output likely unparseable");
-      }
+      // A refusal or truncation still consumed tokens — the usage goes back
+      // so the spend counter stays honest, and the stop reason goes back so
+      // the caller can say WHICH thing went wrong instead of "failed".
+      const stopReason = typeof data.stop_reason === "string" ? data.stop_reason : null;
       const text = Array.isArray(data.content)
         ? data.content
             .filter((block) => block && block.type === "text" && typeof block.text === "string")
             .map((block) => block.text as string)
             .join("\n")
         : "";
-      return { text, usage };
+      if (stopReason === "refusal") return { ok: true, text: "", usage, stopReason };
+      if (stopReason === "max_tokens") {
+        console.error("[cellexia] Claude response truncated at max_tokens");
+      }
+      return { ok: true, text, usage, stopReason };
     } catch (error) {
       if (attempt === 0) {
         await sleep(1000);
         continue;
       }
       console.error("[cellexia] Claude API request failed", error);
-      return null;
+      return { ok: false, kind: "network" };
     }
   }
-  return null;
+  return { ok: false, kind: "network" };
 }
 
 /**

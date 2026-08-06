@@ -32,6 +32,7 @@ import prisma from "~/db.server";
 import { SHOP_LOCALES } from "~/types/cellexia";
 import { callClaudeWithUsage, extractJson } from "./ai.server";
 import { getSettings } from "./settings.server";
+import { thinkingParamFor } from "./pricing.server";
 import { recordSpend } from "./spend.server";
 import { scrubDashes } from "./synthetic-prompts.server";
 
@@ -240,14 +241,18 @@ async function translateWithAnthropic(
       TRANSLATE_SYSTEM_PROMPT,
       `Target locale: "${target}"\n\nReviews:\n${JSON.stringify(payload)}`,
       6000,
+      // Translation is a mechanical task with a strict JSON contract —
+      // thinking adds billed output and can eat the max_tokens budget on
+      // models where it is on by default.
+      { thinking: thinkingParamFor(model) },
     );
     // Tokens are billed whether or not the text came back usable, so they are
     // added to the ledger before anything else can `continue` past them.
-    if (call) {
+    if (call.ok) {
       usage.inputTokens += call.usage.inputTokens;
       usage.outputTokens += call.usage.outputTokens;
     }
-    const raw = call?.text;
+    const raw = call.ok ? call.text : "";
     if (!raw) continue;
 
     const parsed = extractJson(raw) as { translations?: unknown } | null;

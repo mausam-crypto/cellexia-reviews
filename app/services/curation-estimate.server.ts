@@ -23,7 +23,7 @@ import {
   curatableProductIds,
   qualifyingLocales,
 } from "./curation.server";
-import type { ProductContextCache } from "./curation.server";
+import type { ProductContext, ProductContextCache } from "./curation.server";
 import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
 import prisma from "~/db.server";
 import { countTokens } from "./ai.server";
@@ -125,15 +125,25 @@ export async function estimateCuration(
   if (ids.length === 0) {
     const anyReviews = await prisma.review.count({ where: { shop } });
     const anyPublished = await prisma.review.count({ where: { shop, status: "PUBLISHED" } });
+    // Only PENDING reviews can be published by approving them; counting
+    // rejected and spam here would send the merchant looking for an approve
+    // button that those rows do not have.
+    const pending = await prisma.review.count({ where: { shop, status: "PENDING" } });
     if (anyReviews === 0) {
       notes.push("There are no reviews in this app yet, so there is nothing to order.");
+    } else if (anyPublished === 0 && pending > 0) {
+      notes.push(
+        `No review is published yet. ${pending} ${pending === 1 ? "is" : "are"} waiting for approval — curation only orders published reviews, so approve some on the Reviews page first.`,
+      );
     } else if (anyPublished === 0) {
       notes.push(
-        `All ${anyReviews} review(s) are still unpublished. Curation only orders published reviews — approve some on the Reviews page first.`,
+        `None of the ${anyReviews} review(s) here are published, and none are waiting for approval either, so there is nothing to order.`,
       );
     } else {
+      // Reaching here means the count found published reviews but the grouping
+      // did not — the two ran moments apart, so it is a race, not a diagnosis.
       notes.push(
-        `${anyPublished} published review(s) exist but none could be grouped by product, which usually means their product ids no longer match any product.`,
+        `${anyPublished} published review(s) exist but none were picked up just now. Try measuring again.`,
       );
     }
   }
@@ -150,6 +160,10 @@ export async function estimateCuration(
   // One Shopify fetch per product, not per (product, locale) pair.
   const contextCache: ProductContextCache = new Map();
   const unreadableProducts = new Set<string>();
+  /** Shopify would not answer — quite different from "the product is gone". */
+  const shopifyErrors = new Set<string>();
+  /** Shopify refused us — the app's access needs renewing, not a retry. */
+  const shopifyAuth = new Set<string>();
   const tooFewReviews = new Set<string>();
   /** Products with published reviews that no locale qualified for. */
   const noQualifyingLocale = new Set<string>();
@@ -184,6 +198,8 @@ export async function estimateCuration(
         // nothing to skip, but the merchant is approving a total — they must
         // not later find they were quoted for less work than actually ran.
         if (built.status === "no_product") unreadableProducts.add(productId);
+        else if (built.status === "shopify_error") shopifyErrors.add(productId);
+        else if (built.status === "shopify_auth") shopifyAuth.add(productId);
         else if (built.status === "no_reviews") tooFewReviews.add(productId);
         else if (built.status === "no_ai") noAiKey = true;
         continue;
@@ -213,7 +229,41 @@ export async function estimateCuration(
   }
 
   if (noAiKey) {
-    notes.push("No Claude API key is configured, so nothing could be prepared for this run.");
+    // Say which of the two it is. Telling a merchant who has a saved key that
+    // no key is configured just sends them looking in the wrong place.
+    notes.push(
+      settings.aiProvider !== "anthropic"
+        ? "AI features are switched off in Settings, so nothing could be prepared for this run. Set the AI provider to Claude to use curation."
+        : "No Claude API key is configured, so nothing could be prepared for this run. Add one in Settings.",
+    );
+  }
+  if (shopifyAuth.size > 0) {
+    notes.push(
+      "Shopify refused this app's request. Open the app again from your Shopify admin so it can reconnect, then measure again.",
+    );
+  }
+  if (shopifyErrors.size > 0) {
+    notes.push(
+      `Shopify did not answer for ${shopifyErrors.size} product${shopifyErrors.size === 1 ? "" : "s"}, so ${shopifyErrors.size === 1 ? "it is" : "they are"} not included. This is usually temporary — try again in a minute. If it keeps happening, reopen the app from Shopify admin so it can reconnect.`,
+    );
+  }
+  // Mention the Overview field ONLY when it demonstrably works somewhere and
+  // is missing elsewhere. Firing when NO product has it would nag every store
+  // that never set one up (the default "accentuate.overview" exists on very
+  // few), blaming an empty field for something that is not a problem.
+  // "Readable" means Shopify returned an actual product — an ok result whose
+  // context is empty is a DELETED product (counted under no_product above),
+  // and counting its empty overview here would contradict that note.
+  const readable = [...contextCache.values()].filter(
+    (r): r is { ok: true; context: ProductContext } =>
+      r.ok && Boolean(r.context.title || r.context.description),
+  );
+  const withOverview = readable.filter((r) => r.context.overview).length;
+  const withoutOverview = readable.length - withOverview;
+  if (withOverview > 0 && withoutOverview > 0) {
+    notes.push(
+      `The Overview field (${settings.curationOverviewField}) has content on ${withOverview} of ${readable.length} products and is empty on the other ${withoutOverview}. Curation still works from the product description there, but the agents read less about those products than they could.`,
+    );
   }
   if (noQualifyingLocale.size > 0) {
     notes.push(
@@ -222,7 +272,7 @@ export async function estimateCuration(
   }
   if (unreadableProducts.size > 0) {
     notes.push(
-      `${unreadableProducts.size} product${unreadableProducts.size === 1 ? "" : "s"} could not be read from Shopify, so ${unreadableProducts.size === 1 ? "it is" : "they are"} not included. That usually means the product was deleted, but it can also be a temporary Shopify error — if these reviews belong to products that still exist, try again in a minute.`,
+      `${unreadableProducts.size} product${unreadableProducts.size === 1 ? "" : "s"} no longer exist${unreadableProducts.size === 1 ? "s" : ""} in Shopify, so ${unreadableProducts.size === 1 ? "it is" : "they are"} not included. Their reviews are still here; only the product is gone.`,
     );
   }
   if (tooFewReviews.size > 0) {
@@ -260,7 +310,9 @@ export async function estimateCuration(
     };
     await Promise.all(Array.from({ length: Math.min(COUNT_CONCURRENCY, limit) }, worker));
     exactPairs = pairs.filter((p) => p.measured).length;
-  } else if (!settings.anthropicApiKey) {
+  } else if (!settings.anthropicApiKey && pairs.length > 0) {
+    // Only meaningful when there is something to count. With zero calls the
+    // no-key note above has already said the real thing.
     notes.push("No Claude API key configured, so token counts are estimated rather than measured.");
   }
 

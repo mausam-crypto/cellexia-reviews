@@ -40,6 +40,44 @@ export const MODEL_PRICES: Record<string, ModelPrice> = {
   "claude-haiku-4-5": { inputPerMTok: 1, outputPerMTok: 5 },
 };
 
+/**
+ * Model facts the curation payload builder needs (verified against the docs
+ * 2026-08-05, same source as the prices):
+ * - contextWindowTokens: what one request may actually carry. Haiku 4.5 is
+ *   200k, NOT 1M — a payload budget assuming 1M hands Haiku a request the API
+ *   rejects outright.
+ * - thinkingOnByDefault: on Sonnet 5 / Opus 5 / Fable 5 the model THINKS
+ *   before answering unless told not to, and the thinking is billed as output
+ *   and counts against max_tokens. A structured-JSON call with a small
+ *   max_tokens must disable it, or a big task spends the whole budget
+ *   thinking and the JSON never arrives (stop_reason "max_tokens").
+ */
+const MODEL_FACTS: Record<string, { contextWindowTokens: number; thinkingOnByDefault: boolean }> = {
+  "claude-fable-5": { contextWindowTokens: 1_000_000, thinkingOnByDefault: true },
+  "claude-mythos-5": { contextWindowTokens: 1_000_000, thinkingOnByDefault: true },
+  "claude-opus-5": { contextWindowTokens: 1_000_000, thinkingOnByDefault: true },
+  "claude-opus-4-8": { contextWindowTokens: 1_000_000, thinkingOnByDefault: false },
+  "claude-opus-4-7": { contextWindowTokens: 1_000_000, thinkingOnByDefault: false },
+  "claude-opus-4-6": { contextWindowTokens: 1_000_000, thinkingOnByDefault: false },
+  "claude-sonnet-5": { contextWindowTokens: 1_000_000, thinkingOnByDefault: true },
+  "claude-sonnet-4-6": { contextWindowTokens: 1_000_000, thinkingOnByDefault: false },
+  "claude-haiku-4-5": { contextWindowTokens: 200_000, thinkingOnByDefault: false },
+};
+
+/** Unknown model ⇒ the SMALL window: over-sending gets a request rejected. */
+export function contextWindowFor(model: string): number {
+  return MODEL_FACTS[model]?.contextWindowTokens ?? 200_000;
+}
+
+/**
+ * The `thinking` parameter a deterministic JSON call should send, or null to
+ * send none. Only models where thinking is on by default accept/need
+ * "disabled"; sending it to older models would 400.
+ */
+export function thinkingParamFor(model: string): { type: "disabled" } | null {
+  return MODEL_FACTS[model]?.thinkingOnByDefault ? { type: "disabled" } : null;
+}
+
 /** The Message Batches API bills at half the standard rate (SPEC-1.20 §4). */
 export const BATCH_DISCOUNT = 0.5;
 

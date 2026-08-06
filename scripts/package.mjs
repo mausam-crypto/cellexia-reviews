@@ -79,9 +79,13 @@ function* walk(dir, rel = "") {
 }
 
 fs.mkdirSync(OUT_DIR, { recursive: true });
-if (fs.existsSync(OUT_FILE)) fs.rmSync(OUT_FILE);
+// Build into a temp file and rename only on success: the previous release
+// ZIPs in dist/ are the only record of what shipped (the adversarial reviews
+// diff against them), and a gate failing must not have destroyed one first.
+const TMP_FILE = `${OUT_FILE}.building`;
+if (fs.existsSync(TMP_FILE)) fs.rmSync(TMP_FILE);
 
-const output = fs.createWriteStream(OUT_FILE);
+const output = fs.createWriteStream(TMP_FILE);
 const archive = archiver("zip", { zlib: { level: 9 } });
 
 const finished = new Promise((resolve, reject) => {
@@ -180,52 +184,79 @@ console.log(
  * the cost preview reported "nothing to curate" for products full of reviews.
  * It shipped because nothing compared the two queries.
  *
- * This gate does. It is a source check — no database, no Prisma client — that
- * fails the package if any curation query filters reviews by a column the
- * storefront query does not.
+ * This gate does. It is a source check — no database, no Prisma client.
+ * Default-DENY: every file under app/ is scanned, and any review query that
+ * filters on a provenance column fails the build unless the file is on the
+ * allowlist below with a stated reason. Whitespace is normalized first, so a
+ * where-clause wrapped across lines by a formatter cannot slip through — the
+ * first version of this gate only matched single-line clauses, which would
+ * have missed the very regression it exists to prevent.
  */
-const CURATION_SOURCES = [
-  "app/services/curation.server.ts",
-  "app/services/curation-estimate.server.ts",
-  "app/routes/app.display.tsx",
-];
-const STOREFRONT_SOURCE = "app/services/reviews.server.ts";
-const PROVENANCE_COLUMNS = ["isSynthetic", "source:", "syntheticBatchId"];
+const PROVENANCE_COLUMNS = ["isSynthetic", "syntheticBatchId"];
+/** Files allowed to filter reviews by provenance, and why. */
+const PROVENANCE_ALLOWED = new Map([
+  ["app/services/brand.server.ts", "the public brand page must not cite QA-generated reviews"],
+  ["app/services/brand-page.server.ts", "same: public claims about real customers"],
+  ["app/services/qna.server.ts", "brand-level answers are public claims too"],
+  ["app/services/synthetic.server.ts", "manages the QA rows themselves"],
+  ["app/services/jobs.server.ts", "manages QA generation batches"],
+  ["app/services/import.server.ts", "sets the column on import/export"],
+  ["app/services/reviews.server.ts", "writes the column; admin listing filters by it"],
+  ["app/routes/app.reviews.tsx", "admin listing shows and filters the Synthetic badge"],
+  ["app/routes/app.qa-generator.tsx", "the QA generator's own screen"],
+  ["app/routes/app._index.tsx", "dashboard warning counts published QA rows"],
+]);
 
-const storefrontText = fs.readFileSync(path.join(ROOT, STOREFRONT_SOURCE), "utf8");
-// The storefront's own base where-clause, as written in listReviews.
-const storefrontFiltersProvenance = /const where: Prisma\.ReviewWhereInput = \{[^}]*isSynthetic/.test(
-  storefrontText,
-);
+function reviewQueryRegions(text) {
+  // Comments out, whitespace collapsed: the check must not depend on layout.
+  const code = text.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/^\s*\/\/.*$/gm, " ");
+  const flat = code.replace(/\s+/g, " ");
+  const regions = [];
+  const re = /prisma\.review\.(findMany|count|groupBy|aggregate)\(/g;
+  let m;
+  while ((m = re.exec(flat)) !== null) {
+    // Take a generous window; the where-clause always sits near the front.
+    regions.push(flat.slice(m.index, m.index + 600));
+  }
+  return regions;
+}
 
 const parityFailures = [];
-for (const rel of CURATION_SOURCES) {
-  const abs = path.join(ROOT, rel);
-  if (!fs.existsSync(abs)) continue;
-  const lines = fs.readFileSync(abs, "utf8").split("\n");
-  lines.forEach((line, i) => {
-    // Only review queries matter; a comment mentioning the column is fine.
-    const trimmed = line.trim();
-    if (trimmed.startsWith("//") || trimmed.startsWith("*")) return;
-    if (!/status:\s*"PUBLISHED"/.test(line)) return;
+for (const file of walk(ROOT)) {
+  if (!/^app\/.*\.(ts|tsx)$/.test(file.rel)) continue;
+  const text = fs.readFileSync(file.abs, "utf8");
+  if (!PROVENANCE_COLUMNS.some((c) => text.includes(c))) continue;
+  const allowedFor = PROVENANCE_ALLOWED.get(file.rel);
+  for (const region of reviewQueryRegions(text)) {
     for (const column of PROVENANCE_COLUMNS) {
-      if (!line.includes(column)) continue;
-      if (storefrontFiltersProvenance) continue; // both filter — still in parity
+      if (!new RegExp(`${column}\\s*:`).test(region)) continue;
+      if (allowedFor) continue;
       parityFailures.push(
-        `${rel}:${i + 1} filters curation reviews by ${column.replace(":", "")}, but the ` +
-          `storefront query in ${STOREFRONT_SOURCE} does not. The curator would order a ` +
-          `different set of reviews than the product page shows.`,
+        `${file.rel} has a review query filtering on ${column}, but it is not on the ` +
+          `provenance allowlist in scripts/package.mjs. The curator and the product page ` +
+          `must read the same reviews — see reviews.server.ts listReviews.`,
       );
     }
-  });
+  }
+}
+// An allowlist entry naming a file that no longer exists is a silent hole.
+for (const rel of PROVENANCE_ALLOWED.keys()) {
+  if (!fs.existsSync(path.join(ROOT, rel))) {
+    parityFailures.push(
+      `scripts/package.mjs allowlists ${rel}, which no longer exists — remove the entry.`,
+    );
+  }
 }
 if (parityFailures.length > 0) {
   console.error("CURATION/STOREFRONT REVIEW-SET MISMATCH — the curated order would be wrong:");
   for (const line of parityFailures) console.error(`  - ${line}`);
-  console.error("  Fix the query, or change the storefront query too if the split is deliberate.");
+  console.error("  If a new exclusion is deliberate, add the file to PROVENANCE_ALLOWED with a reason.");
   process.exit(1);
 }
-console.log("  curation reads the same review set the product page serves");
+console.log(
+  `  curation reads the same review set the product page serves ` +
+    `(${PROVENANCE_ALLOWED.size} file(s) allowlisted)`,
+);
 
 let fileCount = 0;
 for (const file of walk(ROOT)) {
@@ -235,6 +266,9 @@ for (const file of walk(ROOT)) {
 
 await archive.finalize();
 await finished;
+// Every gate has passed and the archive is fully flushed — NOW claim the name.
+if (fs.existsSync(OUT_FILE)) fs.rmSync(OUT_FILE);
+fs.renameSync(TMP_FILE, OUT_FILE);
 
 const bytes = fs.statSync(OUT_FILE).size;
 const megabytes = (bytes / (1024 * 1024)).toFixed(2);

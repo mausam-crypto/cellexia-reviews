@@ -66,6 +66,7 @@ import {
 import type { ShopLocale } from "~/types/cellexia";
 import { recomputeProduct } from "./aggregates.server";
 import { createReview } from "./reviews.server";
+import { thinkingParamFor } from "./pricing.server";
 import { getSettings } from "./settings.server";
 import {
   DISPLAY_FORMATS,
@@ -1080,11 +1081,16 @@ async function callClaudeWithUsage(
   userContent: string,
   maxTokens = 6000,
 ): Promise<ClaudeUsageOutcome> {
+  // Same rule as ai.server's clients: on default-thinking models the model
+  // must answer directly, or generation chunks can think their max_tokens
+  // away and truncate mid-JSON.
+  const thinking = thinkingParamFor(model);
   const body = JSON.stringify({
     model,
     max_tokens: maxTokens,
     system,
     messages: [{ role: "user", content: userContent }],
+    ...(thinking ? { thinking } : {}),
   });
   const outcome: ClaudeUsageOutcome = {
     text: null,

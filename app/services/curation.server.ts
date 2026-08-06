@@ -26,7 +26,7 @@ import prisma from "~/db.server";
 import { SHOP_LOCALES } from "~/types/cellexia";
 import { callClaudeWithUsage, extractJson } from "./ai.server";
 import { curationPromptFor } from "./curation-prompts.server";
-import { approxTokens, costUsd } from "./pricing.server";
+import { approxTokens, contextWindowFor, costUsd, thinkingParamFor } from "./pricing.server";
 import { getSettings } from "./settings.server";
 import { checkBudget, recordSpend } from "./spend.server";
 import { scrubDashes } from "./synthetic-prompts.server";
@@ -43,21 +43,36 @@ type AdminClient = Pick<AdminApiContext, "graphql">;
 
 /**
  * v1.20 (SPEC-1.20 §1): the 60-review cap is gone — the agent sees EVERY
- * published review. Volume is bounded by a token budget instead, a third of
- * the model's 1M context so there is ample room for output and prompt growth.
+ * published review. Volume is bounded by a token budget instead: 400k, well
+ * inside the 1M-window models with room for output and prompt growth.
  */
 export const MAX_PAYLOAD_TOKENS = 400_000;
+/**
+ * ...bounded additionally by the MODEL'S OWN context window. Haiku 4.5 is a
+ * 200k-token model; budgeting it as if it had Sonnet's 1M window hands the
+ * API a request it rejects outright, which no ladder can fix after the fact.
+ */
+export function payloadBudgetFor(model: string): number {
+  const window = contextWindowFor(model);
+  // Leave headroom for the response and the API's own accounting.
+  return Math.min(MAX_PAYLOAD_TOKENS, Math.floor(window * 0.75));
+}
 /**
  * The review lines are not the whole request: the locale's system prompt, the
  * product description and overview (8000 chars each) and the merchant's
  * guidance also go on the wire. Reserve room for them so the budget bounds
  * the REQUEST rather than one part of it.
  */
-const NON_REVIEW_TOKEN_RESERVE = 12_000;
-const REVIEW_TOKEN_BUDGET = MAX_PAYLOAD_TOKENS - NON_REVIEW_TOKEN_RESERVE;
+/**
+ * Derived from this file's own worst case, not guessed: both product texts at
+ * their cap counted at approxTokens' worst rate (1 token/char for non-Latin
+ * script), the longest of the 17 system prompts, the merchant-guidance cap,
+ * and slack for the JSON scaffolding.
+ */
+const MAX_DESCRIPTION_CHARS = 8000;
+const NON_REVIEW_TOKEN_RESERVE = 2 * MAX_DESCRIPTION_CHARS + 2_000 + 1_000 + 1_000;
 /** Body length ladder: full-ish, then tighter, before any review is dropped. */
 const BODY_CHAR_LADDER = [2000, 1200, 800] as const;
-const MAX_DESCRIPTION_CHARS = 8000;
 const MIN_QUALIFYING_LOCAL_TEXTS = 5;
 export const MIN_ORDER = 3;
 const MAX_ORDER = 30;
@@ -110,11 +125,22 @@ export function parseOverviewField(field: string): { namespace: string; key: str
   return m ? { namespace: m[1], key: m[2] } : null;
 }
 
+/**
+ * A Shopify read either succeeded, or it failed for a reason worth telling the
+ * merchant apart. Before v1.20.1 every failure was swallowed into an empty
+ * context, which the caller could only read as "this product was deleted" —
+ * so an expired token, a missing scope or a throttle looked identical to a
+ * product that genuinely no longer exists.
+ */
+export type ProductContextResult =
+  | { ok: true; context: ProductContext }
+  | { ok: false; reason: "shopify_error" | "shopify_auth" };
+
 async function fetchProductContext(
   admin: AdminClient,
   productId: string,
   overviewField: string,
-): Promise<ProductContext> {
+): Promise<ProductContextResult> {
   const ref = parseOverviewField(overviewField);
   const query = `#graphql
     query CellexiaCurationProduct($id: ID!${ref ? ", $ns: String!, $key: String!" : ""}) {
@@ -134,16 +160,40 @@ async function fetchProductContext(
     });
     const json = (await response.json()) as {
       data?: { product?: { title?: string; description?: string; metafield?: { value?: string } | null } };
+      errors?: unknown;
     };
+    // The Admin API reports THROTTLED and ACCESS_DENIED as HTTP 200 with an
+    // `errors` array and a null product. Without this check that is
+    // indistinguishable from a deleted product, and the merchant is told to
+    // look for a product that is sitting right there in their catalogue.
+    if (Array.isArray(json.errors) && json.errors.length > 0) {
+      console.error("[cellexia] curation product query returned errors", json.errors);
+      return { ok: false, reason: "shopify_error" };
+    }
     const product = json.data?.product;
     return {
-      title: product?.title ?? "",
-      description: (product?.description ?? "").slice(0, MAX_DESCRIPTION_CHARS),
-      overview: metafieldToText(product?.metafield?.value).slice(0, MAX_DESCRIPTION_CHARS),
+      ok: true,
+      context: {
+        title: product?.title ?? "",
+        description: (product?.description ?? "").slice(0, MAX_DESCRIPTION_CHARS),
+        overview: metafieldToText(product?.metafield?.value).slice(0, MAX_DESCRIPTION_CHARS),
+      },
     };
   } catch (error) {
+    // shopify-app-remix wraps EVERY HTTP failure as a thrown Response — 429
+    // throttling and 5xx included, not just re-authentication. Rethrowing them
+    // all (as 1.20.1 first did) turns one transient throttle into a dead
+    // "Curate all" for the entire catalogue. So nothing is rethrown: an auth
+    // failure becomes a status the merchant can act on, and everything else
+    // degrades to skipping that one product, which is how the rest of this
+    // service already behaves.
+    const status = error instanceof Response ? error.status : 0;
+    if (status === 401 || status === 403) {
+      console.error("[cellexia] curation product fetch needs re-authorization", status);
+      return { ok: false, reason: "shopify_auth" };
+    }
     console.error("[cellexia] curation product fetch failed", error);
-    return { title: "", description: "", overview: "" };
+    return { ok: false, reason: "shopify_error" };
   }
 }
 
@@ -180,7 +230,7 @@ export async function buildCandidates(
   productId: string,
   locale: string,
   source: CurationSource = "as_seen",
-  options: { translate?: boolean } = {},
+  options: { translate?: boolean; payloadBudgetTokens?: number } = {},
 ): Promise<{ candidates: CurationCandidate[]; localTexts: number; trimmedFrom?: number | null; missingTranslations?: number }> {
   // EVERY published review — no recency window (SPEC-1.20 §1).
   // The curator orders what the PRODUCT PAGE serves, so it must read exactly
@@ -283,7 +333,10 @@ export async function buildCandidates(
     };
   });
 
-  const { candidates, trimmedFrom } = fitToBudget(built);
+  const { candidates, trimmedFrom } = fitToBudget(
+    built,
+    options.payloadBudgetTokens ?? MAX_PAYLOAD_TOKENS,
+  );
   return { candidates, localTexts, trimmedFrom, missingTranslations };
 }
 
@@ -299,7 +352,9 @@ export async function buildCandidates(
  */
 function fitToBudget(
   built: Array<{ candidate: CurationCandidate; rating: number; helpfulCount: number }>,
+  payloadBudgetTokens: number,
 ): { candidates: CurationCandidate[]; trimmedFrom: number | null } {
+  const reviewBudget = Math.max(20_000, payloadBudgetTokens - NON_REVIEW_TOKEN_RESERVE);
   const sizeOf = (items: CurationCandidate[], bodyChars: number) =>
     items.reduce(
       (sum, c) => sum + approxTokens(JSON.stringify({ ...c, body: c.body.slice(0, bodyChars) })),
@@ -308,7 +363,7 @@ function fitToBudget(
 
   const all = built.map((b) => b.candidate);
   for (const bodyChars of BODY_CHAR_LADDER) {
-    if (sizeOf(all, bodyChars) <= REVIEW_TOKEN_BUDGET) {
+    if (sizeOf(all, bodyChars) <= reviewBudget) {
       return {
         candidates: all.map((c) => ({ ...c, body: c.body.slice(0, bodyChars) })),
         trimmedFrom: null,
@@ -346,7 +401,7 @@ function fitToBudget(
   for (const item of coverage) {
     const trimmed = { ...item.candidate, body: item.candidate.body.slice(0, tightest) };
     const cost = approxTokens(JSON.stringify(trimmed));
-    if (used + cost > REVIEW_TOKEN_BUDGET) break;
+    if (used + cost > reviewBudget) break;
     used += cost;
     keptIds.add(item.candidate.id);
   }
@@ -405,7 +460,22 @@ export async function qualifyingLocales(
 
 export type CurationResult =
   | { status: "ok"; ordered: number }
-  | { status: "no_ai" | "no_reviews" | "no_product" | "failed" | "over_budget" };
+  | {
+      status:
+        | "no_ai"
+        | "no_reviews"
+        | "no_product"
+        | "shopify_error"
+        | "shopify_auth"
+        | "ai_auth"
+        | "ai_rejected"
+        | "ai_busy"
+        | "ai_truncated"
+        | "ai_unparseable"
+        | "ai_bad_ids"
+        | "failed"
+        | "over_budget";
+    };
 
 /**
  * v1.20 (SPEC-1.20 §4): the payload half of a curation run, shared by the
@@ -429,7 +499,7 @@ export interface CurationRequest {
  * enough to hit Shopify's rate limit. Callers that loop over pairs create one
  * and pass it through; single runs pass nothing and fetch normally.
  */
-export type ProductContextCache = Map<string, ProductContext>;
+export type ProductContextCache = Map<string, ProductContextResult>;
 
 export async function buildCurationRequest(
   shop: string,
@@ -437,7 +507,10 @@ export async function buildCurationRequest(
   productId: string,
   locale: string,
   options: { translate?: boolean; contextCache?: ProductContextCache } = {},
-): Promise<{ status: "ok"; request: CurationRequest } | { status: "no_ai" | "no_reviews" | "no_product" }> {
+): Promise<
+  | { status: "ok"; request: CurationRequest }
+  | { status: "no_ai" | "no_reviews" | "no_product" | "shopify_error" | "shopify_auth" }
+> {
   const targetLocale = (SHOP_LOCALES as readonly string[]).includes(locale) ? locale : "en";
   const settings = await getSettings(shop);
   if (settings.aiProvider !== "anthropic" || !settings.anthropicApiKey) return { status: "no_ai" };
@@ -447,18 +520,30 @@ export async function buildCurationRequest(
     productId,
     targetLocale,
     asCurationSource(settings.curationSource),
-    { translate: options.translate !== false },
+    {
+      translate: options.translate !== false,
+      payloadBudgetTokens: payloadBudgetFor(settings.aiModel),
+    },
   );
   if (candidates.length < MIN_ORDER) return { status: "no_reviews" };
 
-  const cached = options.contextCache?.get(productId);
-  const context =
-    cached ?? (await fetchProductContext(admin, productId, settings.curationOverviewField));
-  if (!cached) options.contextCache?.set(productId, context);
-  // A real product always has a title; a fully empty context means the Admin
-  // API call failed (product deleted, transient error, or the app was
-  // uninstalled while the task sat in the queue) — never call the model
-  // blind on it. Distinct status so the admin banner explains it honestly.
+  // FAILURES are cached as well as successes. A product is fetched once per
+  // bulk run, not once per (product, locale) — and during a Shopify outage
+  // that is the difference between one failed call per product and seventeen,
+  // aimed at an API that is already struggling or throttling us.
+  let fetched = options.contextCache?.get(productId);
+  if (!fetched) {
+    fetched = await fetchProductContext(admin, productId, settings.curationOverviewField);
+    options.contextCache?.set(productId, fetched);
+  }
+  // Shopify could not answer. Distinct from "deleted": the merchant is told
+  // to try again, or to reconnect the app, rather than told their product is
+  // gone.
+  if (!fetched.ok) return { status: fetched.reason };
+  const context = fetched.context;
+  // The call SUCCEEDED and still returned nothing, so the product really is
+  // gone (deleted, or the app lost access to it) — never call the model blind
+  // on it. Distinct from shopify_error above, so the banner can say which.
   if (!context.title && !context.description) return { status: "no_product" };
   const guidance = (settings.curationInstructions ?? "").trim().slice(0, 1000);
 
@@ -491,7 +576,10 @@ export async function buildCurationRequest(
       system: curationPromptFor(targetLocale),
       userContent,
       model: settings.aiModel,
-      maxTokens: 2500,
+      // Room for 30 ids plus a rationale in ANY of the 17 languages —
+      // Japanese and Arabic cost several times the tokens of the same English
+      // text, and a truncated answer is a wasted, billed call.
+      maxTokens: 4000,
       targetLocale,
       candidates,
       trimmedFrom: trimmedFrom ?? null,
@@ -515,6 +603,23 @@ export async function curatableProductIds(shop: string): Promise<string[]> {
     where: { shop, status: "PUBLISHED" },
   });
   return groups.map((g) => g.productId);
+}
+
+/**
+ * The exact Messages-API params for one curation call — ONE builder, used by
+ * the instant path and the Message Batches path, so the two are always
+ * byte-identical. The thinking override lives here so it can never be present
+ * on one path and missing on the other.
+ */
+export function anthropicMessageParams(request: CurationRequest): Record<string, unknown> {
+  const thinking = thinkingParamFor(request.model);
+  return {
+    model: request.model,
+    max_tokens: request.maxTokens,
+    system: request.system,
+    messages: [{ role: "user", content: request.userContent }],
+    ...(thinking ? { thinking } : {}),
+  };
 }
 
 /**
@@ -570,7 +675,7 @@ export async function applyCurationResponse(
   options: { sourceCount?: number; reviewCount?: number } = {},
 ): Promise<CurationResult> {
   const parsed = extractJson(rawText) as { order?: unknown; rationale?: unknown } | null;
-  if (!parsed) return { status: "failed" };
+  if (!parsed) return { status: "ai_unparseable" };
   const validIds = new Set(request.candidates.map((c) => c.id));
   const order: string[] = [];
   if (Array.isArray(parsed.order)) {
@@ -579,7 +684,7 @@ export async function applyCurationResponse(
       if (order.length >= MAX_ORDER) break;
     }
   }
-  if (order.length < MIN_ORDER) return { status: "failed" };
+  if (order.length < MIN_ORDER) return { status: "ai_bad_ids" };
   const rationale = scrubDashes(
     typeof parsed.rationale === "string" ? parsed.rationale.trim().slice(0, 2000) : "",
     request.targetLocale,
@@ -635,7 +740,11 @@ export async function curateProductLocale(
   const estimated = costUsd({
     model: request.model,
     inputTokens: approxTokens(request.system + request.userContent),
-    outputTokens: OUTPUT_TOKENS_PER_CALL,
+    // The GATE uses the worst case a single call can bill (max_tokens), not
+    // the typical output: a run near the ceiling must not squeeze past on the
+    // typical figure and then bill the maximum. The preview still quotes the
+    // typical figure, which is what runs actually cost.
+    outputTokens: request.maxTokens,
   });
   const budget = await checkBudget(shop, estimated ?? 0);
   if (!budget.ok) return { status: "over_budget" };
@@ -646,9 +755,24 @@ export async function curateProductLocale(
     request.system,
     request.userContent,
     request.maxTokens,
+    // On Sonnet 5 and newer, thinking is ON unless disabled — billed as
+    // output, counted against max_tokens. For this call the whole budget must
+    // be the JSON: a big review set otherwise gets "thought about" until the
+    // budget is gone and the answer truncates before the order even starts.
+    // That was v1.20.0's 90%-failure bug: bigger payloads think longer, so
+    // almost every sizable product died as "the AI call failed".
+    { thinking: thinkingParamFor(request.model) },
   );
-  if (!result) return { status: "failed" };
+  if (!result.ok) {
+    if (result.kind === "auth") return { status: "ai_auth" };
+    if (result.kind === "rejected") return { status: "ai_rejected" };
+    return { status: "ai_busy" };
+  }
   await recordSpend(shop, request.model, result.usage, false);
+  // Truncation is its own diagnosis: the answer began and ran out of room.
+  // "Try again in a minute" would be wrong — the same request does the same
+  // thing every time.
+  if (result.stopReason === "max_tokens") return { status: "ai_truncated" };
   if (!result.text) return { status: "failed" };
 
   return applyCurationResponse(shop, productId, request, result.text);
@@ -750,6 +874,9 @@ function pump(): void {
         }
       })
       .catch((error) => {
+        // Shopify problems no longer arrive here as exceptions — they come
+        // back as a shopify_error/shopify_auth STATUS through the .then above,
+        // so anything reaching this catch really is unexpected.
         console.error("[cellexia] curation task failed", error);
         recordFailure(task.shop, task.productId, task.locale, "failed");
         debounceMap.delete(key);

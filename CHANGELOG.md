@@ -4,6 +4,31 @@ All notable changes to Cellexia Reviews are documented here. The version number 
 `package.json` and stamped into the release ZIP built by `npm run package`
 (`dist/cellexia-reviews-v<version>.zip`).
 
+## 1.20.5 — 2026-08-06
+
+### Fixed
+
+- **"The AI's answer could not be read" on many runs — root cause found and closed.** Two
+  problems stacked:
+  - **Background runs never noticed when an answer ran out of room.** "Curate all" runs as a
+    background batch, and a product with many reviews could overflow the answer allowance the
+    same way in every language — which is why the same product failed in French, Italian and
+    English at once. The immediate run already detected this; the background run fed the cut-off
+    answer to the reader and reported it as unreadable, with advice ("re-run it") that could
+    never help. Background runs now detect it identically, and the answer allowance is doubled
+    so a full-length answer fits with room to spare.
+  - **The reader was too strict about how the answer is wrapped.** A perfectly good answer
+    was thrown away if the model added a remark containing a brace, repeated the answer twice,
+    wrote line breaks inside the explanation, or quoted a review using bare quotation marks.
+    The reader now handles all of these, and when the order list survived but the explanation
+    broke, the order is applied with the explanation left blank instead of failing the run.
+    A cut-off answer still always fails — a half-finished order is never applied.
+
+- **When an answer still cannot be read, you now see it.** The failure list shows the
+  beginning of what the model actually said, so a stubborn case is diagnosable at a glance
+  instead of being a guess. The failure messages were also reworded to give advice that is
+  true for each cause.
+
 ## 1.20.4 — 2026-08-05
 
 ### Fixed

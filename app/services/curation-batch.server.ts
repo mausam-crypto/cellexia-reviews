@@ -536,8 +536,21 @@ async function applyBatchResults(
       ? parsed.result.message!.content!
           .filter((b) => b && b.type === "text" && typeof b.text === "string")
           .map((b) => b.text as string)
-          .join("\n")
+          .join("")
       : "";
+    // Same diagnosis the instant path makes BEFORE parsing: an answer that
+    // ran out of room is truncation, not "could not be read" — feeding it to
+    // the parser would misreport a deterministic problem as a transient one.
+    // Checked before the empty-body guard, because a budget consumed before
+    // any text block IS truncation, not a generic failure. One exception: a
+    // body cut inside the rationale whose "order" array CLOSED is a paid-for
+    // result that can still be applied (order, no rationale) — let it through
+    // to applyCurationResponse, whose salvage handles exactly that.
+    if (parsed.result.message?.stop_reason === "max_tokens" && !hasClosedOrder(body)) {
+      failed += 1;
+      recordBatchFailure(shop, pair, "ai_truncated", body ? body.slice(-160) : undefined);
+      continue;
+    }
     if (!body) {
       failed += 1;
       recordBatchFailure(shop, pair, "failed");
@@ -569,7 +582,12 @@ async function applyBatchResults(
     if (result.status === "ok") succeeded += 1;
     else {
       failed += 1;
-      recordBatchFailure(shop, pair, result.status);
+      recordBatchFailure(
+        shop,
+        pair,
+        result.status,
+        "detail" in result ? result.detail : undefined,
+      );
     }
   }
 
@@ -648,14 +666,20 @@ async function fetchBatchResults(resultsUrl: string, apiKey: string): Promise<Re
   return null;
 }
 
+/** A CLOSED "order": [...] exists in the text — salvageable even if cut later. */
+function hasClosedOrder(body: string): boolean {
+  return /"order"\s*:\s*\[[^\]]*\]/.test(body);
+}
+
 /** Batch failures ride the same recent-failures list as instant runs. */
 function recordBatchFailure(
   shop: string,
   pair: { productId: string; locale: string },
   status: string,
+  detail?: string,
 ): void {
   void import("./curation.server")
-    .then((mod) => mod.recordExternalFailure(shop, pair.productId, pair.locale, status))
+    .then((mod) => mod.recordExternalFailure(shop, pair.productId, pair.locale, status, detail))
     .catch(() => {
       /* reporting only — never break result application */
     });

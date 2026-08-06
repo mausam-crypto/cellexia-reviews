@@ -559,6 +559,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
         productId: f.productId,
         locale: f.locale,
         status: f.status,
+        detail: f.detail ?? null,
       })),
       // v1.20 (SPEC-1.20 §3/§5): spend ceiling, month-to-date spend, batches.
       budgetUsd: settings.curationBudgetUsd ?? null,
@@ -1435,7 +1436,7 @@ interface CurationData {
     rationale: string;
     updatedAt: string;
   }>;
-  failures: Array<{ productId: string; locale: string; status: string }>;
+  failures: Array<{ productId: string; locale: string; status: string; detail: string | null }>;
   /** null ⇒ no ceiling: every run is allowed, whatever it costs. */
   budgetUsd: number | null;
   model: string;
@@ -1469,9 +1470,9 @@ const FAILURE_LABELS: Record<string, string> = {
   ai_busy: "the AI service is busy — trying again in a few minutes usually works",
   ai_auth: "your Claude API key was refused — check it in Settings",
   ai_rejected: "the AI service rejected this request — re-run it; if it keeps happening, the reviews may not fit the model's limit",
-  ai_truncated: "the answer ran out of room before it finished — re-run it after updating the app",
-  ai_unparseable: "the AI's answer could not be read — re-running usually fixes it",
-  ai_bad_ids: "the AI's answer did not name enough real reviews — re-running usually fixes it",
+  ai_truncated: "the answer ran out of room before it finished — re-run it once; if it happens again on the same product, tell your developer",
+  ai_unparseable: "the AI's answer was not in the expected format — the beginning of what it said is shown below; re-run it once",
+  ai_bad_ids: "the AI's answer did not name enough real reviews — re-run it once",
   over_budget: "stopped by your monthly spending limit",
   // Statuses only a background run can produce.
   errored: "Anthropic returned an error for this one — try again",
@@ -1906,13 +1907,22 @@ function CurationCard({
           <Banner tone="warning" title="Some recent runs did not produce a curation">
             <BlockStack gap="100">
               {curation.failures.slice(0, 5).map((f, i) => (
-                <Text key={`${f.productId}|${f.locale}|${i}`} as="p" variant="bodySm">
-                  {(titleById.get(f.productId) ?? f.productId) +
-                    " · " +
-                    f.locale +
-                    " — " +
-                    (FAILURE_LABELS[f.status] ?? f.status)}
-                </Text>
+                <BlockStack key={`${f.productId}|${f.locale}|${i}`} gap="0">
+                  <Text as="p" variant="bodySm">
+                    {(titleById.get(f.productId) ?? f.productId) +
+                      " · " +
+                      f.locale +
+                      " — " +
+                      (FAILURE_LABELS[f.status] ?? f.status)}
+                  </Text>
+                  {/* The head of the answer that could not be used. Without
+                      this, "could not be read" is undiagnosable for anyone. */}
+                  {f.detail ? (
+                    <Text as="p" variant="bodySm" tone="subdued">
+                      {"The answer began: \u201C" + f.detail.slice(0, 160) + "\u2026\u201D"}
+                    </Text>
+                  ) : null}
+                </BlockStack>
               ))}
             </BlockStack>
           </Banner>

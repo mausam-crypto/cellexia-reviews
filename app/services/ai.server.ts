@@ -116,16 +116,125 @@ export function extractJson(text: string): unknown {
   if (fence && fence[1]) candidates.push(fence[1]);
   candidates.push(text);
   for (const candidate of candidates) {
-    const start = candidate.indexOf("{");
-    const end = candidate.lastIndexOf("}");
-    if (start < 0 || end <= start) continue;
-    try {
-      return JSON.parse(candidate.slice(start, end + 1));
-    } catch {
-      // fall through to the next candidate
+    // Two ways of locating the object, then each again after repairing raw
+    // control characters. Order matters: the cheap historical slice first,
+    // so every answer that parsed before still parses identically.
+    const naive = naiveJsonSlice(candidate);
+    const balanced = balancedJsonSlice(candidate);
+    for (const slice of [naive, balanced, repairJsonControlChars(naive), repairJsonControlChars(balanced)]) {
+      if (!slice) continue;
+      try {
+        return JSON.parse(slice);
+      } catch {
+        // fall through to the next slice
+      }
     }
   }
   return null;
+}
+
+/** first "{" to last "}" — the historical fast path. */
+function naiveJsonSlice(text: string): string | null {
+  const start = text.indexOf("{");
+  const end = text.lastIndexOf("}");
+  if (start < 0 || end <= start) return null;
+  return text.slice(start, end + 1);
+}
+
+/**
+ * first "{" to its MATCHING brace, tracking strings and escapes. This is what
+ * survives prose AFTER the object that itself contains a brace, or a second
+ * JSON object later in the answer — both of which drag lastIndexOf("}") past
+ * the real end and made valid answers unreadable. A truncated object never
+ * closes, returns null here too, and stays a failure — a half-finished order
+ * must never silently become the curation.
+ */
+function balancedJsonSlice(text: string): string | null {
+  // Try every opening brace, not just the first: a brace inside a prose
+  // preamble ("consider {results, texture}...") must not poison the scan for
+  // the real object that follows. Bounded so a pathological answer cannot
+  // turn this quadratic.
+  let from = 0;
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const start = text.indexOf("{", from);
+    if (start < 0) return null;
+    const result = balancedFrom(text, start);
+    if (result.slice) return result.slice;
+    // An UNTERMINATED object means truncation: every later opening brace
+    // lies inside it, and "successfully" parsing an inner fragment would
+    // return the wrong object. Stop scanning entirely.
+    if (result.unterminated) return null;
+    from = start + 1;
+  }
+  return null;
+}
+
+function balancedFrom(
+  text: string,
+  start: number,
+): { slice: string | null; unterminated: boolean } {
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < text.length; i += 1) {
+    const ch = text[i];
+    if (escaped) {
+      escaped = false;
+      continue;
+    }
+    if (ch === "\\") {
+      if (inString) escaped = true;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      continue;
+    }
+    if (inString) continue;
+    if (ch === "{") depth += 1;
+    else if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        const slice = text.slice(start, i + 1);
+        // Only offer slices that actually parse — the caller tries the next
+        // opening brace otherwise. A prose {aside} fails here and moves on.
+        try {
+          JSON.parse(slice);
+          return { slice, unterminated: false };
+        } catch {
+          return { slice: null, unterminated: false };
+        }
+      }
+    }
+  }
+  return { slice: null, unterminated: true };
+}
+
+/**
+ * Escapes raw control characters that appear INSIDE string values — a model
+ * writing a multi-paragraph rationale sometimes emits literal newlines inside
+ * the JSON string, which is invalid JSON even though every human reading it
+ * sees exactly what was meant. Characters outside strings are left alone.
+ */
+function repairJsonControlChars(slice: string | null): string | null {
+  if (!slice || !/[\u0000-\u001f]/.test(slice)) return null;
+  let out = "";
+  let inString = false;
+  let escaped = false;
+  for (const ch of slice) {
+    if (inString && !escaped && ch.charCodeAt(0) < 0x20) {
+      if (ch === "\n") out += "\\n";
+      else if (ch === "\r") out += "\\r";
+      else if (ch === "\t") out += "\\t";
+      // Other control characters carry no meaning a rationale needs.
+      continue;
+    }
+    out += ch;
+    if (escaped) escaped = false;
+    else if (ch === "\\" && inString) escaped = true;
+    else if (ch === '"') inString = !inString;
+  }
+  return out;
 }
 
 /**
@@ -195,7 +304,9 @@ export async function callClaude(
         ? data.content
             .filter((block) => block && block.type === "text" && typeof block.text === "string")
             .map((block) => block.text as string)
-            .join("\n")
+            // Joined with nothing: these are fragments of ONE answer, and an
+            // inserted newline could land inside a JSON token.
+            .join("")
         : "";
       return text.length > 0 ? text : null;
     } catch (error) {
@@ -312,7 +423,9 @@ export async function callClaudeWithUsage(
         ? data.content
             .filter((block) => block && block.type === "text" && typeof block.text === "string")
             .map((block) => block.text as string)
-            .join("\n")
+            // Joined with nothing: these are fragments of ONE answer, and an
+            // inserted newline could land inside a JSON token.
+            .join("")
         : "";
       if (stopReason === "refusal") return { ok: true, text: "", usage, stopReason };
       if (stopReason === "max_tokens") {

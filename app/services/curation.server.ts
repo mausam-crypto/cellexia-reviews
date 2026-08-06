@@ -475,6 +475,11 @@ export type CurationResult =
         | "ai_bad_ids"
         | "failed"
         | "over_budget";
+      /**
+       * Bounded head of the model's answer, kept only for the failures where
+       * seeing what was said is the diagnosis (ai_unparseable, ai_bad_ids).
+       */
+      detail?: string;
     };
 
 /**
@@ -579,7 +584,11 @@ export async function buildCurationRequest(
       // Room for 30 ids plus a rationale in ANY of the 17 languages —
       // Japanese and Arabic cost several times the tokens of the same English
       // text, and a truncated answer is a wasted, billed call.
-      maxTokens: 4000,
+      // Thinking is disabled, so this cap is pure answer headroom: 30 ids plus
+      // a long rationale in the costliest script fits well inside it, and a
+      // model that lists a few dozen extra ids no longer truncates. Output is
+      // billed on what is USED, so the raise costs nothing on normal runs.
+      maxTokens: 8000,
       targetLocale,
       candidates,
       trimmedFrom: trimmedFrom ?? null,
@@ -666,6 +675,33 @@ export async function rebuildCurationTarget(
  * so a batch-produced curation is subject to exactly the same id validation,
  * MIN_ORDER floor and dash scrub as an instant one.
  */
+/**
+ * Last resort for an answer whose JSON broke INSIDE the rationale (the model
+ * quoting review text with a raw double quote is the classic). The order
+ * array itself is unambiguous — ids are ^[A-Za-z0-9_-]+$ tokens — so if a
+ * CLOSED "order": [...] exists, take it and drop the rationale rather than
+ * fail the whole run. The closing bracket is required, so a truncated array
+ * can never half-apply; every id is still validated against the candidate
+ * set by the caller.
+ */
+function salvageOrderOnly(rawText: string): { order: string[]; rationale: string } | null {
+  const m = rawText.match(/"order"\s*:\s*\[([^\]]*)\]/);
+  if (!m) return null;
+  const ids = [...m[1].matchAll(/"([A-Za-z0-9_-]+)"/g)].map((g) => g[1]);
+  if (ids.length === 0) return null;
+  return { order: ids, rationale: "" };
+}
+
+/** A CLOSED "order": [...] survived the cutoff — the salvage can still apply it. */
+function hasUsableOrder(text: string): boolean {
+  return /"order"\s*:\s*\[[^\]]*\]/.test(text);
+}
+
+/** One line, bounded, whitespace-collapsed — enough to see what came back. */
+function failureSnippet(rawText: string): string {
+  return rawText.replace(/\s+/g, " ").trim().slice(0, 300);
+}
+
 export async function applyCurationResponse(
   shop: string,
   productId: string,
@@ -674,8 +710,20 @@ export async function applyCurationResponse(
   /** Batch results override these with the figures from SUBMIT time. */
   options: { sourceCount?: number; reviewCount?: number } = {},
 ): Promise<CurationResult> {
-  const parsed = extractJson(rawText) as { order?: unknown; rationale?: unknown } | null;
-  if (!parsed) return { status: "ai_unparseable" };
+  let parsed = extractJson(rawText) as { order?: unknown; rationale?: unknown } | null;
+  // Salvage when there was no parse at all, AND when the parse produced an
+  // object without a usable order (the model nested it, renamed it, or the
+  // balanced scan landed on a smaller object) — the regex sees through both.
+  if (!parsed || !Array.isArray(parsed.order)) parsed = salvageOrderOnly(rawText) ?? parsed;
+  // Keep the head of the answer with the failure: without it, "could not be
+  // read" is undiagnosable — nobody, including us, can see what was said.
+  if (!parsed) {
+    const detail = failureSnippet(rawText);
+    // The in-memory failures list dies with the process — the log copy is
+    // what survives a restart for diagnosis.
+    console.error(`[cellexia] curation answer unparseable: ${detail}`);
+    return { status: "ai_unparseable", detail };
+  }
   const validIds = new Set(request.candidates.map((c) => c.id));
   const order: string[] = [];
   if (Array.isArray(parsed.order)) {
@@ -684,7 +732,9 @@ export async function applyCurationResponse(
       if (order.length >= MAX_ORDER) break;
     }
   }
-  if (order.length < MIN_ORDER) return { status: "ai_bad_ids" };
+  if (order.length < MIN_ORDER) {
+    return { status: "ai_bad_ids", detail: failureSnippet(rawText) };
+  }
   const rationale = scrubDashes(
     typeof parsed.rationale === "string" ? parsed.rationale.trim().slice(0, 2000) : "",
     request.targetLocale,
@@ -769,11 +819,14 @@ export async function curateProductLocale(
     return { status: "ai_busy" };
   }
   await recordSpend(shop, request.model, result.usage, false);
-  // Truncation is its own diagnosis: the answer began and ran out of room.
-  // "Try again in a minute" would be wrong — the same request does the same
-  // thing every time.
-  if (result.stopReason === "max_tokens") return { status: "ai_truncated" };
+  // Empty text first (a refusal always is), then every cutoff that is not a
+  // clean finish counts as truncation — max_tokens today, and whatever other
+  // stop reasons future models add, rather than falling through to the
+  // parser and reading as "could not be read".
   if (!result.text) return { status: "failed" };
+  if (result.stopReason && result.stopReason !== "end_turn" && !hasUsableOrder(result.text)) {
+    return { status: "ai_truncated", detail: failureSnippet(result.text.slice(-300)) };
+  }
 
   return applyCurationResponse(shop, productId, request, result.text);
 }
@@ -815,15 +868,24 @@ export function lastCurationAttempt(shop: string, productId: string, locale: str
 
 
 /** Recent non-ok runs per shop so the admin card can show them (in-process). */
-const recentFailures = new Map<string, Array<{ productId: string; locale: string; status: string; at: number }>>();
+const recentFailures = new Map<
+  string,
+  Array<{ productId: string; locale: string; status: string; detail?: string; at: number }>
+>();
 const FAILURE_TTL_MS = 24 * 60 * 60 * 1000;
 
-function recordFailure(shop: string, productId: string, locale: string, status: string): void {
+function recordFailure(
+  shop: string,
+  productId: string,
+  locale: string,
+  status: string,
+  detail?: string,
+): void {
   // One entry per (product, locale): a repeat failure replaces the old one.
   const list = (recentFailures.get(shop) ?? []).filter(
     (f) => !(f.productId === productId && f.locale === locale),
   );
-  list.unshift({ productId, locale, status, at: Date.now() });
+  list.unshift({ productId, locale, status, detail, at: Date.now() });
   recentFailures.set(shop, list.slice(0, 20));
 }
 
@@ -846,8 +908,9 @@ export function recordExternalFailure(
   productId: string,
   locale: string,
   status: string,
+  detail?: string,
 ): void {
-  recordFailure(shop, productId, locale, status);
+  recordFailure(shop, productId, locale, status, detail);
   debounceMap.delete(`${shop}|${productId}|${locale}`);
 }
 
@@ -867,7 +930,13 @@ function pump(): void {
         if (result.status === "ok") {
           clearFailure(task.shop, task.productId, task.locale);
         } else {
-          recordFailure(task.shop, task.productId, task.locale, result.status);
+          recordFailure(
+            task.shop,
+            task.productId,
+            task.locale,
+            result.status,
+            "detail" in result ? result.detail : undefined,
+          );
           // A failed run must be retryable right away — the debounce guards
           // against redundant re-runs of a SUCCESSFUL curation, not retries.
           debounceMap.delete(key);

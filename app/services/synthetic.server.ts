@@ -1143,7 +1143,9 @@ async function callClaudeWithUsage(
         ? data.content
             .filter((block) => block && block.type === "text" && typeof block.text === "string")
             .map((block) => block.text as string)
-            .join("\n")
+            // Fragments of one answer — a joined-in newline could land inside
+            // a JSON token.
+            .join("")
         : "";
       outcome.text = text.length > 0 ? text : null;
       return outcome;

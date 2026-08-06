@@ -337,6 +337,12 @@ export interface ListResponse {
     showTranslate: boolean;
     /** v1.16 (SPEC-1.16 §3): effective Q&A visibility (opt-in AND provider configured). */
     showQna: boolean;
+    /**
+     * v1.21: present only on unfiltered "top" responses — true when the order
+     * being served is an AI curation, so the widget can relabel the default
+     * sort "Most relevant" instead of "Top reviews".
+     */
+    curatedOrder?: boolean;
     brandDisplayName: string;
     /** Active storefront design version, applied as `data-cx-skin`. */
     designTheme: DesignTheme;

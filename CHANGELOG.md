@@ -4,6 +4,26 @@ All notable changes to Cellexia Reviews are documented here. The version number 
 `package.json` and stamped into the release ZIP built by `npm run package`
 (`dist/cellexia-reviews-v<version>.zip`).
 
+## 1.21.0 — 2026-08-06
+
+### Changed
+
+- **Under the AI-curated order, the default sort is now labeled "Most relevant" instead of
+  "Top reviews"** — in all 17 languages. "Top reviews" invites shoppers to audit the order
+  against helpful-vote counts, and a curated order deliberately does not follow them; a
+  skeptical shopper spotting a low-vote review above a high-vote one reads that as the store
+  hiding something. "Most relevant" sets the honest expectation. The label changes ONLY when
+  a curated order is genuinely being served for that product and language — products without
+  a curation fall back to the classic order and keep saying "Top reviews", so the label never
+  overpromises. "Most recent" is unchanged and shoppers can still sort and filter everything.
+
+### Fixed
+
+- The locale check now also verifies widget strings all the way into the snippet that
+  actually delivers them to the storefront. A gap there could previously let a string exist
+  in every translation file yet render as a raw key on the product page (caught while
+  building this release).
+
 ## 1.20.5 — 2026-08-06
 
 ### Fixed

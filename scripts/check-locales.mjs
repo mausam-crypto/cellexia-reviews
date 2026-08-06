@@ -295,7 +295,10 @@ console.log(`Locale check passed: ${filesChecked} file(s) OK.`);
   }
   // Group-prefix helpers (tq → "qna." + key, etc.): resolve their literal
   // keys too, so a group helper cannot hide a missing snippet entry.
-  const HELPER_GROUPS = { tq: "qna" };
+  // tw was missing from this list, and that blind spot let a widget string
+  // ship in the locale FILES but not in the SNIPPET that actually delivers
+  // strings to the storefront (v1.21's sort_relevant, caught by hand).
+  const HELPER_GROUPS = { tq: "qna", tw: "widget" };
   for (const [helper, group] of Object.entries(HELPER_GROUPS)) {
     for (const m of js.matchAll(new RegExp(`\\b${helper}\\(\\s*"([a-z0-9_]+)"`, "g"))) {
       consumed.add(`${group}.${m[1]}`);

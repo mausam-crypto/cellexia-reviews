@@ -633,6 +633,13 @@ drop reviews, keeping a deliberate spread across 5, 4, 3, 2 and 1 stars rather t
 newest. When that happens the table says so ("read 640 of 812"), so you are never quietly
 shown a partial answer.
 
+**What shoppers see on the sort menu.** When a curated order is being served, the default
+sort is labeled **"Most relevant"** (translated in every language) instead of "Top reviews" —
+because a curated order deliberately does not follow helpful-vote counts, and the honest label
+is what keeps a skeptical shopper's trust. Products without a curation keep the classic
+"Top reviews" label and order. Shoppers can still switch to "Most recent" and use every
+filter as before.
+
 **What the agent counts as a review.** Exactly what the product page shows: every published
 review of that product, whatever created it — the storefront form, a CSV import, or the QA
 generator (§12). That is deliberate: the curator decides the order shoppers see, so it has to

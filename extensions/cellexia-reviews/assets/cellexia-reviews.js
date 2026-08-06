@@ -1321,7 +1321,10 @@ function renderControls() {
  ap(sortWrap, sortLabel);
  var select = el("select", "cx-sort__select");
  select.id = sortId;
- [["top", tw("sort_top")], ["recent", tw("sort_recent")]].forEach((opt) => {
+ // v1.21: a curated order does not follow helpful votes, so it must not be
+ // labeled "Top reviews" (which shoppers audit against vote counts).
+ var topLabel = cfg.curatedOrder ? tw("sort_relevant") : tw("sort_top");
+ [["top", topLabel], ["recent", tw("sort_recent")]].forEach((opt) => {
   var o = el("option", null, opt[1]);
   o.value = opt[0];
   if (state.sort === opt[0]) o.selected = true;
@@ -2195,6 +2198,8 @@ function applyServerSettings(res) {
   cfg.showTranslate = showTr === true || showTr === "true" || showTr === 1;
  }
  if (own(s, "showQna")) cfg.showQna = s.showQna === true; // v1.16 §3
+ // v1.21: only on unfiltered top responses; absent → keep the last known.
+ if (own(s, "curatedOrder")) cfg.curatedOrder = s.curatedOrder === true;
  var brand = own(s, "brandDisplayName") ? s.brandDisplayName :
   (own(res, "brand_display_name") ? res.brand_display_name : undefined);
  if (typeof brand === "string" && brand) cfg.brand = brand;

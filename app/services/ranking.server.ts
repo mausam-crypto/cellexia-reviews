@@ -61,6 +61,13 @@ export interface RankedPage {
    */
   ids: string[] | null;
   orderBy?: Prisma.ReviewOrderByWithRelationInput[];
+  /**
+   * v1.21: true when an AI-curated prefix was actually applied to THIS page's
+   * order — the strategy being ai_curated is not enough (a product with no
+   * stored curation silently falls back to amazon_top, and the widget must
+   * not relabel the sort for an order that is not, in fact, curated).
+   */
+  curatedApplied?: boolean;
 }
 
 /**
@@ -185,10 +192,11 @@ export async function fetchRankedPage(
     }
   }
   const prefix = [...pins, ...curated];
+  const curatedApplied = curated.length > 0;
 
   // Plain path: a single orderBy the caller pages with its own skip/take.
   if (prefix.length === 0 && strategy !== "balanced") {
-    return { ids: null, orderBy: strategyOrderBy(strategy, display.boosts) };
+    return { ids: null, orderBy: strategyOrderBy(strategy, display.boosts), curatedApplied };
   }
 
   const pagePrefix = prefix.slice(Math.min(start, prefix.length), Math.min(end, prefix.length));
@@ -215,7 +223,7 @@ export async function fetchRankedPage(
     }
   }
 
-  return { ids: [...pagePrefix, ...remainderIds] };
+  return { ids: [...pagePrefix, ...remainderIds], curatedApplied };
 }
 
 /* ------------------------------------------------------------------------- *

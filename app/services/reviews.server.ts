@@ -160,6 +160,10 @@ export async function listReviews(shop: string, params: ListParams): Promise<Lis
   const sort: Sort = params.sort === "recent" ? "recent" : "top";
 
   const where: Prisma.ReviewWhereInput = { shop, productId, status: "PUBLISHED" };
+  // v1.21: whether THIS response's order used an AI curation. Stays undefined
+  // on "recent" and filtered responses (which never serve the curated prefix),
+  // so the widget keeps the state it learned from the unfiltered top load.
+  let curatedApplied: boolean | undefined;
   // v1.8 (SPEC-1.8 §2): pinned ("featured") reviews apply ONLY to the
   // unfiltered "top" view — a filtered/searched/topic view must honor the
   // filter, not the pins. Every shopper constraint added to `where` below
@@ -250,6 +254,7 @@ export async function listReviews(shop: string, params: ListParams): Promise<Lis
         }
       : display;
     const ranked = await fetchRankedPage(shop, productId, effective, page, perPage, where, params.locale);
+    curatedApplied = ranked.curatedApplied === true;
     if (ranked.ids === null) {
       rows = await prisma.review.findMany({
         where,
@@ -337,6 +342,9 @@ export async function listReviews(shop: string, params: ListParams): Promise<Lis
         settings.showQna &&
         settings.aiProvider === "anthropic" &&
         Boolean(settings.anthropicApiKey),
+      // v1.21: lets the widget label the default sort honestly ("Most
+      // relevant" only when a curated order is genuinely being served).
+      ...(curatedApplied !== undefined ? { curatedOrder: curatedApplied } : {}),
     },
   } as ListResponse;
 

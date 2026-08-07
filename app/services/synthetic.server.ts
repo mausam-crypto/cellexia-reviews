@@ -159,6 +159,12 @@ export interface SyntheticConfig {
   structuredAttrs: boolean;
   /** Status at creation. */
   status: "PUBLISHED" | "PENDING";
+  /**
+   * v1.25: how human the writing reads, 0-100. 0 = every review polished,
+   * 100 = most reviews carry slips. Maps onto the clean/minor/sloppy mix;
+   * 50 (the default) restores the v1.23 feel after v1.24 overshot.
+   */
+  humanTouch: number;
   /** v1.24: the skeptical double-check pass (SPEC-1.24 §1). */
   skepticCheck: boolean;
   /** Reviews per skeptic call ("every batch of X"), clamped 5–60. */
@@ -342,6 +348,7 @@ export function parseSyntheticConfig(
     assignVariants,
     structuredAttrs: !(v.structuredAttrs === false || v.structuredAttrs === "false"),
     status: v.status === "PENDING" ? "PENDING" : "PUBLISHED",
+    humanTouch: clampInt(v.humanTouch, 0, 100, 50),
     skepticCheck: !(v.skepticCheck === false || v.skepticCheck === "false"),
     skepticBatchSize: clampInt(v.skepticBatchSize, 5, 60, 20),
     ...(languageWeights ? { languageWeights } : {}),
@@ -865,10 +872,7 @@ export function buildBatchPlan(config: SyntheticConfig, batchId: string): Synthe
     // v1.23: graded, and much more human than the old 12% single-typo flag.
     // Real review sections are messy; a batch that is 95% polished reads
     // generated. Roughly half stay clean so the mess never looks systematic.
-    const styleRoll = rng();
-    // v1.24: pushed further toward human — 30% clean, 40% minor, 30% sloppy.
-    const writing: "clean" | "minor_slips" | "casual_sloppy" =
-      styleRoll < 0.3 ? "clean" : styleRoll < 0.7 ? "minor_slips" : "casual_sloppy";
+    const writing = writingStyleFor(rng(), config.humanTouch ?? 50);
     const persona = personaByReview[i];
     specs.push({
       index: i,
@@ -957,6 +961,25 @@ const RESULTS_PROMPT: Record<string, string> = {
  * token-count ONE real chunk prompt with the exact builders the generator
  * uses (SPEC-1.7 §4 "counted baseline").
  */
+/**
+ * v1.25 (SPEC-1.24 addendum): the "Human touch" slider, as a distribution.
+ * level 0 → 100% clean; level 100 → 0/60/40 clean/minor/sloppy; linear in
+ * between (level 50 ≈ 50/30/20, the v1.23 feel; level 70 ≈ v1.24's 30/42/28).
+ * Exactly ONE rng draw per review whatever the level — the batch plan's RNG
+ * consumption is resume-stable by contract.
+ */
+export function writingStyleFor(
+  roll: number,
+  humanTouch: number,
+): "clean" | "minor_slips" | "casual_sloppy" {
+  const level = Math.min(100, Math.max(0, humanTouch)) / 100;
+  const clean = 1 - level;
+  const minor = 0.6 * level;
+  if (roll < clean) return "clean";
+  if (roll < clean + minor) return "minor_slips";
+  return "casual_sloppy";
+}
+
 export function buildSystemPrompt(brandDisplayName: string): string {
   return `You write realistic customer product reviews used as internal QA/test data for a premium anti-aging skincare storefront. Each request supplies real product context and a list of review specifications. For every spec you write ONLY the free-text parts: a natural title, the review body, and (when reply_needed is true) the merchant's public reply. Every structured fact (rating, language, verified, variant, usage time, results) is already fixed. Your text must agree with it.
 

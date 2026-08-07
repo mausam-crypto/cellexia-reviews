@@ -73,6 +73,15 @@ function* walk(dir, rel = "") {
       yield* walk(abs, relPath);
     } else if (entry.isFile()) {
       if (isExcludedFile(entry.name)) continue;
+      // scripts/dev-tests generates bundles and stubs beside itself on every
+      // run — only the suites and their README belong in a release.
+      if (
+        relPath.startsWith("scripts/dev-tests/") &&
+        !/\.test\.mjs$/.test(entry.name) &&
+        entry.name !== "README.md"
+      ) {
+        continue;
+      }
       yield { abs, rel: relPath };
     }
   }

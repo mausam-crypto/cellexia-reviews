@@ -1001,6 +1001,7 @@ export default function QaGeneratorRoute() {
   const [dateEnd, setDateEnd] = useState(() => todayIso());
   const [assignVariants, setAssignVariants] = useState(false);
   const [structuredAttrs, setStructuredAttrs] = useState(true);
+  const [humanTouch, setHumanTouch] = useState(50);
   const [skepticCheck, setSkepticCheck] = useState(true);
   const [skepticBatchSize, setSkepticBatchSize] = useState("20");
   const [status, setStatus] = useState<"PUBLISHED" | "PENDING">("PUBLISHED");
@@ -1335,6 +1336,7 @@ export default function QaGeneratorRoute() {
       dateEnd,
       assignVariants,
       structuredAttrs,
+      humanTouch,
       skepticCheck,
       skepticBatchSize: Math.min(60, Math.max(5, Number(skepticBatchSize) || 20)),
       status,
@@ -2006,6 +2008,18 @@ export default function QaGeneratorRoute() {
                       helpText="Age, skin concerns, time using and results seen — coherent with each rating"
                     />
                   </FormLayout.Group>
+
+                  {/* v1.25: the human-touch dial. */}
+                  <RangeSlider
+                    label={`Human touch level: ${humanTouch}`}
+                    value={humanTouch}
+                    onChange={(value) => setHumanTouch(typeof value === "number" ? value : value[0])}
+                    min={0}
+                    max={100}
+                    step={5}
+                    output
+                    helpText="How human the writing reads. 0 = every review polished. 50 = about half carry a small slip (a typo, a lowercase start). 100 = most reviews read hurried, with grammar slips and imperfect capitalization. Mistakes never change facts or ratings."
+                  />
 
                   {/* v1.24 (SPEC-1.24): the skeptical double-check. */}
                   <FormLayout.Group>

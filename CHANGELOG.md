@@ -4,6 +4,25 @@ All notable changes to Cellexia Reviews are documented here. The version number 
 `package.json` and stamped into the release ZIP built by `npm run package`
 (`dist/cellexia-reviews-v<version>.zip`).
 
+## 1.25.0 — 2026-08-06
+
+### Added — QA review generator
+
+- **"Human touch level" slider (0–100).** 1.24.0's fixed writing mix read too messy on a real
+  store, so how human the reviews sound is now yours to set. 0 = every review polished.
+  50 (the default) ≈ half the reviews carry a small slip — the pre-1.24 feel. 100 = most
+  reviews read hurried, though a share always keeps a slip or two rather than everything
+  turning to mush. Applies to headlines and bodies alike; mistakes never change facts or
+  ratings; the skeptical double-check continues to treat deliberate slips as human, not as
+  something to remove.
+
+### Internal
+
+- The developer regression suites (money accounting, curation parity, the QA generator's
+  checks) now live in the repo at `scripts/dev-tests/` instead of a session workspace, so
+  they ship with every ZIP and cannot be lost. `node scripts/dev-tests/<name>.test.mjs` runs
+  any of them with no database or API key.
+
 ## 1.24.0 — 2026-08-06
 
 ### Added — QA review generator

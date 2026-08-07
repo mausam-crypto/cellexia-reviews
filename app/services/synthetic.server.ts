@@ -66,6 +66,7 @@ import {
 import type { ShopLocale } from "~/types/cellexia";
 import { recomputeProduct } from "./aggregates.server";
 import { createReview } from "./reviews.server";
+import { extractJson } from "./ai.server";
 import { thinkingParamFor } from "./pricing.server";
 import { getSettings } from "./settings.server";
 import {
@@ -73,7 +74,14 @@ import {
   formatDisplayName,
   poolFor,
 } from "./synthetic-names.server";
-import { LENGTH_MIX, PERSONA_BRIEFS, STYLE_RULES, scrubDashes } from "./synthetic-prompts.server";
+import {
+  LENGTH_MIX,
+  PERSONA_BRIEFS,
+  STYLE_RULES,
+  hasFragranceFreeClaim,
+  scrubDashes,
+  scrubEmojis,
+} from "./synthetic-prompts.server";
 import type { LengthBand } from "./synthetic-prompts.server";
 
 /**
@@ -151,6 +159,10 @@ export interface SyntheticConfig {
   structuredAttrs: boolean;
   /** Status at creation. */
   status: "PUBLISHED" | "PENDING";
+  /** v1.24: the skeptical double-check pass (SPEC-1.24 §1). */
+  skepticCheck: boolean;
+  /** Reviews per skeptic call ("every batch of X"), clamped 5–60. */
+  skepticBatchSize: number;
   /**
    * Optional per-language shares (SPEC-1.10 §2). Keys ⊆ `languages`, values
    * ≥ 0 relative weights (the UI sends percentages; any positive scale
@@ -330,6 +342,8 @@ export function parseSyntheticConfig(
     assignVariants,
     structuredAttrs: !(v.structuredAttrs === false || v.structuredAttrs === "false"),
     status: v.status === "PENDING" ? "PENDING" : "PUBLISHED",
+    skepticCheck: !(v.skepticCheck === false || v.skepticCheck === "false"),
+    skepticBatchSize: clampInt(v.skepticBatchSize, 5, 60, 20),
     ...(languageWeights ? { languageWeights } : {}),
     ...(variantWeights ? { variantWeights } : {}),
   };
@@ -536,7 +550,7 @@ export interface SyntheticReviewSpec {
   displayName: string;
   country: string | null;
   /** ≤ 15% of reviews get one small typo / casual punctuation. */
-  imperfect: boolean;
+  writing: "clean" | "minor_slips" | "casual_sloppy";
 }
 
 /** Plausible reviewer countries per locale (adds realism to the widget). */
@@ -848,7 +862,13 @@ export function buildBatchPlan(config: SyntheticConfig, batchId: string): Synthe
     const countries = LOCALE_COUNTRIES[languageByReview[i]] ?? null;
     const country =
       countries && rng() < 0.7 ? countries[Math.floor(rng() * countries.length)] : null;
-    const imperfect = rng() < 0.12;
+    // v1.23: graded, and much more human than the old 12% single-typo flag.
+    // Real review sections are messy; a batch that is 95% polished reads
+    // generated. Roughly half stay clean so the mess never looks systematic.
+    const styleRoll = rng();
+    // v1.24: pushed further toward human — 30% clean, 40% minor, 30% sloppy.
+    const writing: "clean" | "minor_slips" | "casual_sloppy" =
+      styleRoll < 0.3 ? "clean" : styleRoll < 0.7 ? "minor_slips" : "casual_sloppy";
     const persona = personaByReview[i];
     specs.push({
       index: i,
@@ -871,7 +891,7 @@ export function buildBatchPlan(config: SyntheticConfig, batchId: string): Synthe
       quirks: persona.quirks ?? null,
       displayName: displayNames[i],
       country,
-      imperfect,
+      writing,
     });
   }
   return specs;
@@ -951,7 +971,7 @@ Hard rules:
 - Stay consistent with time_using and results_seen: someone using the product under a week cannot report long-term results; "too early to tell" means no visible results yet.
 - Ground concrete product details in the provided context only; never invent ingredient percentages or medical claims; never name real competitor brands.
 - Titles: natural and specific, at most 80 characters, no surrounding quotes.
-- When "imperfect" is true include exactly one small typo or casual punctuation slip; otherwise write cleanly.
+- "writing" controls polish, and it applies to the TITLE as much as the body. "clean": normal careful writing. "minor_slips": one or two small human slips, e.g. a typo, a missing apostrophe, a lowercase sentence start, a doubled word; the title may start lowercase or drop its end punctuation. "casual_sloppy": clearly hurried real-shopper writing with several small grammar mistakes and imperfect capitalization (lowercase sentence starts, maybe the product name uncapitalized, perhaps ONE word in caps for emphasis), loose comma use, missing end punctuation, inconsistent spacing, sometimes doubled exclamation marks; the title reads like a dashed-off fragment (that kind of title: two to four plain words, maybe uncapitalized, maybe with doubled punctuation; invent your own in the review's language, never reuse an example verbatim). Always fully readable and native-feeling in that language, never gibberish, and never changing facts or the rating's sentiment.
 - When "reply_needed" is true, "reply" is a warm, professional public response of 1 to 3 sentences from the brand "${brandDisplayName}", in the same language, thanking the reviewer and addressing their specific point (apologetic and constructive for low ratings). When false, "reply" must be null.
 - These are fictional reviews by fictional customers. Do not mention AI, QA, testing, or that anything is synthetic.
 - ${STYLE_RULES}`;
@@ -993,7 +1013,7 @@ export function buildUserContent(config: SyntheticConfig, specs: SyntheticReview
           ? { results_seen: spec.resultsSeen.map((k) => RESULTS_PROMPT[k] ?? k).join("; ") }
           : {}),
         reply_needed: spec.wantsReply,
-        imperfect: spec.imperfect,
+        writing: spec.writing,
       }),
     );
   });
@@ -1230,17 +1250,31 @@ async function generateChunkTexts(
       // dash-only string scrubs down to nothing). The spec's language picks
       // the locale-appropriate pause mark (、 for ja, ، for ar).
       const lang = specs[index].language;
+      // v1.23: emoji scrub rides with the dash scrub — order does not matter
+      // between them, both are idempotent and character-local.
       const body =
-        typeof record.body === "string" ? scrubDashes(record.body.trim(), lang).slice(0, 5000) : "";
+        typeof record.body === "string"
+          ? scrubEmojis(scrubDashes(record.body.trim(), lang)).slice(0, 5000)
+          : "";
       if (!body) return;
       const titleClean =
-        typeof record.title === "string" ? scrubDashes(record.title.trim(), lang).slice(0, 150) : "";
+        typeof record.title === "string"
+          ? scrubEmojis(scrubDashes(record.title.trim(), lang)).slice(0, 150)
+          : "";
       const title = titleClean || null;
       const replyClean =
         specs[index].wantsReply && typeof record.reply === "string"
-          ? scrubDashes(record.reply.trim(), lang).slice(0, 5000)
+          ? scrubEmojis(scrubDashes(record.reply.trim(), lang)).slice(0, 5000)
           : "";
       const reply = replyClean || null;
+      // v1.23: an absence-of-scent claim is a factual statement the merchant
+      // never made. It cannot be text-edited out safely, so the review is
+      // DROPPED (the batch runs a review short rather than shipping the
+      // claim; the admin totals always reflect what was actually stored).
+      if (hasFragranceFreeClaim(`${title ?? ""} ${body} ${reply ?? ""}`)) {
+        console.error(`[cellexia] synthetic: dropped a review claiming fragrance-free (${lang})`);
+        return;
+      }
       byIndex.set(index, { title, body, reply });
     });
 
@@ -1678,6 +1712,157 @@ async function cancelAndDeleteJobs(shop: string, batchId?: string): Promise<void
  * the caller's job (the route holds the admin client) — use
  * `syntheticProductIds` BEFORE deleting to know which products to re-sync.
  */
+/* ------------------------------------------------------------------------- *
+ * Skeptical double-check (SPEC-1.24)
+ * ------------------------------------------------------------------------- */
+
+/** Server-side ceiling on how much of one group a paranoid answer may cut. */
+const SKEPTIC_MAX_REMOVAL_SHARE = 0.4;
+
+export function buildSkepticSystemPrompt(): string {
+  return `You are a skeptical review auditor for an online store. You receive a numbered batch of product reviews and must identify the ones that READ machine-written, so they can be removed.
+
+Signs to hunt: uniform sentence rhythm across different reviews; over-balanced pros-and-cons arcs; assistant vocabulary ("overall", "that said", "I appreciate"); suspicious polish in every single review; the same phrase, structure or arc repeating across the batch; generic praise with no lived detail; translated-sounding phrasing that no native shopper would type.
+
+Genuinely human-looking texts stay, including messy ones: typos, lowercase starts, fragments, doubled words, sloppy punctuation are signs of a REAL shopper, never grounds for removal. Surface slips are NEVER a tell; convict on structure and substance (rhythm, arc, vocabulary, emptiness), not on spelling. Judge each review in its own language.
+
+A typical healthy batch loses between none and roughly a third. Convict only what you would genuinely flag, worst first.
+
+Respond with a single JSON object and NOTHING else:
+{ "remove": [review numbers, worst first], "reason": "one short sentence naming the strongest overall tell" }
+An empty "remove" array is a perfectly good answer.`;
+}
+
+export interface SkepticPassResult {
+  checked: number;
+  removed: number;
+  /** Rows that passed through unjudged because a skeptic call failed. */
+  unchecked: number;
+  inputTokens: number;
+  outputTokens: number;
+  authFailed: boolean;
+}
+
+/**
+ * Runs the skeptic over every not-yet-checked stored row of the batch, in
+ * groups of `batchSize`. Convicted rows are DELETED (triple-guarded to this
+ * shop's synthetic rows of this batch); survivors are marked qaChecked so a
+ * resumed job never re-judges them. A failed or unparseable skeptic call
+ * keeps the whole group (marked checked, counted as unchecked) — the checker
+ * is a filter, never a gate. Caller recomputes aggregates when removed > 0.
+ */
+export async function runSkepticPass(
+  shop: string,
+  apiKey: string,
+  model: string,
+  batchId: string,
+  batchSize: number,
+  shouldStop?: () => Promise<boolean> | boolean,
+  /** Fires after every group so the job can persist counters + heartbeat. */
+  onGroup?: (delta: { checked: number; removed: number; unchecked: number }) => Promise<void>,
+): Promise<SkepticPassResult> {
+  const size = Math.min(60, Math.max(5, Math.floor(batchSize) || 20));
+  const result: SkepticPassResult = {
+    checked: 0, removed: 0, unchecked: 0, inputTokens: 0, outputTokens: 0, authFailed: false,
+  };
+  const system = buildSkepticSystemPrompt();
+
+  for (;;) {
+    if (shouldStop && (await shouldStop())) return result;
+    const rows = await prisma.review.findMany({
+      where: { shop, isSynthetic: true, syntheticBatchId: batchId, qaChecked: false },
+      // Language first: cross-review tells (same arc, same phrase) only read
+      // within a language, so groups should be as monolingual as possible.
+      orderBy: [{ language: "asc" }, { createdAt: "asc" }],
+      take: size,
+      select: { id: true, language: true, rating: true, title: true, body: true },
+    });
+    if (rows.length === 0) return result;
+
+    const numbered = rows.map((r, i) =>
+      JSON.stringify({
+        n: i + 1,
+        language: r.language,
+        rating: r.rating,
+        title: r.title ?? "",
+        body: r.body.slice(0, 1200),
+      }),
+    );
+    const userContent = `REVIEWS (${rows.length}, one JSON object per line):\n${numbered.join("\n")}`;
+
+    const call = await callClaudeWithUsage(apiKey, model, system, userContent, 1500);
+    result.inputTokens += call.inputTokens;
+    result.outputTokens += call.outputTokens;
+    if (call.authFailed) {
+      result.authFailed = true;
+      result.unchecked += rows.length;
+      await markChecked(shop, rows.map((r) => r.id));
+      if (onGroup) await onGroup({ checked: 0, removed: 0, unchecked: rows.length });
+      return result;
+    }
+
+    let removeIdx: number[] = [];
+    let parsedOk = false;
+    if (call.text) {
+      const parsed = extractJson(call.text) as { remove?: unknown } | null;
+      if (parsed && Array.isArray(parsed.remove)) {
+        parsedOk = true;
+        removeIdx = parsed.remove
+          .map((n) => Number(n))
+          .filter((n) => Number.isInteger(n) && n >= 1 && n <= rows.length);
+      }
+    }
+    if (!parsedOk) {
+      console.error("[cellexia] skeptic pass: unusable answer, group kept unchecked");
+      result.unchecked += rows.length;
+      await markChecked(shop, rows.map((r) => r.id));
+      if (onGroup) await onGroup({ checked: 0, removed: 0, unchecked: rows.length });
+      continue;
+    }
+
+    // Worst-first ordering is the model's contract; the cap keeps a paranoid
+    // answer from gutting the batch. Never below 1 — a trailing group of two
+    // must not make its reviews immune to an honest conviction.
+    const cap = Math.max(1, Math.floor(rows.length * SKEPTIC_MAX_REMOVAL_SHARE));
+    const convicted = [...new Set(removeIdx)].slice(0, cap).map((n) => rows[n - 1].id);
+    const keptIds = rows.map((r) => r.id).filter((id) => !convicted.includes(id));
+
+    // Order matters for crash-safety: survivors are marked FIRST, then the
+    // convicted are deleted. A crash in between leaves every row present
+    // (some already marked), so a resumed job re-checks the remainder and
+    // never mistakes a deletion for a missing spec to regenerate.
+    await markChecked(shop, keptIds);
+    let removedInGroup = 0;
+    if (convicted.length > 0) {
+      const del = await prisma.review.deleteMany({
+        where: { id: { in: convicted }, shop, isSynthetic: true, syntheticBatchId: batchId },
+      });
+      removedInGroup = del.count;
+      result.removed += del.count;
+      if (del.count > 0) {
+        // The shared cleanup the batch-delete path performs: cached
+        // translations of deleted rows are orphans, and cached Q&A answers
+        // may quote them.
+        await prisma.translationCache
+          .deleteMany({ where: { reviewId: { in: convicted } } })
+          .catch(() => undefined);
+      }
+    }
+    result.checked += rows.length;
+    if (onGroup) {
+      await onGroup({ checked: rows.length, removed: removedInGroup, unchecked: 0 });
+    }
+  }
+}
+
+async function markChecked(shop: string, ids: string[]): Promise<void> {
+  if (ids.length === 0) return;
+  await prisma.review.updateMany({
+    where: { id: { in: ids }, shop, isSynthetic: true },
+    data: { qaChecked: true },
+  });
+}
+
 export async function deleteSyntheticBatch(shop: string, batchId: string): Promise<number> {
   const id = typeof batchId === "string" ? batchId.trim() : "";
   if (!id) return 0;

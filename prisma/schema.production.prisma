@@ -52,6 +52,7 @@ model Review {
   replyAt      DateTime?
   ipHash       String?
   isSynthetic  Boolean       @default(false) // v1.4 QA generator flag — admin-only, never serialized to the storefront
+  qaChecked    Boolean       @default(false) // v1.24: this synthetic row survived (or predates) the skeptic pass
   source       String?       // "storefront" | "csv-import" | "bulk-add" | "synthetic" (null = pre-1.4 rows)
   syntheticBatchId     String?   // groups one QA-generator run; null for non-synthetic rows
   syntheticGeneratedAt DateTime? // when the QA generator created the row (createdAt holds the backdated review date)
@@ -257,6 +258,9 @@ model GenerationJob {
   inputTokens    Int       @default(0)
   outputTokens   Int       @default(0)
   costUsd        Float     @default(0)
+  // v1.24 skeptic pass: rows judged and rows removed by the double-check.
+  checkedCount   Int       @default(0)
+  removedByCheck Int       @default(0)
   estimate       String?
   error          String?
   errors         String    @default("[]")

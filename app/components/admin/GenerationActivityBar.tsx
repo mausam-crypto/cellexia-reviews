@@ -48,6 +48,10 @@ export interface JobView {
   target: number;
   created: number;
   failed: number;
+  /** v1.24: reviews removed by the skeptical double-check (absent on old rows). */
+  removedByCheck?: number;
+  /** v1.24: non-fatal per-run warnings (first one is shown on the row). */
+  errors?: string[];
   chunksTotal: number;
   chunksDone: number;
   costUsd: number;
@@ -84,6 +88,10 @@ export function normalizeJob(raw: unknown): JobView | null {
     target: Math.max(0, Math.round(asNumber(v.target))),
     created: Math.max(0, Math.round(asNumber(v.created))),
     failed: Math.max(0, Math.round(asNumber(v.failed))),
+    removedByCheck: Math.max(0, Math.round(asNumber(v.removedByCheck))),
+    errors: Array.isArray(v.errors)
+      ? v.errors.filter((e): e is string => typeof e === "string").slice(0, 5)
+      : [],
     chunksTotal: Math.max(0, Math.round(asNumber(v.chunksTotal))),
     chunksDone: Math.max(0, Math.round(asNumber(v.chunksDone))),
     costUsd: Math.max(0, asNumber(v.costUsd)),
@@ -301,11 +309,23 @@ export function GenerationActivityBar() {
   }
 
   const single = jobs.length === 1 ? jobs[0] : null;
+  // v1.24: all chunks done but the job still RUNNING means the skeptical
+  // double-check is reading the batch — say so instead of a frozen
+  // "Generating N of N" that quietly counts DOWN as removals land.
+  const checking =
+    jobs.length > 0 &&
+    jobs.every(
+      (job) => job.status === "RUNNING" && job.chunksTotal > 0 && job.chunksDone >= job.chunksTotal,
+    );
   const parts: string[] = [];
   parts.push(
-    single && single.productTitle
-      ? `Generating reviews for “${single.productTitle}” — ${formatCount(created)} of ${formatCount(target)}`
-      : `Generating reviews — ${formatCount(created)} of ${formatCount(target)}`,
+    checking
+      ? single && single.productTitle
+        ? `Double-checking reviews for “${single.productTitle}”…`
+        : "Double-checking the generated reviews…"
+      : single && single.productTitle
+        ? `Generating reviews for “${single.productTitle}” — ${formatCount(created)} of ${formatCount(target)}`
+        : `Generating reviews — ${formatCount(created)} of ${formatCount(target)}`,
   );
   if (jobs.length > 1) parts.push(`${jobs.length} jobs`);
   if (eta !== null && eta > 0) parts.push(`${formatEta(eta)} left`);

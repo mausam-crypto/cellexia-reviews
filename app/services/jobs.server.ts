@@ -423,7 +423,15 @@ async function executeJob(job: GenerationJob): Promise<void> {
   // re-queues the job.
   let chunks: number[][] = [];
   if (!state.cancelled) {
-    chunks = await planRemainingChunks(shop, job, config);
+    if (job.checkedCount > 0) {
+      // The check phase had already begun on a previous run, so every
+      // generation chunk finished. Deleted-by-skeptic rows would read as
+      // "missing specs" to the planner, and regenerating them would pay a
+      // second time for reviews the check just convicted.
+      chunks = [];
+    } else {
+      chunks = await planRemainingChunks(shop, job, config);
+    }
   }
 
   if (chunks.length > 0) {
@@ -462,7 +470,105 @@ async function executeJob(job: GenerationJob): Promise<void> {
     );
   }
 
-  const totalCreated = job.created + state.createdInRun;
+  let totalCreated = job.created + state.createdInRun;
+  let removedThisRun = 0;
+
+  // v1.24 (SPEC-1.24 §1): the skeptical double-check phase. Runs AFTER all
+  // chunks so the skeptic sees finished, stored reviews; groups of
+  // skepticBatchSize; convicted rows are deleted; survivors marked qaChecked
+  // so a resumed job never re-judges them. A checker failure passes reviews
+  // through and says so — it must never fail a generation that succeeded.
+  if (
+    config.skepticCheck !== false &&
+    !state.cancelled &&
+    !state.fatal &&
+    totalCreated > 0
+  ) {
+    try {
+      const { getSettings } = await import("./settings.server");
+      const settings = await getSettings(shop);
+      if (settings.anthropicApiKey) {
+        // A resumed job may reach here without generating a chunk this run,
+        // leaving state.model null — the final cost must still price with the
+        // shop's real model, not a hardcoded fallback.
+        if (!state.model) state.model = settings.aiModel;
+        const { runSkepticPass } = await import("./synthetic.server");
+        const pass = await runSkepticPass(
+          shop,
+          settings.anthropicApiKey,
+          state.model ?? settings.aiModel,
+          job.batchId,
+          config.skepticBatchSize ?? 20,
+          async () => {
+            // Doubles as the phase heartbeat: without it a long check reads
+            // as a stalled job and the stale-recovery would re-claim it
+            // mid-pass, running two skeptics over the same batch.
+            const row = await prisma.generationJob
+              .update({
+                where: { id: job.id },
+                data: { heartbeatAt: new Date() },
+                select: { cancelRequested: true },
+              })
+              .catch(() => null);
+            if (!row || row.cancelRequested) state.cancelled = true;
+            return state.cancelled;
+          },
+          async (delta) => {
+            // Persist PER GROUP: a crash mid-phase keeps every group already
+            // judged (counters, removals, tokens are re-read on resume from
+            // the row, and qaChecked rows are never re-judged).
+            await prisma.generationJob
+              .update({
+                where: { id: job.id },
+                data: {
+                  checkedCount: { increment: delta.checked + delta.unchecked },
+                  removedByCheck: { increment: delta.removed },
+                  ...(delta.removed > 0 ? { created: { decrement: delta.removed } } : {}),
+                  heartbeatAt: new Date(),
+                },
+              })
+              .catch(() => undefined);
+          },
+        );
+        state.inputTokens += pass.inputTokens;
+        state.outputTokens += pass.outputTokens;
+        totalCreated = Math.max(0, totalCreated - pass.removed);
+        removedThisRun = pass.removed;
+        state.createdInRun = Math.max(0, state.createdInRun - pass.removed);
+        if (pass.unchecked > 0) {
+          pushJobError(
+            state.errors,
+            `${pass.unchecked} review(s) could not be double-checked and were kept as generated.`,
+          );
+        }
+        if (pass.removed > 0) {
+          try {
+            const { invalidateAskAnswers } = await import("./qna.server");
+            await invalidateAskAnswers(shop);
+          } catch (error) {
+            console.error("[cellexia] skeptic pass: ask-cache invalidation failed", error);
+          }
+        }
+        await prisma.generationJob
+          .update({
+            where: { id: job.id },
+            data: {
+              inputTokens: { increment: pass.inputTokens },
+              outputTokens: { increment: pass.outputTokens },
+              heartbeatAt: new Date(),
+            },
+          })
+          .catch(() => undefined);
+      }
+    } catch (error) {
+      console.error(`[cellexia] job ${job.id}: skeptic pass failed`, error);
+      pushJobError(
+        state.errors,
+        "The double-check step failed — the generated reviews were kept as they are.",
+      );
+    }
+  }
+
   let status: JobStatus;
   let fatalError: string | null = null;
   if (state.cancelled) {
@@ -480,7 +586,11 @@ async function executeJob(job: GenerationJob): Promise<void> {
   // End-of-job aggregate + metafield sync, once per product (SPEC-1.7 §3).
   // Also runs when a resumed job finishes with rows created only by earlier
   // runs — the crash may have happened before the previous sync.
-  if (state.createdInRun > 0 || (status === "COMPLETED" && totalCreated > 0)) {
+  if (
+    state.createdInRun > 0 ||
+    (status === "COMPLETED" && totalCreated > 0) ||
+    removedThisRun > 0
+  ) {
     try {
       const { unauthenticated } = await import("~/shopify.server");
       const { admin } = await unauthenticated.admin(shop);
@@ -863,6 +973,8 @@ function toJobDTO(row: GenerationJob, nowMs: number): JobDTO {
     target: row.target,
     created: row.created,
     failed: row.failed,
+    checkedCount: row.checkedCount,
+    removedByCheck: row.removedByCheck,
     chunksTotal: row.chunksTotal,
     chunksDone: row.chunksDone,
     inputTokens: row.inputTokens,

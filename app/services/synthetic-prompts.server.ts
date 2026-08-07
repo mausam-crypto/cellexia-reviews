@@ -339,9 +339,89 @@ export const PERSONA_COUNT: number = PERSONA_BRIEFS.length;
  * backstop for model output that disobeys anyway.
  */
 export const STYLE_RULES =
-  "Never use em dashes or en dashes anywhere in titles, bodies, or replies. Use commas, periods, or parentheses instead. Real shoppers rarely type dashes.";
+  "Never use em dashes or en dashes anywhere in titles, bodies, or replies. Use commas, periods, or parentheses instead. Real shoppers rarely type dashes. " +
+  "Never use emojis, emoticons, kaomoji or other pictographs anywhere. " +
+  "Never claim the product is perfume-free, fragrance-free, unscented or scent-free, in any language. Scent may be mentioned only as an experience (how it smells), never as an absence claim.";
 
 const EM_EN_DASH = /[–—]/;
+
+/**
+ * v1.23: emoji scrub, the dash scrub's sibling — a disobedient model output
+ * still ships clean. Covers pictographs, transport/symbols, dingbats, flags,
+ * skin-tone modifiers, ZWJ sequences and the variation selector.
+ */
+const EMOJI_RE =
+  /[\u{1F000}-\u{1FAFF}\u{2600}-\u{27BF}\u{2190}-\u{21FF}\u{2B00}-\u{2BFF}\u{2300}-\u{23FF}\u{25A0}-\u{25FF}\u{FE0F}\u{200D}\u{20E3}\u{203C}\u{2049}\u{2934}\u{2935}\u{3030}\u{3297}\u{3299}\u{24C2}]/gu;
+
+export function scrubEmojis(text: string): string {
+  if (!text) return text;
+  return text.replace(EMOJI_RE, "").replace(/[ \t]{2,}/g, " ").replace(/ +([.,!?;:])/g, "$1").trim();
+}
+
+/**
+ * v1.23: absence-of-scent claims are factual statements about the product the
+ * merchant never made — a generated review must not invent them. Multi-locale
+ * detection; the caller DROPS the review (a semantic claim cannot be safely
+ * text-edited out).
+ */
+/**
+ * Substring match, deliberately no word boundaries: inflections extend to the
+ * RIGHT in most of these languages, and a Polish/Greek stem catches every
+ * gender/case. Verified per-language by a native-quality sweep; the cost of a
+ * false positive is one dropped GENERATED review, never merchant data.
+ */
+const FRAGRANCE_CLAIM_RE = new RegExp(
+  [
+    // en
+    "fragrance[ -]?free", "perfume[ -]?free", "unscented", "scent[ -]?free",
+    "non[ -]?scented", "scentless", "no fragrance", "no scent", "odorless", "odourless",
+    // fr
+    "sans parfum", "non parfum\u00e9", "pas de parfum", "aucun parfum",
+    // de
+    "parf\u00fcmfrei", "parfumfrei", "ohne parfum", "ohne parf\u00fcm",
+    "ohne duftstoffe", "duftfrei", "unparf\u00fcmiert", "ohne duft",
+    // es
+    "sin perfume", "sin fragancia", "sin olor", "sin aroma", "no tiene perfume",
+    // it
+    "senza profumo", "senza fragranza", "non profumat", "inodore", "privo di profumo",
+    // pt-PT
+    "sem perfume", "sem fragr\u00e2ncia", "sem cheiro", "n\u00e3o tem cheiro", "inodoro",
+    // nl
+    "zonder parfum", "parfumvrij", "geurvrij", "ongeparfumeerd", "geurloos", "zonder geur",
+    // da
+    "uden parfume", "parfumefri", "uparfumeret", "duftfri", "uden duft",
+    // sv
+    "utan parfym", "parfymfri", "oparfymerad", "oparfymerat", "doftfri",
+    // nb
+    "parfymefri", "uten parfyme", "uparfymert",
+    // fi
+    "hajusteeton", "tuoksuton", "hajuton", "ilman hajusteita",
+    // pl (stems: cover every gender/case)
+    "bez zapachu", "bezzapachow", "bezwonn", "nie ma zapachu",
+    // ro (with and without diacritics)
+    "f\u0103r\u0103 parfum", "fara parfum", "neparfumat", "f\u0103r\u0103 miros",
+    // hu
+    "illatmentes", "parf\u00fcmmentes", "illatanyagmentes", "illatanyag-mentes", "szagtalan",
+    // el (lowercase, plural-accent shift, and tonos-less uppercase)
+    "\u03c7\u03c9\u03c1\u03af\u03c2 \u03ac\u03c1\u03c9\u03bc\u03b1",
+    "\u03c7\u03c9\u03c1\u03af\u03c2 \u03b1\u03c1\u03ce\u03bc\u03b1\u03c4\u03b1",
+    "\u03ac\u03bf\u03c3\u03bc", "\u03a7\u03a9\u03a1\u0399\u03a3 \u0391\u03a1\u03a9\u039c\u0391",
+    // ar (diacritized and plain, plus "does not contain perfume")
+    "\u0628\u062f\u0648\u0646 \u0639\u0637\u0631",
+    "\u062e\u0627\u0644\u064d \u0645\u0646 \u0627\u0644\u0639\u0637\u0631",
+    "\u062e\u0627\u0644\u064a \u0645\u0646 \u0627\u0644\u0639\u0637\u0631",
+    "\u062e\u0627\u0644 \u0645\u0646 \u0627\u0644\u0639\u0637\u0631",
+    "\u0644\u0627 \u064a\u062d\u062a\u0648\u064a \u0639\u0644\u0649 \u0639\u0637\u0631",
+    // ja
+    "\u7121\u9999\u6599", "\u9999\u6599\u4e0d\u4f7f\u7528", "\u7121\u9999\u6027",
+    "\u7121\u81ed", "\u30ce\u30f3\u30d5\u30ec\u30b0\u30e9\u30f3\u30b9",
+  ].join("|"),
+  "iu",
+);
+
+export function hasFragranceFreeClaim(text: string): boolean {
+  return !!text && FRAGRANCE_CLAIM_RE.test(text);
+}
 
 /**
  * Locale-appropriate pause mark the dash is replaced with. Japanese uses the

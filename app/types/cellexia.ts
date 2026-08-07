@@ -540,6 +540,9 @@ export interface JobDTO {
   created: number;
   /** Specs attempted but not created (failed chunks, DB errors). */
   failed: number;
+  /** v1.24: skeptic double-check counters. */
+  checkedCount: number;
+  removedByCheck: number;
   chunksTotal: number;
   chunksDone: number;
   /** Actual token usage summed across chunks (0 until the first chunk). */

@@ -445,11 +445,19 @@ function staticFallbackEstimate(config: SyntheticConfig, model: string): Generat
   const reviews = Math.max(1, Math.floor(config.count) || 1);
   const chunks = Math.ceil(reviews / SYNTHETIC_CHUNK_SIZE);
   const pricing = resolvePricing(model, new Date());
-  const inputTokens = Math.round(STATIC_INPUT_TOKENS_PER_REVIEW * reviews);
-  const outputTokens = Math.round(estimatedOutputTokensPerReview(config) * reviews);
+  let inputTokens = Math.round(STATIC_INPUT_TOKENS_PER_REVIEW * reviews);
+  let outputTokens = Math.round(estimatedOutputTokensPerReview(config) * reviews);
+  let checkCalls = 0;
+  if (config.skepticCheck !== false) {
+    const perCheck = Math.min(60, Math.max(5, Math.floor(config.skepticBatchSize) || 20));
+    checkCalls = Math.ceil(reviews / perCheck);
+    inputTokens += reviews * 260 + checkCalls * 400;
+    outputTokens += checkCalls * 120;
+  }
   const seconds = Math.max(
     1,
-    Math.ceil(Math.ceil(chunks / JOB_CHUNK_PARALLELISM) * BASELINE_CHUNK_SECONDS),
+    Math.ceil(Math.ceil(chunks / JOB_CHUNK_PARALLELISM) * BASELINE_CHUNK_SECONDS) +
+      checkCalls * 6,
   );
   const secondsHigh = Math.max(seconds, Math.ceil(seconds * BASELINE_HIGH_MULTIPLIER));
   let detail =
@@ -544,8 +552,19 @@ async function computeEstimate(
   if (!pricing.knownModel) detail += pricingFallbackNote(model);
 
   // ── Totals, cost, time ────────────────────────────────────────────────────
-  const inputTokens = Math.round(inputPerReview * reviews);
-  const outputTokens = Math.round(outputPerReview * reviews);
+  let inputTokens = Math.round(inputPerReview * reviews);
+  let outputTokens = Math.round(outputPerReview * reviews);
+
+  // v1.24 (SPEC-1.24 §4): the skeptical double-check reads every stored
+  // review back (title + up to 1200 body chars + JSON scaffolding, ~260
+  // input tokens per review, conservative) plus its own prompt per call, and
+  // answers briefly. Priced with the same model as generation.
+  if (config.skepticCheck !== false) {
+    const perCheck = Math.min(60, Math.max(5, Math.floor(config.skepticBatchSize) || 20));
+    const checkCalls = Math.ceil(reviews / perCheck);
+    inputTokens += reviews * 260 + checkCalls * 400;
+    outputTokens += checkCalls * 120;
+  }
   const costUsd = computeCostUsd(inputTokens, outputTokens, pricing);
 
   const jobSeconds = Math.ceil(chunks / JOB_CHUNK_PARALLELISM) * avgChunkSeconds;

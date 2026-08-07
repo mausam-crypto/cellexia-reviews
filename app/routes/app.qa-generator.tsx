@@ -938,6 +938,11 @@ function elapsedSeconds(job: JobView): number | null {
 
 function jobTimeText(job: JobView): string {
   if (job.status === "RUNNING") {
+    // v1.24: all chunks written but still running = the skeptical
+    // double-check is reading the batch.
+    if (job.chunksTotal > 0 && job.chunksDone >= job.chunksTotal) {
+      return "Double-checking…";
+    }
     return job.etaSeconds !== null && job.etaSeconds > 0
       ? `${formatEta(job.etaSeconds)} left`
       : "Starting…";
@@ -996,6 +1001,8 @@ export default function QaGeneratorRoute() {
   const [dateEnd, setDateEnd] = useState(() => todayIso());
   const [assignVariants, setAssignVariants] = useState(false);
   const [structuredAttrs, setStructuredAttrs] = useState(true);
+  const [skepticCheck, setSkepticCheck] = useState(true);
+  const [skepticBatchSize, setSkepticBatchSize] = useState("20");
   const [status, setStatus] = useState<"PUBLISHED" | "PENDING">("PUBLISHED");
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   // SPEC-1.10 §2/§3 — share editor fields (percent strings, keyed by locale /
@@ -1328,6 +1335,8 @@ export default function QaGeneratorRoute() {
       dateEnd,
       assignVariants,
       structuredAttrs,
+      skepticCheck,
+      skepticBatchSize: Math.min(60, Math.max(5, Number(skepticBatchSize) || 20)),
       status,
       ...(languageWeights ? { languageWeights } : {}),
       ...(variantWeights ? { variantWeights } : {}),
@@ -1576,6 +1585,11 @@ export default function QaGeneratorRoute() {
             <Text as="span" variant="bodyMd">
               {job.productTitle ?? `Product ${job.productId}`}
             </Text>
+            {job.status === "COMPLETED" && job.errors && job.errors.length > 0 ? (
+              <Text as="p" variant="bodySm" tone="caution">
+                {truncateText(job.errors[0], 140)}
+              </Text>
+            ) : null}
             {job.status === "FAILED" && job.error ? (
               <Text as="span" variant="bodySm" tone="critical">
                 {truncateText(job.error, 140)}
@@ -1588,6 +1602,9 @@ export default function QaGeneratorRoute() {
             <Text as="span" variant="bodySm">
               {formatCount(job.created)} / {formatCount(job.target)}
               {job.failed > 0 ? ` · ${formatCount(job.failed)} failed` : ""}
+              {(job.removedByCheck ?? 0) > 0
+                ? ` · ${formatCount(job.removedByCheck ?? 0)} removed by the double-check`
+                : ""}
             </Text>
             <div style={{ minWidth: 120 }}>
               <ProgressBar progress={progress} size="small" />
@@ -1987,6 +2004,27 @@ export default function QaGeneratorRoute() {
                       checked={structuredAttrs}
                       onChange={setStructuredAttrs}
                       helpText="Age, skin concerns, time using and results seen — coherent with each rating"
+                    />
+                  </FormLayout.Group>
+
+                  {/* v1.24 (SPEC-1.24): the skeptical double-check. */}
+                  <FormLayout.Group>
+                    <Checkbox
+                      label="Skeptical double-check"
+                      checked={skepticCheck}
+                      onChange={setSkepticCheck}
+                      helpText="After generating, a skeptical AI agent re-reads every review hunting for signs of AI writing and removes the ones it convicts. The job report shows how many were removed — so a batch can finish slightly under the requested count. Costs a little extra (included in the estimate)."
+                    />
+                    <TextField
+                      label="Reviews per check"
+                      type="number"
+                      value={skepticBatchSize}
+                      onChange={setSkepticBatchSize}
+                      autoComplete="off"
+                      min={5}
+                      max={60}
+                      disabled={!skepticCheck}
+                      helpText="How many reviews the skeptic reads per call (5–60). More per call = cheaper and better at spotting repetition across reviews; fewer = closer scrutiny of each one."
                     />
                   </FormLayout.Group>
 

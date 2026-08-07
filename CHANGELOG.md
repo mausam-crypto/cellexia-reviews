@@ -4,6 +4,56 @@ All notable changes to Cellexia Reviews are documented here. The version number 
 `package.json` and stamped into the release ZIP built by `npm run package`
 (`dist/cellexia-reviews-v<version>.zip`).
 
+## 1.24.0 — 2026-08-06
+
+### Added — QA review generator
+
+- **A skeptical double-check on every generation** (SPEC-1.24). After a batch is generated, a
+  second AI agent — briefed to hunt for signs of machine writing — re-reads the stored reviews
+  in groups and removes the ones it convicts: uniform rhythm, over-balanced pros-and-cons,
+  assistant vocabulary, the same arc repeating across reviews, generic praise with no lived
+  detail. Deliberate human mess (typos, lowercase, fragments) is explicitly protected — it
+  convicts on structure and substance, never on spelling. Two new options next to the other
+  generator settings: **Skeptical double-check** (on by default) and **Reviews per check**
+  (5–60, default 20 — more per call is cheaper and better at spotting repetition; fewer means
+  closer scrutiny). The job shows "Double-checking…" during the pass and reports how many
+  were removed, so a batch can finish slightly under the requested count. The checker can
+  never touch real customer reviews, a checker failure keeps the batch and says so, and the
+  cost estimate includes the extra calls. Groups are kept per-language so the "same phrase
+  across reviews" lens actually works.
+- **Even more human writing, headlines included.** The style mix moves to roughly 30% clean,
+  40% with a slip or two, 30% clearly hurried — and titles now follow the same dial: lowercase
+  starts, dropped punctuation, dashed-off fragments. Sloppy reviews stay native-feeling and
+  never change facts or the rating's meaning.
+
+### Fixed
+
+- A long double-check can no longer be mistaken for a stalled job (it now signals liveness
+  throughout, and its progress is saved group by group, so a crash loses at most one group).
+  A resumed job can never regenerate the reviews the double-check removed. Cached
+  translations of removed reviews are cleaned up and product ratings re-sync after removals.
+
+## 1.23.0 — 2026-08-06
+
+### Changed — QA review generator
+
+- **No fragrance-absence claims, ever.** Generated reviews must never state the product is
+  perfume-free, fragrance-free, unscented or similar — that is a factual claim about the
+  product. The generator is instructed not to, and as a hard backstop any generated review
+  containing such a claim is dropped before it is stored — checked against the natural
+  phrasings of all 17 store languages (verified per language, including inflected forms,
+  spellings without accents, and Greek uppercase). Describing how a product smells is still
+  allowed. Real customer reviews are never touched by this — it applies only to generated
+  QA data.
+- **No emojis, ever.** The generator is instructed not to use them, and everything it
+  produces is scrubbed of emojis, pictographs, flags, keycaps and similar symbols as a
+  backstop — across titles, bodies and brand replies.
+- **More human writing.** Instead of the old "5% of reviews get one typo", each generated
+  review now draws a writing style: about half are clean, a third have one or two small
+  slips (a typo, a missing apostrophe, a lowercase sentence start), and the rest read
+  clearly hurried — several small grammar mistakes and imperfect capitalization, still
+  natural in their language. Mistakes never alter facts, ratings or product names.
+
 ## 1.22.0 — 2026-08-06
 
 ### Added

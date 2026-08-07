@@ -4,6 +4,28 @@ All notable changes to Cellexia Reviews are documented here. The version number 
 `package.json` and stamped into the release ZIP built by `npm run package`
 (`dist/cellexia-reviews-v<version>.zip`).
 
+## 1.25.2 — 2026-08-07
+
+### Fixed — QA review generator
+
+- **Reviews no longer say "1 to 3 months in".** The generator was handing the writing model
+  the literal range label from the usage-time setting, and the model repeated it — no real
+  shopper describes their own usage as a range. Each review now gets one concrete duration
+  inside the chosen band ("2 months", "6 weeks", "almost 3 months"…), varied across the
+  batch, and the model is told to phrase it naturally in the review's language and never as
+  a range. The stored attribute (used for filtering) keeps the band exactly as before.
+
+## 1.25.1 — 2026-08-07
+
+### Fixed
+
+- **The developer test suites now actually run on any machine.** The five suites shipped in
+  1.25.0 hardcoded an absolute path to the machine they were written on, and used a path
+  idiom that breaks on Windows. They now resolve the app's folder from their own location
+  and use the portable path API — verified by running every suite from a clean checkout.
+  Packaging now fails outright if either mistake ever reaches a release again. Apologies to
+  whoever hit this first.
+
 ## 1.25.0 — 2026-08-06
 
 ### Added — QA review generator

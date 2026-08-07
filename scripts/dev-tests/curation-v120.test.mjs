@@ -1,10 +1,13 @@
 // Server tests for SPEC-1.20 — against the REAL curation/pricing/batch code.
 import { createRequire } from "module";
-import { fileURLToPath } from "url";
 import path from "path";
+import { fileURLToPath } from "url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.join(HERE, "..", "..").split(path.sep).join("/");
+// Forward slashes throughout: ROOT is embedded into generated entry
+// files as a module specifier, where Windows backslashes would form
+// invalid escapes. Node accepts forward slashes on every platform.
+const ROOT = path.resolve(HERE, "..", "..").split(path.sep).join("/");
 const require = createRequire(path.join(ROOT, "package.json"));
 const esbuild = require("esbuild");
 const fs = require("fs");

@@ -270,6 +270,29 @@ console.log(
     `(${PROVENANCE_ALLOWED.size} file(s) allowlisted)`,
 );
 
+// The dev-test suites ship as PORTABLE tools. A contributor's absolute home
+// path or the Unix-only `new URL(...).pathname` idiom (malformed drive paths
+// on Windows) must never reach a release again — both did once, and the
+// merchant's developer had to patch the ZIP by hand.
+const portabilityFailures = [];
+for (const rel of fs.readdirSync(path.join(ROOT, "scripts/dev-tests"))) {
+  if (!rel.endsWith(".test.mjs")) continue;
+  const text = fs.readFileSync(path.join(ROOT, "scripts/dev-tests", rel), "utf8");
+  if (/\/(?:Users|home)\/[A-Za-z0-9._-]+\//.test(text)) {
+    portabilityFailures.push(`scripts/dev-tests/${rel} hardcodes an absolute home directory`);
+  }
+  if (text.includes("import.meta.url).pathname")) {
+    portabilityFailures.push(
+      `scripts/dev-tests/${rel} uses URL(...).pathname — use fileURLToPath (Windows)`,
+    );
+  }
+}
+if (portabilityFailures.length > 0) {
+  console.error("DEV-TEST PORTABILITY FAILURE:");
+  for (const line of portabilityFailures) console.error(`  - ${line}`);
+  process.exit(1);
+}
+
 let fileCount = 0;
 for (const file of walk(ROOT)) {
   archive.file(file.abs, { name: `${TOP_FOLDER}/${file.rel}` });

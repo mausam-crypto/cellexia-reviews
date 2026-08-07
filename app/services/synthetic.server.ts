@@ -937,13 +937,29 @@ function planFor(config: SyntheticConfig, batchId: string): SyntheticReviewSpec[
 
 // Dash-free on purpose (SPEC-1.10 §4): prompt text must not exemplify the
 // em/en dashes the model is told never to write.
-const TIME_USING_PROMPT: Record<string, string> = {
-  lt_1w: "less than 1 week",
-  w1_4: "1 to 4 weeks",
-  m1_3: "1 to 3 months",
-  m3_6: "3 to 6 months",
-  gt_6m: "more than 6 months",
+/**
+ * v1.26: the model used to receive the RANGE label ("1 to 3 months") and
+ * parroted it into review text ("1 to 3 months in"). It now receives ONE
+ * concrete duration inside the stored band, so the text reads like a person
+ * ("about two months in") while the stored attribute keeps the band key.
+ * Chosen by a hash of the spec's plan index — deterministic and rng-free,
+ * because the batch plan's RNG consumption is resume-stable by contract.
+ */
+const TIME_USING_EXACT: Record<string, readonly string[]> = {
+  lt_1w: ["2 days", "3 days", "4 days", "5 days", "about a week"],
+  w1_4: ["1 week", "10 days", "2 weeks", "3 weeks", "almost a month"],
+  m1_3: ["1 month", "6 weeks", "2 months", "10 weeks", "almost 3 months"],
+  m3_6: ["3 months", "4 months", "5 months", "almost 6 months"],
+  gt_6m: ["7 months", "8 months", "9 months", "almost a year", "over a year"],
 };
+
+export function exactTimeUsing(band: string, planIndex: number): string | null {
+  const options = TIME_USING_EXACT[band];
+  if (!options) return null;
+  // Knuth multiplicative hash — spreads consecutive indices across options.
+  const h = (planIndex * 2654435761) >>> 0;
+  return options[h % options.length];
+}
 
 const RESULTS_PROMPT: Record<string, string> = {
   smoother: "smoother texture",
@@ -992,6 +1008,7 @@ Hard rules:
 - The star rating always outranks the persona: 1 or 2 stars read as disappointment, 3 as genuinely mixed, 4 or 5 as satisfaction, expressed through the persona's voice.
 - Follow the persona brief, tone, quirks and length band: "one_liner" = a fragment or one sentence; "short" = 1 to 3 sentences; "medium" = 4 to 6 sentences; "long" = 7 to 12 sentences (short paragraphs allowed).
 - Stay consistent with time_using and results_seen: someone using the product under a week cannot report long-term results; "too early to tell" means no visible results yet.
+- "time_using" is the reviewer's actual usage duration. When the review mentions it, phrase it naturally in the review's language ("about two months in", "after three weeks", "j'utilise depuis 2 mois"). NEVER write it as a range like "1 to 3 months" — real shoppers know how long they have used something.
 - Ground concrete product details in the provided context only; never invent ingredient percentages or medical claims; never name real competitor brands.
 - Titles: natural and specific, at most 80 characters, no surrounding quotes.
 - "writing" controls polish, and it applies to the TITLE as much as the body. "clean": normal careful writing. "minor_slips": one or two small human slips, e.g. a typo, a missing apostrophe, a lowercase sentence start, a doubled word; the title may start lowercase or drop its end punctuation. "casual_sloppy": clearly hurried real-shopper writing with several small grammar mistakes and imperfect capitalization (lowercase sentence starts, maybe the product name uncapitalized, perhaps ONE word in caps for emphasis), loose comma use, missing end punctuation, inconsistent spacing, sometimes doubled exclamation marks; the title reads like a dashed-off fragment (that kind of title: two to four plain words, maybe uncapitalized, maybe with doubled punctuation; invent your own in the review's language, never reuse an example verbatim). Always fully readable and native-feeling in that language, never gibberish, and never changing facts or the rating's sentiment.
@@ -1031,7 +1048,9 @@ export function buildUserContent(config: SyntheticConfig, specs: SyntheticReview
         ...(spec.quirks ? { quirks: spec.quirks } : {}),
         verified_purchase: spec.verified,
         ...(spec.variantTitle ? { variant: spec.variantTitle } : {}),
-        ...(spec.timeUsing ? { time_using: TIME_USING_PROMPT[spec.timeUsing] } : {}),
+        ...(spec.timeUsing
+          ? { time_using: exactTimeUsing(spec.timeUsing, spec.index) ?? spec.timeUsing }
+          : {}),
         ...(spec.resultsSeen.length
           ? { results_seen: spec.resultsSeen.map((k) => RESULTS_PROMPT[k] ?? k).join("; ") }
           : {}),

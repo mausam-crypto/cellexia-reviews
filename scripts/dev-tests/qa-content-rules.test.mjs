@@ -1,14 +1,17 @@
 import { createRequire } from "module";
-import { fileURLToPath } from "url";
 import path from "path";
+import { fileURLToPath } from "url";
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const ROOT = path.join(HERE, "..", "..").split(path.sep).join("/");
+// Forward slashes throughout: ROOT is embedded into generated entry
+// files as a module specifier, where Windows backslashes would form
+// invalid escapes. Node accepts forward slashes on every platform.
+const ROOT = path.resolve(HERE, "..", "..").split(path.sep).join("/");
 const require = createRequire(path.join(ROOT, "package.json"));
 const esbuild = require("esbuild");
 const fs = require("fs");
 fs.writeFileSync(path.join(HERE, "qa-entry.js"),
   `export { scrubEmojis, hasFragranceFreeClaim, STYLE_RULES } from "${ROOT}/app/services/synthetic-prompts.server";
-   export { buildSystemPrompt } from "${ROOT}/app/services/synthetic.server";`);
+   export { buildSystemPrompt, exactTimeUsing, buildUserContent } from "${ROOT}/app/services/synthetic.server";`);
 fs.writeFileSync(path.join(HERE, "qa-db-stub.js"),
   "const prisma = new Proxy({}, { get: () => new Proxy({}, { get: () => async () => ({}) }) });\nexport default prisma;");
 fs.writeFileSync(path.join(HERE, "shopify-stub.js"), "export const unauthenticated = { admin: async () => ({ admin: null }) };");
@@ -58,6 +61,42 @@ t("prompt bans emojis", /Never use emojis/.test(sys));
 t("prompt bans absence claims", /fragrance-free, unscented/.test(sys));
 t("prompt has the writing dial", /casual_sloppy/.test(sys) && /imperfect capitalization/.test(sys));
 t("old imperfect rule gone", !/When "imperfect" is true/.test(sys));
+
+// usage durations: concrete, in-band, deterministic — never the range label
+{
+  const BANDS = {
+    lt_1w: /^(2|3|4|5) days$|^about a week$/,
+    w1_4: /^1 week$|^10 days$|^(2|3) weeks$|^almost a month$/,
+    m1_3: /^1 month$|^6 weeks$|^2 months$|^10 weeks$|^almost 3 months$/,
+    m3_6: /^(3|4|5) months$|^almost 6 months$/,
+    gt_6m: /^(7|8|9) months$|^almost a year$|^over a year$/,
+  };
+  let allOk = true, spread = new Set();
+  for (const [band, re] of Object.entries(BANDS)) {
+    for (let i = 0; i < 50; i++) {
+      const got = svc.exactTimeUsing(band, i);
+      if (!re.test(got)) { allOk = false; console.log("   bad:", band, i, got); }
+      if (band === "m1_3") spread.add(got);
+    }
+  }
+  t("durations always concrete and inside the band", allOk);
+  t("durations vary across a batch", spread.size >= 3, [...spread].join(", "));
+  t("deterministic per index", svc.exactTimeUsing("m1_3", 7) === svc.exactTimeUsing("m1_3", 7));
+  t("unknown band degrades to null", svc.exactTimeUsing("nope", 1) === null);
+
+  const sys2 = svc.buildSystemPrompt("Cellexia");
+  t("prompt bans range phrasing in reviews", /NEVER write it as a range/.test(sys2));
+  // The spec JSON itself must not carry a range label any more.
+  const content = svc.buildUserContent(
+    { productTitle: "X", productType: null, productTags: [], productVariants: [], productDescription: "d" },
+    [{ index: 3, language: "en", rating: 5, brief: "b", tone: "t", length: "short",
+       verified: true, variantTitle: null, timeUsing: "m1_3", resultsSeen: [],
+       wantsReply: false, writing: "clean", displayName: "A", country: null }],
+  );
+  t("spec JSON carries a concrete duration, not the range",
+    !/1 to 3 months/.test(content) && /"time_using":"(1 month|6 weeks|2 months|10 weeks|almost 3 months)"/.test(content),
+    content.slice(content.indexOf("time_using") - 10, content.indexOf("time_using") + 60));
+}
 
 console.log(fail === 0 ? "\nALL QA-GENERATOR CASES PASS" : `\n${fail} FAILURE(S)`);
 process.exit(fail ? 1 : 0);

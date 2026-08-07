@@ -21,15 +21,22 @@
  *      debounced 600 ms, when the review count changes while an estimate is
  *      showing). Counts above 500 show an inline warning; counts above 5000
  *      require a typed re-confirmation in a submit modal.
- *   4. Generate enqueues a background job and returns immediately ("Generation
+ *   4. "More products in this launch" card (SPEC-1.26 §2) — the config card
+ *      doubles as product 1 + the shared settings; each extra row carries a
+ *      product picker and ONLY the per-product overrides (count, average,
+ *      verified %, replies %, dates, variants toggle), prefilled from the
+ *      main form when added. With at least one row, Estimate/Generate submit
+ *      estimate-multi / generate-multi with the whole launch; without rows
+ *      the single-product paths run unchanged.
+ *   5. Generate enqueues a background job and returns immediately ("Generation
  *      started — you can leave this page"); the form stays filled so a second,
  *      different job can be launched right away. The job runner lives in
  *      app/services/jobs.server.ts (SPEC-1.7 §3).
- *   5. "Generation jobs" card — IndexTable of the 50 newest jobs with status
+ *   6. "Generation jobs" card — IndexTable of the 50 newest jobs with status
  *      badge, progress, live ETA / elapsed time, actual cost, and Cancel /
  *      Retry remaining / View reviews / Delete batch row actions. Polls
  *      /app/jobs/status every 3 s while a job is active, 30 s otherwise.
- *   6. "Existing synthetic data" card: per-batch stats with View in Reviews /
+ *   7. "Existing synthetic data" card: per-batch stats with View in Reviews /
  *      Delete batch, plus Delete ALL with a typed "DELETE" confirmation.
  *      Deleting a batch also cancels + deletes its generation job row
  *      (SPEC-1.7 §7).
@@ -294,6 +301,86 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
  * Action
  * ------------------------------------------------------------------------- */
 
+/** Shops with a generate-multi currently between validation and enqueue. */
+const multiLaunchInFlight = new Set<string>();
+
+/**
+ * The estimate the merchant SAW for one product of the launch, sent back by
+ * the client purely as the job row's audit trail — display data, exactly the
+ * trust model of the single path's `estimate` field.
+ */
+function estimateForProduct(rawLaunch: unknown, productId: string): EstimateDTO | null {
+  if (typeof rawLaunch !== "object" || rawLaunch === null) return null;
+  const estimates = (rawLaunch as { estimates?: unknown }).estimates;
+  if (typeof estimates !== "object" || estimates === null) return null;
+  const entry = (estimates as Record<string, unknown>)[productId];
+  if (!entry) return null;
+  return parseEstimateInput(JSON.stringify(entry));
+}
+
+/** SPEC-1.26 §1: the one product-context fetch, shared by single and multi. */
+async function fetchGeneratorProductContext(
+  admin: { graphql: (q: string, o?: { variables?: Record<string, unknown> }) => Promise<Response> },
+  productId: string,
+): Promise<
+  | {
+      id: string;
+      title: string;
+      handle: string | null;
+      description: string;
+      productType: string | null;
+      tags: string[];
+      variants: string[];
+    }
+  | null
+  | "error"
+> {
+  const response = await admin.graphql(PRODUCT_CONTEXT_QUERY, {
+    variables: { id: `gid://shopify/Product/${productId}` },
+  });
+  const body = (await response.json()) as {
+    data?: {
+      product?: {
+        id?: string;
+        title?: string;
+        handle?: string | null;
+        descriptionHtml?: string | null;
+        productType?: string | null;
+        tags?: unknown;
+        variants?: { nodes?: Array<{ title?: string | null }> };
+      } | null;
+    };
+    errors?: unknown;
+  };
+  if (body.errors) {
+    // THROTTLED/transient GraphQL errors are not "product deleted" — the
+    // multi path fetches up to 20 products in one request and must tell the
+    // merchant to retry, not to go looking for a product that exists.
+    console.error("[cellexia] qa-generator product context errors:", body.errors);
+    return "error";
+  }
+  if (!body.data?.product) return null;
+  const product = body.data.product;
+  const variants = (product.variants?.nodes ?? [])
+    .map((node) => (typeof node?.title === "string" ? node.title.trim() : ""))
+    .filter((title) => title && title !== "Default Title");
+  const tags = Array.isArray(product.tags)
+    ? product.tags.filter((t): t is string => typeof t === "string" && t.length > 0)
+    : [];
+  return {
+    id: productId,
+    title: typeof product.title === "string" ? product.title : `Product ${productId}`,
+    handle: typeof product.handle === "string" ? product.handle : null,
+    description: htmlToText(product.descriptionHtml),
+    productType:
+      typeof product.productType === "string" && product.productType.trim()
+        ? product.productType.trim()
+        : null,
+    tags: tags.slice(0, 25),
+    variants,
+  };
+}
+
 export const action = async ({ request }: ActionFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const shop = session.shop;
@@ -317,55 +404,176 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       if (!productId) {
         return json({ ok: false, intent, message: "Invalid product reference" }, { status: 400 });
       }
-      const response = await admin.graphql(PRODUCT_CONTEXT_QUERY, {
-        variables: { id: `gid://shopify/Product/${productId}` },
-      });
-      const body = (await response.json()) as {
-        data?: {
-          product?: {
-            id?: string;
-            title?: string;
-            handle?: string | null;
-            descriptionHtml?: string | null;
-            productType?: string | null;
-            tags?: unknown;
-            variants?: { nodes?: Array<{ title?: string | null }> };
-          } | null;
-        };
-        errors?: unknown;
-      };
-      if (body.errors || !body.data?.product) {
-        if (body.errors) {
-          console.error("[cellexia] qa-generator product context errors:", body.errors);
-        }
+      const product = await fetchGeneratorProductContext(admin, productId);
+      if (product === "error") {
+        return json(
+          { ok: false, intent, message: "Shopify did not answer — try again in a moment" },
+          { status: 502 },
+        );
+      }
+      if (!product) {
         return json(
           { ok: false, intent, message: "The product could not be loaded" },
           { status: 404 },
         );
       }
-      const product = body.data.product;
-      const variants = (product.variants?.nodes ?? [])
-        .map((node) => (typeof node?.title === "string" ? node.title.trim() : ""))
-        .filter((title) => title && title !== "Default Title");
-      const tags = Array.isArray(product.tags)
-        ? product.tags.filter((t): t is string => typeof t === "string" && t.length > 0)
-        : [];
+      return json({ ok: true, intent, product });
+    }
+
+    /* ---- Multi-product launch (SPEC-1.26) ------------------------------- */
+    if (intent === "estimate-multi" || intent === "generate-multi") {
+      let rawLaunch: unknown = null;
+      try {
+        rawLaunch = JSON.parse(String(form.get("launch") ?? ""));
+      } catch {
+        return json(
+          { ok: false, intent, message: "The launch configuration could not be parsed" },
+          { status: 400 },
+        );
+      }
+      const { parseMultiLaunch, assembleLaunchConfig } = await import("~/services/synthetic.server");
+      const launch = parseMultiLaunch(rawLaunch);
+      if (!launch.input) {
+        return json({ ok: false, intent, message: launch.error }, { status: 400 });
+      }
+
+      if (intent === "generate-multi") {
+        try {
+          const settings = await getSettings(shop);
+          if (settings.aiProvider !== "anthropic" || !settings.anthropicApiKey) {
+            return json(
+              { ok: false, intent, code: "no_ai_key", message: NO_AI_KEY_MESSAGE },
+              { status: 409 },
+            );
+          }
+        } catch (error) {
+          console.error("[cellexia] qa-generator settings lookup failed", error);
+          return json(
+            { ok: false, intent, message: "Settings could not be loaded. Please try again." },
+            { status: 500 },
+          );
+        }
+      }
+
+      // Double-submit guard, taken BEFORE the validation pass: 20 context
+      // fetches hold this request open for seconds, exactly when a second
+      // click or an impatient refresh lands — which would launch everything
+      // twice. estimate-multi is read-only and stays unguarded.
+      if (intent === "generate-multi") {
+        if (multiLaunchInFlight.has(shop)) {
+          return json(
+            { ok: false, intent, message: "This launch is already being started — give it a moment." },
+            { status: 409 },
+          );
+        }
+        multiLaunchInFlight.add(shop);
+      }
+      try {
+      // ALL-OR-NOTHING (SPEC-1.26 §0): every product validates — context
+      // fetch included — before a single job is queued. Errors name the row.
+      const prepared: Array<{
+        config: NonNullable<ReturnType<typeof parseSyntheticConfig>["config"]>;
+        title: string;
+      }> = [];
+      for (const [i, row] of launch.input.rows.entries()) {
+        const context = await fetchGeneratorProductContext(admin, row.productId);
+        if (context === "error") {
+          return json(
+            {
+              ok: false,
+              intent,
+              message: `Shopify did not answer while loading product ${i + 1} — usually temporary, try again. Nothing was started.`,
+            },
+            { status: 502 },
+          );
+        }
+        if (!context) {
+          return json(
+            {
+              ok: false,
+              intent,
+              message: `Product ${i + 1} could not be loaded from Shopify — it may have been deleted. Nothing was started.`,
+            },
+            { status: 400 },
+          );
+        }
+        const parsed = assembleLaunchConfig(launch.input, row, context);
+        if (!parsed.config) {
+          return json(
+            {
+              ok: false,
+              intent,
+              message: `${context.title}: ${parsed.error}. Nothing was started.`,
+            },
+            { status: 400 },
+          );
+        }
+        prepared.push({ config: parsed.config, title: context.title });
+      }
+
+      if (intent === "estimate-multi") {
+        const perProduct: Array<{ title: string; productId: string; estimate: EstimateDTO }> = [];
+        let reviews = 0;
+        let costUsd = 0;
+        let seconds = 0;
+        let secondsHigh = 0;
+        for (const item of prepared) {
+          const estimate = await estimateGeneration(shop, admin, item.config);
+          perProduct.push({ title: item.title, productId: item.config.productId, estimate });
+          reviews += estimate.reviews;
+          costUsd += estimate.costUsd;
+          // Jobs queue behind each other; summed time is the honest ceiling.
+          seconds += estimate.seconds;
+          secondsHigh += estimate.secondsHigh;
+        }
+        return json({
+          ok: true,
+          intent,
+          total: { reviews, costUsd, seconds, secondsHigh, products: prepared.length },
+          perProduct,
+        });
+      }
+
+      const startedJobs: Array<{ jobId: string; batchId: string; title: string }> = [];
+      try {
+        for (const item of prepared) {
+          const job = await enqueueGeneration(shop, item.config, estimateForProduct(rawLaunch, item.config.productId));
+          startedJobs.push({ jobId: job.id, batchId: job.batchId, title: item.title });
+        }
+      } catch (error) {
+        // HONEST partial reporting: some jobs may already be queued. Saying
+        // "failed, try again" here would invite a retry that duplicates them.
+        console.error("[cellexia] generate-multi enqueue failed mid-launch", error);
+        if (startedJobs.length > 0) {
+          kickRunner();
+          return json(
+            {
+              ok: false,
+              intent,
+              jobs: startedJobs,
+              message: `Started ${startedJobs.length} of ${prepared.length} jobs (${startedJobs
+                .map((j) => j.title)
+                .join(", ")}), then hit an error. Those jobs ARE running — do not relaunch them. Start a new launch with only the remaining products.`,
+            },
+            { status: 500 },
+          );
+        }
+        return json(
+          { ok: false, intent, message: "The launch could not be started — nothing was queued. Try again." },
+          { status: 500 },
+        );
+      }
+      kickRunner();
+      const totalReviews = prepared.reduce((sum, p) => sum + p.config.count, 0);
       return json({
         ok: true,
         intent,
-        product: {
-          id: productId,
-          title: typeof product.title === "string" ? product.title : `Product ${productId}`,
-          handle: typeof product.handle === "string" ? product.handle : null,
-          description: htmlToText(product.descriptionHtml),
-          productType:
-            typeof product.productType === "string" && product.productType.trim()
-              ? product.productType.trim()
-              : null,
-          tags: tags.slice(0, 25),
-          variants,
-        },
+        jobs: startedJobs,
+        message: `${startedJobs.length} generation job(s) started — ${totalReviews} reviews across ${startedJobs.length} product(s). You can leave this page.`,
       });
+      } finally {
+        if (intent === "generate-multi") multiLaunchInFlight.delete(shop);
+      }
     }
 
     /* ---- Cost & time estimate (optional, pre-generation) ---------------- */
@@ -841,6 +1049,141 @@ function parsePickerSelection(raw: unknown): PickedProduct | null {
   };
 }
 
+/* ------------------------------------------------------------------------- *
+ * Multi-product launch (SPEC-1.26 §2) — client helpers
+ * ------------------------------------------------------------------------- */
+
+/**
+ * MIRROR of MAX_MULTI_PRODUCTS in synthetic.server.ts (a .server constant
+ * cannot be used in the browser bundle — keep in sync): a launch supports at
+ * most 20 products, the main form's product included.
+ */
+const MAX_LAUNCH_PRODUCTS = 20;
+
+/**
+ * MIRROR of PER_PRODUCT_KEYS in synthetic.server.ts (keep in sync): the
+ * fields a launch may vary per product (SPEC-1.26 §1). The client strips
+ * these from the shared settings so the payload states cleanly which values
+ * are launch-wide; the server strips them again as a backstop.
+ */
+const LAUNCH_PER_PRODUCT_KEYS = [
+  "count",
+  "targetAverage",
+  "verifiedPercent",
+  "repliesPercent",
+  "assignVariants",
+  "variantWeights",
+  "dateStart",
+  "dateEnd",
+] as const;
+
+/**
+ * Product-context keys the main config carries but a launch's shared
+ * settings must not — the server re-fetches every product's context itself
+ * (all-or-nothing validation, SPEC-1.26 §0).
+ */
+const LAUNCH_PRODUCT_CONTEXT_KEYS = [
+  "productId",
+  "productTitle",
+  "productHandle",
+  "productDescription",
+  "productType",
+  "productTags",
+  "productVariants",
+] as const;
+
+/**
+ * One "More products in this launch" row (SPEC-1.26 §2): a product picker
+ * plus ONLY the per-product fields, initialized from the main form's current
+ * values at the moment the row was added (tweak what differs, leave the
+ * rest). variantWeights is deliberately absent — omitting it lets the
+ * server's default split apply (a row-level weights editor is v-next).
+ */
+interface ExtraRowState {
+  /** Stable React key — rows can be removed from the middle of the list. */
+  key: string;
+  product: PickedProduct | null;
+  countText: string;
+  targetAverage: number;
+  verifiedText: string;
+  repliesText: string;
+  dateStart: string;
+  dateEnd: string;
+  assignVariants: boolean;
+  /** Merchant touched this row's variants checkbox — stop applying defaults. */
+  variantsTouched: boolean;
+  /**
+   * Submit found no product on this row: show the subdued "pick a product or
+   * remove the row" hint (a product-less row is skipped, never an error).
+   */
+  needsProductHint: boolean;
+  errors: Record<string, string>;
+}
+
+/** Client-side view of the estimate-multi response (SPEC-1.26 §1). */
+interface MultiEstimateView {
+  total: {
+    reviews: number;
+    costUsd: number;
+    seconds: number;
+    secondsHigh: number;
+    products: number;
+  };
+  perProduct: Array<{
+    title: string;
+    reviews: number;
+    costUsd: number;
+    /** The per-product estimate's honesty basis (SPEC-1.7 §4). */
+    basis: "measured" | "baseline";
+  }>;
+  /** The estimate caveat, shown once under the totals (SPEC-1.7 §4). */
+  caveat: string;
+}
+
+function normalizeMultiEstimate(raw: unknown): MultiEstimateView | null {
+  if (typeof raw !== "object" || raw === null) return null;
+  const v = raw as Record<string, unknown>;
+  const num = (x: unknown): number | null =>
+    typeof x === "number" && Number.isFinite(x) ? x : null;
+  const totalRaw =
+    typeof v.total === "object" && v.total !== null ? (v.total as Record<string, unknown>) : null;
+  if (!totalRaw || !Array.isArray(v.perProduct)) return null;
+  const reviews = num(totalRaw.reviews);
+  const costUsd = num(totalRaw.costUsd);
+  const seconds = num(totalRaw.seconds);
+  if (reviews === null || costUsd === null || seconds === null) return null;
+  const perProduct: MultiEstimateView["perProduct"] = [];
+  let caveat: string | null = null;
+  for (const item of v.perProduct) {
+    if (typeof item !== "object" || item === null) return null;
+    const entry = item as Record<string, unknown>;
+    const estimate =
+      typeof entry.estimate === "object" && entry.estimate !== null
+        ? (entry.estimate as Record<string, unknown>)
+        : null;
+    if (caveat === null && estimate && typeof estimate.caveat === "string" && estimate.caveat) {
+      caveat = estimate.caveat;
+    }
+    perProduct.push({
+      title: typeof entry.title === "string" && entry.title ? entry.title : "Untitled product",
+      reviews: (estimate ? num(estimate.reviews) : null) ?? 0,
+      costUsd: (estimate ? num(estimate.costUsd) : null) ?? 0,
+      basis: estimate?.basis === "measured" ? "measured" : "baseline",
+    });
+  }
+  return {
+    total: {
+      reviews,
+      costUsd,
+      seconds,
+      secondsHigh: num(totalRaw.secondsHigh) ?? seconds,
+      products: num(totalRaw.products) ?? perProduct.length,
+    },
+    perProduct,
+    caveat: caveat ?? "Estimate only — actual usage may differ.",
+  };
+}
+
 /** Client-side view of the EstimateDTO returned by intent=estimate. */
 interface EstimateView {
   reviews: number;
@@ -973,6 +1316,348 @@ function JobStatusBadge({ job }: { job: JobView }) {
 }
 
 /* ------------------------------------------------------------------------- *
+ * "More products in this launch" row (SPEC-1.26 §2)
+ * ------------------------------------------------------------------------- */
+
+/**
+ * One extra product row. Each row owns its OWN product-context fetcher —
+ * a fetcher cancels its previous submission on re-submit, so a shared one
+ * would drop the first row's context load when two products are picked in
+ * quick succession. Product selection mirrors the main form: resourcePicker
+ * first, the loader's product list as the fallback when App Bridge exposes
+ * no picker. The context fetched here is display-only (title, variant count,
+ * the variants checkbox default) — on submit the server re-fetches every
+ * product's context itself (SPEC-1.26 §0).
+ */
+function ExtraLaunchRow({
+  row,
+  index,
+  duplicate,
+  products,
+  productListError,
+  pickerUnavailable,
+  onPickerUnavailable,
+  onPatch,
+  onRemove,
+}: {
+  row: ExtraRowState;
+  index: number;
+  duplicate: boolean;
+  products: Array<{ id: string; title: string; handle: string | null }>;
+  productListError: boolean;
+  pickerUnavailable: boolean;
+  onPickerUnavailable: () => void;
+  onPatch: (key: string, updater: (prev: ExtraRowState) => ExtraRowState) => void;
+  onRemove: (key: string) => void;
+}) {
+  const shopify = useAppBridge();
+  const rowContextFetcher = useFetcher<typeof action>();
+  const contextLoading = rowContextFetcher.state !== "idle";
+
+  const selectRowProduct = (picked: PickedProduct) => {
+    onPatch(row.key, (prev) => ({
+      ...prev,
+      product: picked,
+      // Same default as the main form's selectProduct: variants ON when the
+      // product has more than one, re-derived on every product change
+      // (SPEC-1.4 §C).
+      variantsTouched: false,
+      assignVariants: picked.variants.length > 1,
+      needsProductHint: false,
+    }));
+    rowContextFetcher.submit(
+      { intent: "product-context", productId: picked.id },
+      { method: "post" },
+    );
+  };
+
+  const openRowPicker = async () => {
+    try {
+      const picker = (
+        shopify as unknown as {
+          resourcePicker?: (options: Record<string, unknown>) => Promise<unknown>;
+        }
+      ).resourcePicker;
+      if (typeof picker !== "function") {
+        onPickerUnavailable();
+        return;
+      }
+      const raw = await picker.call(shopify, {
+        type: "product",
+        multiple: false,
+        action: "select",
+      });
+      if (raw == null) return; // merchant cancelled
+      const picked = parsePickerSelection(raw);
+      if (picked) selectRowProduct(picked);
+    } catch (error) {
+      console.error("[cellexia] resourcePicker failed — falling back to the product select", error);
+      onPickerUnavailable();
+    }
+  };
+
+  // Authoritative context for THIS row's product (same dance as the main
+  // form's contextFetcher effect).
+  const lastRowContextData = useRef<unknown>(null);
+  useEffect(() => {
+    if (
+      rowContextFetcher.state !== "idle" ||
+      !rowContextFetcher.data ||
+      rowContextFetcher.data === lastRowContextData.current
+    ) {
+      return;
+    }
+    lastRowContextData.current = rowContextFetcher.data;
+    const data = rowContextFetcher.data as {
+      ok?: boolean;
+      intent?: string;
+      product?: {
+        id?: string;
+        title?: string;
+        handle?: string | null;
+        description?: string;
+        productType?: string | null;
+        tags?: unknown;
+        variants?: unknown;
+      };
+    };
+    if (data.intent !== "product-context") return;
+    if (!data.ok || !data.product || typeof data.product.id !== "string") {
+      // Context failed — mark the row's product usable with title only (and
+      // drop any "still loading" validation error left from a submit).
+      onPatch(row.key, (prev) => {
+        if (!prev.product) return prev;
+        const errors = { ...prev.errors };
+        delete errors.product;
+        return { ...prev, product: { ...prev.product, contextLoaded: true }, errors };
+      });
+      return;
+    }
+    const incoming = data.product;
+    onPatch(row.key, (prev) => {
+      if (!prev.product || prev.product.id !== incoming.id) return prev; // stale response
+      const variants = Array.isArray(incoming.variants)
+        ? incoming.variants.filter((t): t is string => typeof t === "string")
+        : prev.product.variants;
+      // The context arrived — the "details are still loading" submit error no
+      // longer applies.
+      const errors = { ...prev.errors };
+      delete errors.product;
+      const next: ExtraRowState = {
+        ...prev,
+        errors,
+        product: {
+          id: prev.product.id,
+          title:
+            typeof incoming.title === "string" && incoming.title
+              ? incoming.title
+              : prev.product.title,
+          handle: typeof incoming.handle === "string" ? incoming.handle : prev.product.handle,
+          description: typeof incoming.description === "string" ? incoming.description : "",
+          productType:
+            typeof incoming.productType === "string" && incoming.productType
+              ? incoming.productType
+              : null,
+          tags: Array.isArray(incoming.tags)
+            ? incoming.tags.filter((t): t is string => typeof t === "string")
+            : [],
+          variants,
+          contextLoaded: true,
+        },
+      };
+      // Default ON when > 1 variant (SPEC-1.4 §C) — only while the merchant
+      // hasn't touched this row's checkbox themselves.
+      if (variants.length === 0) next.assignVariants = false;
+      else if (!prev.variantsTouched) next.assignVariants = variants.length > 1;
+      return next;
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rowContextFetcher.state, rowContextFetcher.data]);
+
+  const patch = (partial: Partial<ExtraRowState>) => {
+    onPatch(row.key, (prev) => ({ ...prev, ...partial }));
+  };
+
+  // Screen-reader identity for this row's controls: every row renders the
+  // same field set, so each label carries the row number (and product title
+  // once picked) to stay unique across rows.
+  const rowName = row.product
+    ? `product ${index + 2}: ${row.product.title}`
+    : `product ${index + 2}`;
+  const rowFieldLabel = (base: string) => (
+    <>
+      {base}
+      <Text as="span" visuallyHidden>{` — ${rowName}`}</Text>
+    </>
+  );
+
+  return (
+    <Box background="bg-surface-secondary" padding="300" borderRadius="200">
+      <BlockStack gap="300">
+        <InlineStack align="space-between" blockAlign="center" wrap>
+          <InlineStack gap="200" blockAlign="center" wrap>
+            <Text as="span" variant="bodySm" tone="subdued">
+              Product {index + 2}
+            </Text>
+            {row.product ? (
+              <>
+                <Text as="span" fontWeight="semibold">
+                  {row.product.title}
+                </Text>
+                <Text as="span" variant="bodySm" tone="subdued">
+                  {row.product.variants.length > 0
+                    ? pluralize(row.product.variants.length, "variant")
+                    : "no variants"}
+                  {contextLoading ? " · loading details…" : ""}
+                </Text>
+                <Button
+                  size="slim"
+                  onClick={openRowPicker}
+                  accessibilityLabel={`Change product — ${rowName}`}
+                >
+                  Change product
+                </Button>
+              </>
+            ) : (
+              <Button
+                size="slim"
+                onClick={openRowPicker}
+                accessibilityLabel={`Select product — ${rowName}`}
+              >
+                Select product
+              </Button>
+            )}
+          </InlineStack>
+          <Button
+            size="slim"
+            tone="critical"
+            onClick={() => onRemove(row.key)}
+            accessibilityLabel={`Remove ${rowName} from this launch`}
+          >
+            Remove
+          </Button>
+        </InlineStack>
+
+        {duplicate ? (
+          <Text as="p" variant="bodySm" tone="caution">
+            Already in this launch — this row is ignored. Pick a different product or remove it.
+          </Text>
+        ) : null}
+        {row.needsProductHint && !row.product ? (
+          <Text as="p" variant="bodySm" tone="subdued">
+            Pick a product or remove the row — rows without a product are skipped.
+          </Text>
+        ) : null}
+        {row.errors.product ? (
+          <InlineError message={row.errors.product} fieldID={`qa-launch-row-${row.key}`} />
+        ) : null}
+
+        {pickerUnavailable && !productListError ? (
+          <Select
+            label={rowFieldLabel("Product (first 100 shown)")}
+            options={[
+              { label: "Choose a product…", value: "" },
+              ...products.map((p) => ({ label: p.title, value: p.id })),
+            ]}
+            value={row.product?.id ?? ""}
+            onChange={(value) => {
+              const match = products.find((p) => p.id === value);
+              if (match) {
+                selectRowProduct({
+                  id: match.id,
+                  title: match.title,
+                  handle: match.handle,
+                  description: "",
+                  productType: null,
+                  tags: [],
+                  variants: [],
+                  contextLoaded: false,
+                });
+              }
+            }}
+          />
+        ) : null}
+
+        <FormLayout>
+          <FormLayout.Group condensed>
+            <TextField
+              label={rowFieldLabel("Reviews")}
+              type="number"
+              min={1}
+              autoComplete="off"
+              value={row.countText}
+              onChange={(value) => patch({ countText: value })}
+              error={row.errors.count}
+            />
+            <TextField
+              label={rowFieldLabel("Verified purchases")}
+              type="number"
+              min={0}
+              max={100}
+              suffix="%"
+              autoComplete="off"
+              value={row.verifiedText}
+              onChange={(value) => patch({ verifiedText: value })}
+              error={row.errors.verified}
+            />
+            <TextField
+              label={rowFieldLabel("Merchant replies")}
+              type="number"
+              min={0}
+              max={100}
+              suffix="%"
+              autoComplete="off"
+              value={row.repliesText}
+              onChange={(value) => patch({ repliesText: value })}
+              error={row.errors.replies}
+            />
+          </FormLayout.Group>
+          <RangeSlider
+            label={rowFieldLabel(`Average star rating: ${row.targetAverage.toFixed(1)}`)}
+            min={1}
+            max={5}
+            step={0.1}
+            value={row.targetAverage}
+            onChange={(value) =>
+              patch({ targetAverage: typeof value === "number" ? value : value[0] })
+            }
+            output
+          />
+          <FormLayout.Group condensed>
+            <TextField
+              label={rowFieldLabel("Date range start")}
+              type="date"
+              autoComplete="off"
+              value={row.dateStart}
+              onChange={(value) => patch({ dateStart: value })}
+              error={row.errors.dateStart}
+            />
+            <TextField
+              label={rowFieldLabel("Date range end")}
+              type="date"
+              autoComplete="off"
+              value={row.dateEnd}
+              onChange={(value) => patch({ dateEnd: value })}
+              error={row.errors.dateEnd}
+            />
+          </FormLayout.Group>
+          {row.product && row.product.variants.length > 0 ? (
+            // Custom per-row variant weights stay a main-product feature
+            // (SPEC-1.26 §2) — rows always use the server's default split.
+            <Checkbox
+              label={rowFieldLabel("Assign product variants")}
+              checked={row.assignVariants}
+              onChange={(checked) => patch({ assignVariants: checked, variantsTouched: true })}
+              helpText="Weighted with the default split across this product's variants — custom weights stay a main-product feature"
+            />
+          ) : null}
+        </FormLayout>
+      </BlockStack>
+    </Box>
+  );
+}
+
+/* ------------------------------------------------------------------------- *
  * Route component
  * ------------------------------------------------------------------------- */
 
@@ -1010,15 +1695,33 @@ export default function QaGeneratorRoute() {
   // variant title + VARIANT_NONE_KEY). Prefilled by the effects below.
   const [langShares, setLangShares] = useState<Record<string, string>>({});
   const [variantShares, setVariantShares] = useState<Record<string, string>>({});
+  // SPEC-1.26 §2 — extra products in this launch. The main form doubles as
+  // product 1 + the shared settings; each row carries ONLY the per-product
+  // overrides.
+  const [extraRows, setExtraRows] = useState<ExtraRowState[]>([]);
+  const launchRowKey = useRef(0);
 
   /* ---- Estimate / confirm / modal state ---------------------------------- */
   const [estimateView, setEstimateView] = useState<EstimateView | null>(null);
   // The raw DTO exactly as the server returned it — threaded back on Generate
   // so the job row records what the merchant saw.
   const [estimateRaw, setEstimateRaw] = useState<unknown>(null);
-  const [confirmLarge, setConfirmLarge] = useState<{ configJson: string; total: number } | null>(
-    null,
-  );
+  // SPEC-1.26 §2 — the combined estimate for a multi-product launch (mutually
+  // exclusive on screen with the single-product estimateView).
+  const [multiEstimate, setMultiEstimate] = useState<MultiEstimateView | null>(null);
+  // The raw per-product EstimateDTOs exactly as estimate-multi returned them,
+  // keyed by productId — threaded back on Generate as each job row's audit
+  // trail (the multi twin of `estimateRaw`).
+  const [multiEstimateRaw, setMultiEstimateRaw] = useState<Record<string, unknown> | null>(null);
+  // `configJson` holds the single-product config, or — when `multi` — the
+  // whole launch payload for generate-multi (SPEC-1.26 §2). `products` is the
+  // launch's product count, captured from the payload the modal confirms.
+  const [confirmLarge, setConfirmLarge] = useState<{
+    configJson: string;
+    total: number;
+    multi?: boolean;
+    products?: number;
+  } | null>(null);
   const [confirmText, setConfirmText] = useState("");
   const [pendingJobAction, setPendingJobAction] = useState<{
     id: string;
@@ -1072,9 +1775,13 @@ export default function QaGeneratorRoute() {
     setProduct(picked);
     variantsTouched.current = false;
     setAssignVariants(picked.variants.length > 1);
-    // A different product invalidates the on-screen estimate entirely.
+    // A different product invalidates the on-screen estimate entirely — the
+    // combined launch estimate included (the main form is product 1 of the
+    // launch, SPEC-1.26 §2).
     setEstimateView(null);
     setEstimateRaw(null);
+    setMultiEstimate(null);
+    setMultiEstimateRaw(null);
     contextFetcher.submit(
       { intent: "product-context", productId: picked.id },
       { method: "post" },
@@ -1353,6 +2060,303 @@ export default function QaGeneratorRoute() {
     return { configJson: result.configJson, total: result.total };
   };
 
+  /* ---- Multi-product launch (SPEC-1.26 §2) -------------------------------- */
+
+  // A row whose product is already in the launch (the main product or an
+  // earlier row) gets an inline warning and is EXCLUDED from submit.
+  const duplicateRowKeys = useMemo(() => {
+    const seen = new Set<string>(product ? [product.id] : []);
+    const duplicates = new Set<string>();
+    for (const row of extraRows) {
+      if (!row.product) continue;
+      if (seen.has(row.product.id)) duplicates.add(row.key);
+      else seen.add(row.product.id);
+    }
+    return duplicates;
+  }, [extraRows, product]);
+
+  // Rows that actually ship: product picked and not a duplicate. Product-less
+  // rows are skipped silently, with a hint at submit (SPEC-1.26 §2). When at
+  // least one row ships, Estimate/Generate switch to the multi intents; with
+  // none, the single-product paths run unchanged.
+  const activeLaunchRows = useMemo(
+    () => extraRows.filter((row) => row.product !== null && !duplicateRowKeys.has(row.key)),
+    [extraRows, duplicateRowKeys],
+  );
+  const multiMode = activeLaunchRows.length > 0;
+
+  // Launch total for the Generate button label — invalid row counts read as 0
+  // here; validation names them properly on submit.
+  const launchReviewTotal = useMemo(() => {
+    let total = Number.isFinite(countNumber) && countNumber >= 1 ? countNumber : 0;
+    for (const row of activeLaunchRows) {
+      const n = Number.parseInt(row.countText, 10);
+      if (Number.isFinite(n) && n >= 1) total += n;
+    }
+    return total;
+  }, [countNumber, activeLaunchRows]);
+
+  // Fingerprint of every value that feeds the launch payload — the shared
+  // config, the main product row and every extra row (rows added, removed or
+  // edited all change it; error/hint-only patches don't). Any change
+  // invalidates the on-screen combined estimate and disowns an in-flight
+  // estimate-multi response — the multi counterpart of the single path's
+  // count-keyed estimate guard, so a stale total can never be shown or
+  // recorded (SPEC-1.26 §2).
+  const launchFingerprint = useMemo(
+    () =>
+      JSON.stringify([
+        product?.id ?? null,
+        countText,
+        targetAverage,
+        verifiedPercent,
+        orderedLanguages,
+        repliesPercent,
+        maxVotesText,
+        dateStart,
+        dateEnd,
+        assignVariants,
+        structuredAttrs,
+        humanTouch,
+        skepticCheck,
+        skepticBatchSize,
+        status,
+        langShares,
+        variantShares,
+        extraRows.map((row) => [
+          row.key,
+          row.product?.id ?? null,
+          row.countText,
+          row.targetAverage,
+          row.verifiedText,
+          row.repliesText,
+          row.dateStart,
+          row.dateEnd,
+          row.assignVariants,
+        ]),
+      ]),
+    [
+      product,
+      countText,
+      targetAverage,
+      verifiedPercent,
+      orderedLanguages,
+      repliesPercent,
+      maxVotesText,
+      dateStart,
+      dateEnd,
+      assignVariants,
+      structuredAttrs,
+      humanTouch,
+      skepticCheck,
+      skepticBatchSize,
+      status,
+      langShares,
+      variantShares,
+      extraRows,
+    ],
+  );
+
+  // True while the launch has not changed since the last estimate-multi
+  // submit — a late response is dropped once this flips false.
+  const multiEstimateCurrent = useRef(false);
+  const prevLaunchFingerprint = useRef(launchFingerprint);
+  useEffect(() => {
+    if (prevLaunchFingerprint.current === launchFingerprint) return;
+    prevLaunchFingerprint.current = launchFingerprint;
+    multiEstimateCurrent.current = false;
+    setMultiEstimate(null);
+    setMultiEstimateRaw(null);
+  }, [launchFingerprint]);
+
+  // Leaving multi mode retires the combined estimate with it (SPEC-1.26 §2).
+  useEffect(() => {
+    if (!multiMode) {
+      multiEstimateCurrent.current = false;
+      setMultiEstimate(null);
+      setMultiEstimateRaw(null);
+    }
+  }, [multiMode]);
+
+  const patchLaunchRow = (key: string, updater: (prev: ExtraRowState) => ExtraRowState) => {
+    setExtraRows((rows) => rows.map((row) => (row.key === key ? updater(row) : row)));
+  };
+
+  const addLaunchRow = () => {
+    if (extraRows.length >= MAX_LAUNCH_PRODUCTS - 1) return; // main form takes slot 1
+    // Incremented OUTSIDE the state updater — React may double-invoke
+    // updaters (StrictMode), and a ref mutation inside one is a side effect.
+    launchRowKey.current += 1;
+    const key = `launch-row-${launchRowKey.current}`;
+    setExtraRows((rows) => {
+      if (rows.length >= MAX_LAUNCH_PRODUCTS - 1) return rows;
+      return [
+        ...rows,
+        {
+          key,
+          product: null,
+          // Snapshot of the main form's CURRENT values (SPEC-1.26 §2): the
+          // merchant tweaks what differs and leaves the rest. assignVariants
+          // is re-derived from the row's product on pick, like the main form.
+          countText,
+          targetAverage,
+          verifiedText: String(verifiedPercent),
+          repliesText: String(repliesPercent),
+          dateStart,
+          dateEnd,
+          assignVariants,
+          variantsTouched: false,
+          needsProductHint: false,
+          errors: {},
+        },
+      ];
+    });
+  };
+
+  const removeLaunchRow = (key: string) => {
+    setExtraRows((rows) => rows.filter((row) => row.key !== key));
+  };
+
+  /**
+   * Single-path submits with product-less rows sitting in the card: the rows
+   * are skipped silently, but each gets the subdued "pick a product or remove
+   * the row" hint (SPEC-1.26 §2 — a hint, never an error). The multi path
+   * sets the same hint inside buildLaunchPayload.
+   */
+  const flagProductlessRows = () => {
+    if (extraRows.length === 0) return;
+    setExtraRows((rows) =>
+      rows.map((row) => (row.product ? row : { ...row, needsProductHint: true })),
+    );
+  };
+
+  /** Per-row validation mirroring the main form's checks. */
+  const validateLaunchRowFields = (row: ExtraRowState): Record<string, string> => {
+    const errors: Record<string, string> = {};
+    const count = Number.parseInt(row.countText, 10);
+    if (!Number.isFinite(count) || !Number.isSafeInteger(count) || count < 1) {
+      errors.count = "Enter a number of reviews (1 or more)";
+    } else if (count > MAX_REVIEWS_PER_JOB) {
+      errors.count = MAX_REVIEWS_MESSAGE;
+    }
+    const verified = Number(row.verifiedText.trim());
+    if (
+      row.verifiedText.trim() === "" ||
+      !Number.isFinite(verified) ||
+      verified < 0 ||
+      verified > 100
+    ) {
+      errors.verified = "Enter a percentage between 0 and 100";
+    }
+    const replies = Number(row.repliesText.trim());
+    if (
+      row.repliesText.trim() === "" ||
+      !Number.isFinite(replies) ||
+      replies < 0 ||
+      replies > 100
+    ) {
+      errors.replies = "Enter a percentage between 0 and 100";
+    }
+    const dayRe = /^\d{4}-\d{2}-\d{2}$/;
+    if (!dayRe.test(row.dateStart) || Number.isNaN(new Date(row.dateStart).getTime())) {
+      errors.dateStart = "Enter a valid start date";
+    }
+    if (!dayRe.test(row.dateEnd) || Number.isNaN(new Date(row.dateEnd).getTime())) {
+      errors.dateEnd = "Enter a valid end date";
+    }
+    if (!errors.dateStart && !errors.dateEnd && row.dateStart > row.dateEnd) {
+      errors.dateEnd = "The end date must be on or after the start date";
+    }
+    return errors;
+  };
+
+  /**
+   * Validates the WHOLE launch (main form + every shipping row) and
+   * assembles the `launch` payload for estimate-multi / generate-multi
+   * (SPEC-1.26 §1): shared = the main config minus the product context and
+   * per-product keys; products = the main form's row first, then every extra
+   * row with a product. Product-less rows get the "pick or remove" hint;
+   * anything invalid renders its errors and returns null (all-or-nothing —
+   * the server never sees a half-valid launch).
+   */
+  const buildLaunchPayload = (): {
+    launchJson: string;
+    total: number;
+    products: number;
+  } | null => {
+    const validated = validateForm();
+    let hasRowErrors = false;
+    const nextRows = extraRows.map((row) => {
+      if (!row.product) return { ...row, needsProductHint: true, errors: {} };
+      if (duplicateRowKeys.has(row.key)) return { ...row, needsProductHint: false, errors: {} };
+      const errors = validateLaunchRowFields(row);
+      // The variants (and their count) are unknown until the row's
+      // product-context fetch settles — submitting now would silently ship
+      // assignVariants=false for a multi-variant product. Fail loud instead;
+      // the error clears itself the moment the context lands.
+      if (!row.product.contextLoaded) {
+        errors.product = "Product details are still loading — give it a second";
+      }
+      if (Object.keys(errors).length > 0) hasRowErrors = true;
+      return { ...row, needsProductHint: false, errors };
+    });
+    setExtraRows(nextRows);
+    if (!validated || hasRowErrors) return null;
+
+    const config = JSON.parse(validated.configJson) as Record<string, unknown>;
+    const shared: Record<string, unknown> = { ...config };
+    for (const key of [...LAUNCH_PER_PRODUCT_KEYS, ...LAUNCH_PRODUCT_CONTEXT_KEYS]) {
+      delete shared[key];
+    }
+
+    // The main form is product 1, with ITS per-product values — custom
+    // variant weights included (they stay a main-product feature).
+    const mainRow: Record<string, unknown> = {
+      productId: config.productId,
+      count: config.count,
+      targetAverage: config.targetAverage,
+      verifiedPercent: config.verifiedPercent,
+      repliesPercent: config.repliesPercent,
+      assignVariants: config.assignVariants,
+      dateStart: config.dateStart,
+      dateEnd: config.dateEnd,
+    };
+    if (config.variantWeights) mainRow.variantWeights = config.variantWeights;
+
+    const shippingRows = nextRows.filter(
+      (row): row is ExtraRowState & { product: PickedProduct } =>
+        row.product !== null && !duplicateRowKeys.has(row.key),
+    );
+    const productRows: Array<Record<string, unknown>> = [
+      mainRow,
+      // variantWeights is omitted on purpose: the server's default split
+      // applies (a row-level weights editor is v-next, SPEC-1.26 §2).
+      ...shippingRows.map((row) => ({
+        productId: row.product.id,
+        count: Number.parseInt(row.countText, 10),
+        targetAverage: row.targetAverage,
+        verifiedPercent: Number(row.verifiedText.trim()),
+        repliesPercent: Number(row.repliesText.trim()),
+        // Only decide variants when the row actually KNOWS them. A row whose
+        // context fetch failed has variants [] for a product that may well
+        // have variants — omitting the key lets the server derive the same
+        // "on when the product has variants" default from its own fetch,
+        // instead of receiving a hard false that wins over reality.
+        ...(row.product.variants.length > 0
+          ? { assignVariants: row.assignVariants }
+          : {}),
+        dateStart: row.dateStart,
+        dateEnd: row.dateEnd,
+      })),
+    ];
+    const total = productRows.reduce((sum, p) => sum + (Number(p.count) || 0), 0);
+    return {
+      launchJson: JSON.stringify({ shared, products: productRows }),
+      total,
+      products: productRows.length,
+    };
+  };
+
   /* ---- Estimate (optional; SPEC-1.7 §4/§5) -------------------------------- */
 
   // The review count the last estimate request was submitted for — drives the
@@ -1364,8 +2368,27 @@ export default function QaGeneratorRoute() {
     estimateFetcher.submit({ intent: "estimate", config: configJson }, { method: "post" });
   };
 
+  const submitMultiEstimate = (launchJson: string) => {
+    // Multi estimates never auto-refresh — reset the single-path debounce
+    // guard so a later single estimate starts clean.
+    lastEstimateCount.current = null;
+    // The response is only credible while the launch stays exactly as
+    // submitted — any form/row change flips this back off.
+    multiEstimateCurrent.current = true;
+    estimateFetcher.submit({ intent: "estimate-multi", launch: launchJson }, { method: "post" });
+  };
+
   const requestEstimate = () => {
     if (estimating) return;
+    // SPEC-1.26 §2: with extra rows in the launch, Estimate automatically
+    // takes the multi path; with none, the single path runs unchanged.
+    if (multiMode) {
+      const launch = buildLaunchPayload();
+      if (!launch) return;
+      submitMultiEstimate(launch.launchJson);
+      return;
+    }
+    flagProductlessRows();
     const validated = validateForm();
     if (!validated) return;
     submitEstimate(validated.configJson, validated.total);
@@ -1379,6 +2402,9 @@ export default function QaGeneratorRoute() {
   // lastEstimateCount guard keeps this from re-submitting for a count that
   // was already estimated (or whose estimate request failed).
   useEffect(() => {
+    // In multi mode the on-screen figure is the combined launch estimate —
+    // a single-product auto-refresh would silently replace it (SPEC-1.26 §2).
+    if (multiMode) return undefined;
     const needsLargeBatchEstimate =
       Number.isFinite(countNumber) &&
       countNumber > LARGE_BATCH_WARNING_THRESHOLD &&
@@ -1395,7 +2421,7 @@ export default function QaGeneratorRoute() {
     }, 600);
     return () => clearTimeout(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [countNumber, estimateView, product, contextFetcher.state]);
+  }, [countNumber, estimateView, product, contextFetcher.state, multiMode]);
 
   const lastEstimateData = useRef<unknown>(null);
   useEffect(() => {
@@ -1408,11 +2434,47 @@ export default function QaGeneratorRoute() {
     }
     lastEstimateData.current = estimateFetcher.data;
     const data = estimateFetcher.data as { ok?: boolean; intent?: string; estimate?: unknown };
-    if (data.intent !== "estimate" || data.ok !== true) return;
+    if (data.ok !== true) return;
+    // Combined launch estimate (SPEC-1.26 §2): totals + per-product lines
+    // replace the single-product banner — only one of the two is on screen.
+    if (data.intent === "estimate-multi") {
+      // Stale-guard: the launch changed while this round trip was in flight —
+      // its totals no longer describe what Generate would submit. Drop it.
+      if (!multiEstimateCurrent.current) return;
+      const view = normalizeMultiEstimate(data);
+      if (view) {
+        // Keep the raw DTOs by productId — threaded back on Generate as the
+        // per-job audit-trail estimate (`estimates` in the launch JSON).
+        const rawByProduct: Record<string, unknown> = {};
+        const perProductRaw = (data as { perProduct?: unknown }).perProduct;
+        if (Array.isArray(perProductRaw)) {
+          for (const item of perProductRaw) {
+            if (typeof item !== "object" || item === null) continue;
+            const entry = item as { productId?: unknown; estimate?: unknown };
+            if (
+              typeof entry.productId === "string" &&
+              entry.productId &&
+              typeof entry.estimate === "object" &&
+              entry.estimate !== null
+            ) {
+              rawByProduct[entry.productId] = entry.estimate;
+            }
+          }
+        }
+        setMultiEstimate(view);
+        setMultiEstimateRaw(Object.keys(rawByProduct).length > 0 ? rawByProduct : null);
+        setEstimateView(null);
+        setEstimateRaw(null);
+      }
+      return;
+    }
+    if (data.intent !== "estimate") return;
     const view = normalizeEstimate(data.estimate);
     if (view) {
       setEstimateRaw(data.estimate);
       setEstimateView(view);
+      setMultiEstimate(null);
+      setMultiEstimateRaw(null);
     }
   }, [estimateFetcher.state, estimateFetcher.data]);
 
@@ -1430,8 +2492,68 @@ export default function QaGeneratorRoute() {
     );
   };
 
+  /**
+   * When a fresh combined estimate is on screen at Generate time, attach its
+   * raw per-product DTOs to the launch JSON as `estimates: { [productId]:
+   * EstimateDTO }` — each job row's audit trail, the multi twin of the
+   * single path's `estimate` field. With no (or a mismatched) estimate the
+   * key is omitted entirely.
+   */
+  const withLaunchEstimates = (launchJson: string): string => {
+    if (!multiEstimate || !multiEstimateRaw) return launchJson;
+    try {
+      const parsed = JSON.parse(launchJson) as {
+        products?: Array<{ count?: unknown }>;
+      };
+      // Belt and braces on top of the fingerprint invalidation: the estimate
+      // must describe exactly this payload's review total.
+      const total = Array.isArray(parsed.products)
+        ? parsed.products.reduce((sum, p) => sum + (Number(p.count) || 0), 0)
+        : 0;
+      if (total !== multiEstimate.total.reviews) return launchJson;
+      return JSON.stringify({ ...parsed, estimates: multiEstimateRaw });
+    } catch {
+      return launchJson;
+    }
+  };
+
+  // One background job per product; the response reports every jobId and a
+  // plain-language summary shown via the shared toast (SPEC-1.26 §1).
+  const enqueueMultiLaunch = (launchJson: string) => {
+    if (enqueueing) return;
+    genFetcher.submit(
+      { intent: "generate-multi", launch: withLaunchEstimates(launchJson) },
+      { method: "post" },
+    );
+  };
+
   const startGeneration = () => {
     if (!aiReady || enqueueing) return;
+    // SPEC-1.26 §2: extra rows switch Generate to the multi path.
+    if (multiMode) {
+      const launch = buildLaunchPayload();
+      if (!launch) return;
+      if (launch.total > LARGE_BATCH_CONFIRM_THRESHOLD) {
+        // The very-large-batch confirmation (SPEC-1.7 §2) applies to the
+        // LAUNCH total — and like the single path the modal must name cost
+        // and duration, so fetch the combined estimate when the one on
+        // screen doesn't match this launch.
+        if (!estimating && (!multiEstimate || multiEstimate.total.reviews !== launch.total)) {
+          submitMultiEstimate(launch.launchJson);
+        }
+        setConfirmText("");
+        setConfirmLarge({
+          configJson: launch.launchJson,
+          total: launch.total,
+          multi: true,
+          products: launch.products,
+        });
+        return;
+      }
+      enqueueMultiLaunch(launch.launchJson);
+      return;
+    }
+    flagProductlessRows();
     const validated = validateForm();
     if (!validated) return;
     if (validated.total > LARGE_BATCH_CONFIRM_THRESHOLD) {
@@ -1791,8 +2913,25 @@ export default function QaGeneratorRoute() {
                     />
                   </FormLayout.Group>
 
-                  {Number.isFinite(countNumber) &&
-                  countNumber > LARGE_BATCH_WARNING_THRESHOLD ? (
+                  {/* In multi mode the warning weighs the LAUNCH total — the
+                      main field alone can sit under the threshold while the
+                      launch as a whole is well above it (SPEC-1.7 §2). */}
+                  {multiMode && launchReviewTotal > LARGE_BATCH_WARNING_THRESHOLD ? (
+                    <Banner
+                      tone="warning"
+                      title={`Large launch: ${formatCount(launchReviewTotal)} reviews across ${pluralize(activeLaunchRows.length + 1, "product")}`}
+                    >
+                      <Text as="p">
+                        {multiEstimate && multiEstimate.total.reviews === launchReviewTotal
+                          ? `Estimated ${formatUsd(multiEstimate.total.costUsd)} in API usage and ${formatEta(multiEstimate.total.seconds, multiEstimate.total.secondsHigh)}.`
+                          : estimating
+                            ? "Estimating the API cost and duration…"
+                            : "Use “Estimate cost” to see the projected API spend and duration before generating."}
+                      </Text>
+                    </Banner>
+                  ) : !multiMode &&
+                    Number.isFinite(countNumber) &&
+                    countNumber > LARGE_BATCH_WARNING_THRESHOLD ? (
                     <Banner
                       tone="warning"
                       title={`Large batch: ${formatCount(countNumber)} reviews`}
@@ -2104,6 +3243,30 @@ export default function QaGeneratorRoute() {
                   />
                 </FormLayout>
 
+                {/* ---- Combined launch estimate (SPEC-1.26 §2) ------------ */}
+                {multiEstimate ? (
+                  <Banner
+                    tone="info"
+                    title={`${pluralize(multiEstimate.total.products, "product")} · ${formatCount(multiEstimate.total.reviews)} reviews · ≈ ${formatUsd(multiEstimate.total.costUsd)} · ${formatEta(multiEstimate.total.seconds, multiEstimate.total.secondsHigh)}`}
+                    onDismiss={() => {
+                      setMultiEstimate(null);
+                      setMultiEstimateRaw(null);
+                    }}
+                  >
+                    <BlockStack gap="050">
+                      <Text as="p" variant="bodySm" tone="subdued">
+                        {multiEstimate.caveat}
+                      </Text>
+                      {multiEstimate.perProduct.map((p, i) => (
+                        <Text as="p" variant="bodySm" tone="subdued" key={`${i}-${p.title}`}>
+                          {truncateText(p.title, 60)} · {formatCount(p.reviews)} reviews ·{" "}
+                          {formatUsd(p.costUsd)} ({p.basis})
+                        </Text>
+                      ))}
+                    </BlockStack>
+                  </Banner>
+                ) : null}
+
                 {/* ---- Inline cost & time estimate (SPEC-1.7 §5) ---------- */}
                 {estimateView ? (
                   <Banner
@@ -2128,11 +3291,13 @@ export default function QaGeneratorRoute() {
                     loading={enqueueing}
                     disabled={!aiReady || enqueueing || !product || contextLoading}
                   >
-                    {Number.isFinite(countNumber) && countNumber >= 1
-                      ? countNumber === 1
-                        ? "Generate 1 review"
-                        : `Generate ${formatCount(countNumber)} reviews`
-                      : "Generate reviews"}
+                    {multiMode
+                      ? `Generate ${formatCount(launchReviewTotal)} reviews · ${pluralize(activeLaunchRows.length + 1, "product")}`
+                      : Number.isFinite(countNumber) && countNumber >= 1
+                        ? countNumber === 1
+                          ? "Generate 1 review"
+                          : `Generate ${formatCount(countNumber)} reviews`
+                        : "Generate reviews"}
                   </Button>
                   <Button
                     onClick={requestEstimate}
@@ -2144,6 +3309,52 @@ export default function QaGeneratorRoute() {
                   {!aiReady ? (
                     <Text as="span" variant="bodySm" tone="subdued">
                       Add the Anthropic API key in Settings to enable the generator.
+                    </Text>
+                  ) : null}
+                </InlineStack>
+              </BlockStack>
+            </Card>
+
+            {/* ---- More products in this launch (SPEC-1.26 §2) ------------ */}
+            <Card>
+              <BlockStack gap="400">
+                <Text as="h2" variant="headingMd">
+                  More products in this launch
+                </Text>
+                <Text as="p" tone="subdued">
+                  Everything configured above applies to every product in the launch —
+                  languages, human touch, the skeptical double-check, structured attributes,
+                  status and helpful-votes cap. Each product added here only overrides what
+                  differs: review count, star average, verified and reply percentages, dates
+                  and the variant toggle. Each row is a copy of the settings above from the
+                  moment you added it — changing the settings above later does not update
+                  existing rows. Each product runs as its own background job.
+                </Text>
+                {extraRows.map((row, index) => (
+                  <ExtraLaunchRow
+                    key={row.key}
+                    row={row}
+                    index={index}
+                    duplicate={duplicateRowKeys.has(row.key)}
+                    products={products}
+                    productListError={productListError}
+                    pickerUnavailable={pickerUnavailable}
+                    onPickerUnavailable={() => setPickerUnavailable(true)}
+                    onPatch={patchLaunchRow}
+                    onRemove={removeLaunchRow}
+                  />
+                ))}
+                <InlineStack gap="200" blockAlign="center">
+                  <Button
+                    onClick={addLaunchRow}
+                    disabled={extraRows.length >= MAX_LAUNCH_PRODUCTS - 1}
+                  >
+                    Add product
+                  </Button>
+                  {extraRows.length >= MAX_LAUNCH_PRODUCTS - 1 ? (
+                    <Text as="span" variant="bodySm" tone="subdued">
+                      A launch supports up to {MAX_LAUNCH_PRODUCTS} products, the product
+                      above included.
                     </Text>
                   ) : null}
                 </InlineStack>
@@ -2236,7 +3447,11 @@ export default function QaGeneratorRoute() {
           disabled: !confirmLarge || confirmText.trim() !== String(confirmLarge.total),
           loading: enqueueing,
           onAction: () => {
-            if (confirmLarge) enqueueJob(confirmLarge.configJson, confirmLarge.total);
+            if (!confirmLarge) return;
+            // Multi launches confirm the LAUNCH total and submit the whole
+            // payload to generate-multi (SPEC-1.26 §2).
+            if (confirmLarge.multi) enqueueMultiLaunch(confirmLarge.configJson);
+            else enqueueJob(confirmLarge.configJson, confirmLarge.total);
           },
         }}
         secondaryActions={[
@@ -2253,11 +3468,21 @@ export default function QaGeneratorRoute() {
         <Modal.Section>
           <BlockStack gap="300">
             <Text as="p">
-              {confirmLarge && estimateView && estimateView.reviews === confirmLarge.total
-                ? `Estimated ${formatUsd(estimateView.costUsd)} in API usage and ${formatEta(estimateView.seconds, estimateView.secondsHigh)}. The job runs in the background — you can leave this page while it generates.`
-                : estimating
-                  ? "Calculating the estimated cost and duration… The job runs in the background — you can leave this page while it generates."
-                  : "This is a very large batch. Consider pressing “Estimate cost” first to see the projected API spend and duration. The job runs in the background — you can leave this page while it generates."}
+              {/* Review and product counts come from the payload this modal
+                  confirms (confirmLarge), NEVER from the estimate — the
+                  estimate only ever contributes cost/duration, and only when
+                  it matches this exact payload. */}
+              {confirmLarge?.multi
+                ? multiEstimate && multiEstimate.total.reviews === confirmLarge.total
+                  ? `Estimated ${formatUsd(multiEstimate.total.costUsd)} in API usage and ${formatEta(multiEstimate.total.seconds, multiEstimate.total.secondsHigh)} for ${formatCount(confirmLarge.total)} reviews across ${pluralize(confirmLarge.products ?? multiEstimate.total.products, "product")}. The jobs run in the background — you can leave this page while they generate.`
+                  : estimating
+                    ? `Calculating the estimated cost and duration for ${formatCount(confirmLarge.total)} reviews across ${pluralize(confirmLarge.products ?? 1, "product")}… The jobs run in the background — you can leave this page while they generate.`
+                    : `This launch totals ${formatCount(confirmLarge.total)} reviews across ${pluralize(confirmLarge.products ?? 1, "product")} — a very large batch. Consider pressing “Estimate cost” first to see the projected API spend and duration. The jobs run in the background — you can leave this page while they generate.`
+                : confirmLarge && estimateView && estimateView.reviews === confirmLarge.total
+                  ? `Estimated ${formatUsd(estimateView.costUsd)} in API usage and ${formatEta(estimateView.seconds, estimateView.secondsHigh)}. The job runs in the background — you can leave this page while it generates.`
+                  : estimating
+                    ? "Calculating the estimated cost and duration… The job runs in the background — you can leave this page while it generates."
+                    : "This is a very large batch. Consider pressing “Estimate cost” first to see the projected API spend and duration. The job runs in the background — you can leave this page while it generates."}
             </Text>
             <TextField
               label={

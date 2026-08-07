@@ -1755,6 +1755,139 @@ async function cancelAndDeleteJobs(shop: string, batchId?: string): Promise<void
  * `syntheticProductIds` BEFORE deleting to know which products to re-sync.
  */
 /* ------------------------------------------------------------------------- *
+ * Multi-product launch (SPEC-1.26)
+ * ------------------------------------------------------------------------- */
+
+export const MAX_MULTI_PRODUCTS = 20;
+
+/** The fields a launch may vary per product; everything else is shared. */
+const PER_PRODUCT_KEYS = [
+  "count",
+  "targetAverage",
+  "verifiedPercent",
+  "repliesPercent",
+  "assignVariants",
+  "variantWeights",
+  "dateStart",
+  "dateEnd",
+] as const;
+
+export interface MultiProductRow {
+  productId: string;
+  overrides: Record<string, unknown>;
+}
+
+export interface MultiLaunchInput {
+  shared: Record<string, unknown>;
+  rows: MultiProductRow[];
+}
+
+/**
+ * Validates and normalizes a multi-launch payload's SHAPE (SPEC-1.26 §1) —
+ * before any Shopify fetch. Per-product configs are assembled later, with
+ * each product's fetched context, through the EXISTING parseSyntheticConfig,
+ * so multi introduces no second validation dialect.
+ */
+export function parseMultiLaunch(
+  raw: unknown,
+): { input: MultiLaunchInput; error: null } | { input: null; error: string } {
+  if (typeof raw !== "object" || raw === null) {
+    return { input: null, error: "The launch configuration is malformed" };
+  }
+  const v = raw as Record<string, unknown>;
+  if (typeof v.shared !== "object" || v.shared === null) {
+    return { input: null, error: "The launch configuration is missing its shared settings" };
+  }
+  if (!Array.isArray(v.products) || v.products.length === 0) {
+    return { input: null, error: "Add at least one product to the launch" };
+  }
+  if (v.products.length > MAX_MULTI_PRODUCTS) {
+    return { input: null, error: `A launch supports up to ${MAX_MULTI_PRODUCTS} products` };
+  }
+  const rows: MultiProductRow[] = [];
+  const seen = new Set<string>();
+  for (const [i, item] of v.products.entries()) {
+    if (typeof item !== "object" || item === null) {
+      return { input: null, error: `Product ${i + 1} is malformed` };
+    }
+    const row = item as Record<string, unknown>;
+    const idSource = cleanString(row.productId, 128);
+    const idMatch = idSource.match(/\d+/g);
+    const productId = /^\d+$/.test(idSource)
+      ? idSource
+      : idMatch
+        ? idMatch.reduce((a, b) => (b.length > a.length ? b : a), "")
+        : "";
+    if (!productId) {
+      return { input: null, error: `Product ${i + 1} has no product selected` };
+    }
+    if (seen.has(productId)) {
+      return { input: null, error: `The same product appears twice (row ${i + 1}) — merge the rows` };
+    }
+    seen.add(productId);
+    // Server-side backstop mirroring the single path: a count above the hard
+    // limit must be rejected, never silently clamped after approval.
+    const count = Number(row.count);
+    if (Number.isFinite(count) && count > MAX_SYNTHETIC_REVIEWS) {
+      return {
+        input: null,
+        error: `Product ${i + 1}: the generator supports up to ${MAX_SYNTHETIC_REVIEWS} reviews per product`,
+      };
+    }
+    const overrides: Record<string, unknown> = {};
+    for (const key of PER_PRODUCT_KEYS) {
+      if (key in row) overrides[key] = row[key];
+    }
+    rows.push({ productId, overrides });
+  }
+  // Shared settings must not smuggle per-product fields or a product context.
+  const shared: Record<string, unknown> = { ...(v.shared as Record<string, unknown>) };
+  for (const key of [...PER_PRODUCT_KEYS, "productId", "productTitle", "productHandle", "productDescription", "productType", "productTags", "productVariants"]) {
+    delete shared[key];
+  }
+  return { input: { shared, rows }, error: null };
+}
+
+/**
+ * Assembles one product's full SyntheticConfig from the launch's shared
+ * settings, the row's overrides and the product's fetched context, through
+ * parseSyntheticConfig. Returns the same shape parseSyntheticConfig does.
+ */
+export function assembleLaunchConfig(
+  input: MultiLaunchInput,
+  row: MultiProductRow,
+  context: {
+    id: string;
+    title: string;
+    handle: string | null;
+    description: string;
+    productType: string | null;
+    tags: string[];
+    variants: string[];
+  },
+): ReturnType<typeof parseSyntheticConfig> {
+  // A row that could not learn its product's variants in the UI omits
+  // assignVariants; the default is derived HERE from the freshly fetched
+  // context, the same "on when the product has variants" the main form uses —
+  // a hard client false for a multi-variant product would otherwise win.
+  const overrides = { ...row.overrides };
+  if (!("assignVariants" in overrides)) {
+    overrides.assignVariants = context.variants.length > 1;
+  }
+  return parseSyntheticConfig({
+    ...input.shared,
+    ...overrides,
+    productId: context.id,
+    productTitle: context.title,
+    productHandle: context.handle,
+    productDescription: context.description,
+    productType: context.productType,
+    productTags: context.tags,
+    productVariants: context.variants,
+  });
+}
+
+/* ------------------------------------------------------------------------- *
  * Skeptical double-check (SPEC-1.24)
  * ------------------------------------------------------------------------- */
 

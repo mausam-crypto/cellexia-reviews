@@ -4,6 +4,25 @@ All notable changes to Cellexia Reviews are documented here. The version number 
 `package.json` and stamped into the release ZIP built by `npm run package`
 (`dist/cellexia-reviews-v<version>.zip`).
 
+## 1.26.0 — 2026-08-07
+
+### Added — QA review generator
+
+- **Generate for several products in one launch** (SPEC-1.26). Set everything up once —
+  languages, human touch, the skeptical double-check, and the rest — then add more products
+  under **"More products in this launch"**. Each extra row is a copy of your current settings
+  and lets you change only what differs per product: review count, target star average,
+  verified-purchase %, merchant-replies %, variant assignment, and the date range. Up to 20
+  products per launch; each becomes its own background job, so the activity bar shows
+  combined progress and every product can still be cancelled or retried on its own.
+  - **Estimate covers the whole launch**: one total ("3 products · 260 reviews · ≈ $…"), a
+    line per product, and it clears itself the moment you change anything so you can never
+    approve one number and run another.
+  - **Nothing half-starts.** Every product is checked — including that it still exists in
+    Shopify — before any job is queued. If something goes wrong while queueing, the message
+    names exactly which jobs did start so they are never accidentally launched twice; a
+    double-click can't duplicate a launch either.
+
 ## 1.25.2 — 2026-08-07
 
 ### Fixed — QA review generator

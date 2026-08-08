@@ -96,8 +96,15 @@ const STOREFRONT_HIT_FRESH_MS = 7 * 24 * 60 * 60 * 1000;
 /** Products sampled when comparing metafields with the database (check 5). */
 const METAFIELD_SAMPLE_SIZE = 5;
 
-/** Response bytes kept while inspecting a probe response. */
-const MAX_BODY_CHARS = 2000;
+/**
+ * Response bytes kept while inspecting a probe response. Must comfortably fit
+ * a real `/reviews` payload — product stats, the AI summary with its topics,
+ * one review, and (on page 1) the media gallery — or the round-trip check
+ * (3) truncates valid JSON mid-object, `parseJsonObject` then rejects it as
+ * malformed, and a perfectly healthy, well-reviewed product reports FAIL.
+ * 32 KB is generous for that shape and still bounds a pathological response.
+ */
+const MAX_BODY_CHARS = 32_768;
 
 /** Response snippet length shown to the merchant. */
 const MAX_DETAIL_SNIPPET = 120;
@@ -1284,19 +1291,33 @@ interface DatasourceInfo {
 let datasourceCache: DatasourceInfo | null = null;
 
 /**
- * Best-effort read of the Prisma datasource from prisma/schema.prisma, so the
- * database check can tell "SQLite file baked into the container" apart from
- * "url = env(DATABASE_URL)". Cached; an unreadable schema yields
+ * Best-effort read of the Prisma datasource actually driving this process, so
+ * the database check can tell "SQLite file baked into the container" apart
+ * from "url = env(DATABASE_URL)". Cached; an unreadable schema yields
  * `{ fileUrl: null }`, which falls back to the DATABASE_URL-only heuristic.
+ *
+ * This deployment ships TWO schemas: prisma/schema.prisma (SQLite, for local
+ * `npm run dev`) and prisma/schema.production.prisma (Postgres via
+ * DATABASE_URL, generated and pushed by `setup:production` — see
+ * package.json's `docker-start`, the only thing Render ever runs). Reading
+ * schema.prisma unconditionally would report the dev schema's baked-in
+ * SQLite file even when this exact process was built from
+ * schema.production.prisma — a false "wiped on redeploy" warning on every
+ * Render deploy. DATABASE_URL is set precisely (and only) in that Render
+ * environment, so its presence plus the production schema's existence is
+ * what selects which file describes THIS process, not local dev.
  */
 function readDatasource(): DatasourceInfo {
   if (datasourceCache) return datasourceCache;
   let info: DatasourceInfo = { fileUrl: null };
+  const productionSchema = path.join(process.cwd(), "prisma", "schema.production.prisma");
+  const usesProductionSchema =
+    (process.env.DATABASE_URL ?? "").trim() !== "" && fs.existsSync(productionSchema);
+  const schemaPath = usesProductionSchema
+    ? productionSchema
+    : path.join(process.cwd(), "prisma", "schema.prisma");
   try {
-    const source = fs.readFileSync(
-      path.join(process.cwd(), "prisma", "schema.prisma"),
-      "utf8",
-    );
+    const source = fs.readFileSync(schemaPath, "utf8");
     const block = /datasource\s+\w+\s*\{([\s\S]*?)\}/.exec(source);
     const url = block ? /url\s*=\s*"([^"]*)"/.exec(block[1]) : null;
     const value = url?.[1]?.trim() ?? "";

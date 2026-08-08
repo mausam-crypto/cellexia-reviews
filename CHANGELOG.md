@@ -4,6 +4,22 @@ All notable changes to Cellexia Reviews are documented here. The version number 
 `package.json` and stamped into the release ZIP built by `npm run package`
 (`dist/cellexia-reviews-v<version>.zip`).
 
+## 1.26.2 — 2026-08-08
+
+### Fixed — false alarms on the Go Live checklist
+
+- **"Preview token round-trip" no longer fails on a healthy, well-reviewed product.** The
+  check read only the first 2 KB of the `/reviews` response before checking it for valid
+  JSON — comfortably enough for a quiet product, not enough for one with an AI summary,
+  several topics and a media gallery, so the response got cut mid-object and reported as
+  a failure even though the storefront was answering correctly. The check now reads enough
+  of the response to parse it in full.
+- **"Database persistence" no longer warns about SQLite on Render.** The check read the
+  local-dev schema (SQLite, baked into the container) even when this exact deployment was
+  built from the production schema (Postgres via `DATABASE_URL`) — the two ship side by
+  side specifically for this Render setup. It now reads whichever schema actually produced
+  the running process.
+
 ## 1.26.1 — 2026-08-07
 
 ### Fixed — translations on the storefront

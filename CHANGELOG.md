@@ -4,6 +4,22 @@ All notable changes to Cellexia Reviews are documented here. The version number 
 `package.json` and stamped into the release ZIP built by `npm run package`
 (`dist/cellexia-reviews-v<version>.zip`).
 
+## 1.26.1 — 2026-08-07
+
+### Fixed — translations on the storefront
+
+- **Topic call-out quotes now match the language of the page.** Clicking a mention chip
+  ("14 customers mention Price and value") quoted the reviews' original text — French quotes
+  on an English page — even while the reviews below showed their translations. Quotes now
+  excerpt exactly the text the shopper sees, and if a shopper switches one review to
+  "See original", an open panel follows suit.
+- **The home page Overall widget no longer leaves the odd review untranslated.** When the
+  first translation pass missed a review (a provider hiccup), that review stayed in its
+  original language on the homepage indefinitely. The widget now makes one follow-up request
+  for exactly the missed reviews — the result is cached, so it also stays fixed for every
+  later visitor. The catch-up never fights a shopper who has already started reading or
+  scrolling, and it works in preview links too.
+
 ## 1.26.0 — 2026-08-07
 
 ### Added — QA review generator

@@ -1143,7 +1143,10 @@ function topicExcerpts(topic) {
  if (!terms.length) return out;
  for (var i = 0; i < data.reviews.length && out.length < 4; i++) {
   var r = data.reviews[i];
-  var body = r.body || "";
+  // v1.26.1: quote the text the SHOPPER SEES (translation in translated
+  // mode) — r.body put French quotes on English pages.
+  var av = autoTranslation(r);
+  var body = (av && !showOriginalIds[r.id] ? av.body : r.body) || "";
   var lower = body.toLowerCase();
   var best = -1, len = 0;
   for (var j = 0; j < terms.length; j++) {
@@ -1153,6 +1156,9 @@ function topicExcerpts(topic) {
   if (best < 0) continue;
   var start = Math.max(0, best - 70);
   var end = Math.min(body.length, best + len + 90);
+  // toLowerCase can change string LENGTH (Turkish İ), shifting indices —
+  // only quote when the slice really is the matched term.
+  if (body.slice(best, best + len).toLowerCase() !== lower.slice(best, best + len)) continue;
   out.push({
    review: r,
    prefix: (start > 0 ? "…" : "") + body.slice(start, best),
@@ -1659,6 +1665,15 @@ function fetchTranslations(ids) {
   });
  }));
 }
+/* v1.26.1: quotes must follow the card's See original/translation toggle. */
+function refreshTopicPanel() {
+ if (!state.topic || !data.summary || !Array.isArray(data.summary.topics)) return;
+ var old = secSummary.querySelector(".cx-chip-panel");
+ if (!old || !old.parentNode) return;
+ var active = null;
+ data.summary.topics.forEach((tp) => { if (tp.key === state.topic) active = tp; });
+ if (active) old.parentNode.replaceChild(buildTopicPanel(active), old);
+}
 function translationControls(r, card) {
  var wrap = el("div", "cx-translate");
  // v1.8 §4 translated mode; reviews WITHOUT a server translation fall
@@ -1669,6 +1684,7 @@ function translationControls(r, card) {
    ap(wrap, btn("cx-link", trs("see_translation"), () => {
     delete showOriginalIds[r.id];
     rerenderCard(r);
+    refreshTopicPanel();
    }));
   } else {
    ap(wrap, el("span", "cx-muted cx-translated-note",
@@ -1677,6 +1693,7 @@ function translationControls(r, card) {
    ap(wrap, btn("cx-link", trs("see_original"), () => {
     showOriginalIds[r.id] = true;
     rerenderCard(r);
+    refreshTopicPanel();
    }));
   }
   return wrap;
@@ -3324,16 +3341,58 @@ function initOverall(root) {
  if (td === "translated" && box && !demo && (live || token || ed)) {
   fetchBrand(0).then((body) => {
    if (!body.reviews || !body.reviews.length) return;
-   var anyT = false;
-   for (var bi = 0; bi < body.reviews.length; bi++) {
-    var bt = body.reviews[bi].translated;
-    if (bt && bt.body) { anyT = true; break; }
+   var shown = body.reviews.slice(0, max);
+   var paint = function () {
+    var anyT = false;
+    for (var bi = 0; bi < shown.length; bi++) {
+     var bt = shown[bi].translated;
+     if (bt && bt.body) { anyT = true; break; }
+    }
+    if (!anyT) return;
+    var nodes = shown.map(card);
+    if (stars) { ssr = nodes; return; }
+    swap(nodes, false);
+    ssr = Array.prototype.slice.call(box.children);
+   };
+   paint();
+   // v1.26.1: one follow-up translate for reviews the server's attach pass
+   // missed (else they stay foreign FOREVER). Uses this module's OWN loc and
+   // proxy base — the product widget's cfg may not exist on this page.
+   var missing = [];
+   for (var mi = 0; mi < shown.length; mi++) {
+    var mr = shown[mi];
+    if (mr.language && mr.language !== loc &&
+      !(mr.translated && mr.translated.body)) missing.push(mr.id);
    }
-   if (!anyT) return;
-   var nodes = body.reviews.slice(0, max).map(card);
-   if (stars) { ssr = nodes; return; }
-   swap(nodes, false);
-   ssr = Array.prototype.slice.call(box.children);
+   if (!missing.length || !window.fetch) return;
+   // Never repaint over a shopper already interacting — the retry's result
+   // is cached server-side and shows on the next load anyway.
+   var touched = false;
+   var markTouched = function () { touched = true; };
+   on(box, "pointerdown", markTouched, { once: true, passive: true });
+   on(box, "keydown", markTouched, { once: true });
+   window.fetch(ob() + "/translate", {
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "content-type": "application/json" },
+    // Token rides along like fetchBrand's GET, or preview gets 403.
+    body: JSON.stringify(
+     token
+      ? { ids: missing.slice(0, 20), target: loc, preview_token: token }
+      : { ids: missing.slice(0, 20), target: loc },
+    ),
+   }).then((r) => { return r.ok ? r.json() : null; }).then((res) => {
+    if (!res || !res.ok || !res.translations || touched) return;
+    var got = false;
+    for (var ri = 0; ri < shown.length; ri++) {
+     var tr = res.translations[shown[ri].id];
+     if (tr && tr.body) { shown[ri].translated = tr; got = true; }
+    }
+    if (!got || touched) return;
+    var keep = box ? box.scrollLeft : 0;
+    paint();
+    if (box) box.scrollLeft = keep;
+   }, () => {});
   }, () => {});
  }
 }

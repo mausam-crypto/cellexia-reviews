@@ -4,6 +4,26 @@ All notable changes to Cellexia Reviews are documented here. The version number 
 `package.json` and stamped into the release ZIP built by `npm run package`
 (`dist/cellexia-reviews-v<version>.zip`).
 
+## 1.28.1 — 2026-08-08
+
+### Fixed — cart badges vs. in-cart upsell apps
+
+Two follow-up reports on 1.28.0, both caused by the same assumption: the badge logic
+looked for a recognizable quantity selector inside each cart line, but cart apps
+(in-cart upsells, order quantity upgrades, subscriptions) redraw cart lines with their
+own controls under their own names.
+
+- **The badge now sits above the frequency selector too.** In the cart it anchors
+  directly under the item's price — which always comes before the quantity and
+  frequency controls — instead of trying to find the quantity selector. So it renders
+  title → price → stars → controls, whatever apps add to the line.
+- **Turning the option off now sticks.** Previously, when an upsell app redrew a cart
+  line (for example after a quantity upgrade), the redrawn line wasn't recognized as
+  part of the cart anymore and the stars came back. Cart membership is now decided by
+  where the card sits (the cart page, cart form, or any cart drawer — including
+  app-owned drawers), not by what controls it contains, and it is re-checked on every
+  redraw. Verified with a harness that replays exactly that takeover-redraw.
+
 ## 1.28.0 — 2026-08-08
 
 ### Added — cart star badges: your own switch, and a better spot (SPEC-1.28)

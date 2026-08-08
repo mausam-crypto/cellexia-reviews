@@ -2892,24 +2892,19 @@ function initBadges(cfgE, I) {
   }
   return null;
  }
- /* v1.28: cart LINE ITEMS (cart page + drawer) get their own toggle and a
-    fixed position ABOVE the quantity stepper. A line item = a card inside a
-    cart context that carries its own quantity control — recommendation cards
-    on the cart page have none, so both conditions together stay precise.
-    Returns the OUTERMOST quantity wrapper (cardPrice's climb pattern). */
+ /* v1.28.1: cart badges key off CONTEXT alone. v1.28.0 required a
+    recognizable quantity control in the card — but cart apps (upsells,
+    quantity upgrades, subscriptions) re-render lines with their own
+    steppers/frequency widgets under unrecognizable class names, which both
+    mis-anchored the badge and resurrected it after a re-render with the
+    toggle off. Context = cart form/drawer/cart-classed container (app
+    drawers like "upcart-…"/"rebuy-cart…" match too) but NEVER body/html —
+    drawer-open state classes land there and would swallow whole pages. */
  var CART_CTX = 'form[action*="/cart"],cart-drawer,cart-items,cart-drawer-items,[class*="cart" i],[id*="cart" i]';
- function cartQty(card) {
-  var q = null;
-  try {
-   if (!card.closest(CART_CTX)) return null;
-   q = card.querySelector('input[name="updates[]"],input[name*="quantity" i],[class*="quantity" i]');
-  } catch (e) { return null; }
-  if (!q || q.closest(".cx")) return null;
-  var top = q, par = q.parentElement;
-  try {
-   while (par && par !== card && par.matches('[class*="quantity" i]')) { top = par; par = par.parentElement; }
-  } catch (e) {}
-  return top;
+ function cartCtx(card) {
+  var m = null;
+  try { m = card.closest(CART_CTX); } catch (e) { return null; }
+  return m && m !== document.body && m !== document.documentElement ? m : null;
  }
  var pending = []; // collected {handle, card, titleEl, done}
  function collect() {
@@ -2928,7 +2923,7 @@ function initBadges(cfgE, I) {
     // v1.8 audit #5: adopt a cloned badged card — never a second badge.
     if (card.querySelector(".cx-badge-inline--card")) { sa(card, "data-cx-badged", handle); continue; }
     // v1.28: cart badges toggled off — suppress before fetch, not at inject.
-    if (s.cart_badges === false && cartQty(card)) { sa(card, "data-cx-badged", handle); continue; }
+    if (s.cart_badges === false && cartCtx(card)) { sa(card, "data-cx-badged", handle); continue; }
     var titleEl = titleFor(card) || a; // fallback: the anchor
     sa(card, "data-cx-badged", handle); // dedupe ON the card
     pending.push({ handle: handle, card: card, titleEl: titleEl, done: false });
@@ -2998,13 +2993,15 @@ function initBadges(cfgE, I) {
     if (en.card && en.card.querySelector(".cx-badge-inline--card")) continue;
     var b = buildInlineBadge(Number(stats.average) || 0, Number(stats.count) || 0, s.badge_style, cfgE.skin, I, null);
     b.className += " cx-badge-inline--card";
-    // v1.28: a cart line item pins the badge ABOVE its quantity stepper,
-    // ignoring the position settings (re-resolved here: themes re-render).
-    var cq = cartQty(en.card);
-    if (cq) {
+    // v1.28.1: in the cart the badge anchors after the PRICE (→ tagline →
+    // title) — the price always precedes the quantity/frequency controls,
+    // so this lands above them without ever guessing an app's stepper
+    // markup. Ignores the position settings; re-resolved here per rescan.
+    if (cartCtx(en.card)) {
      if (s.cart_badges === false) continue;
      b.className += " cx-badge-inline--cart";
-     if (cq.parentNode) { cq.parentNode.insertBefore(b, cq); continue; }
+     insertAfter(b, cardPrice(en.card, tEl) || cardTagline(en.card, tEl) || tEl);
+     continue;
     }
     // v1.22: cards have their own position setting; "inherit" (the default)
     // follows the product-page one — byte-identical to the old behavior.

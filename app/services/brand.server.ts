@@ -33,6 +33,18 @@
  * reviews per product in the final list (excess is skipped, the next
  * candidates backfill); when fewer than `limit` qualify the rating gate
  * relaxes to >= 3 — never below, and the 2-per-product cap never relaxes.
+ *
+ * TEXTUAL DIVERSITY (SPEC-1.27): the featured walk additionally skips
+ * candidates whose headline/body reads like a review already kept (normalized
+ * character-trigram similarity — deterministic, language-agnostic), and the
+ * first MAX_BRAND_PER_PAGE slots of the brand list prefer textually distinct
+ * reviews (skipped ones are demoted, never removed). The rule is a
+ * preference, not a cap: featured slots that similarity alone would leave
+ * empty top up from the skipped candidates, so the featured list is never
+ * shorter than SPEC-1.9 alone would produce. Hand-picked reviews are always
+ * kept verbatim; they seed the sieve, so the backfill only ever echoes a
+ * hand-picked card when the sole alternative is an unfilled slot (echoes go
+ * last in the top-up).
  */
 import type { AdminApiContext } from "@shopify/shopify-app-remix/server";
 import type { Prisma, Review } from "@prisma/client";
@@ -177,6 +189,8 @@ interface ScoredCandidate {
   hasMedia: boolean;
   createdAt: Date;
   score: number;
+  title: string | null;
+  body: string;
 }
 
 /**
@@ -225,6 +239,7 @@ async function fetchScoredCandidates(
       rating: true,
       helpfulCount: true,
       verified: true,
+      title: true,
       body: true,
       createdAt: true,
       _count: { select: { media: true } },
@@ -244,6 +259,8 @@ async function fetchScoredCandidates(
       verified: row.verified,
       hasMedia,
       createdAt: row.createdAt,
+      title: row.title,
+      body: row.body,
       score:
         row.helpfulCount * 3 +
         (row.verified ? 4 : 0) +
@@ -255,6 +272,171 @@ async function fetchScoredCandidates(
 
   scored.sort(compareScored);
   return scored;
+}
+
+/* ------------------------------------------------------------------------- *
+ * Textual diversity (SPEC-1.27)
+ * ------------------------------------------------------------------------- */
+
+/** First N normalized characters of the body the similarity check considers. */
+const BODY_SIMILARITY_WINDOW = 400;
+
+/** Title trigram containment at/above this reads as the same headline. */
+const TITLE_SIMILARITY_MAX = 0.6;
+
+/** Body trigram Jaccard at/above this reads as the same review re-worded. */
+const BODY_SIMILARITY_MAX = 0.4;
+
+/**
+ * Ratio tests need at least this many trigrams on BOTH sides; ultra-short
+ * texts ("Ok!") are judged by the exact-title rule alone.
+ */
+const MIN_TRIGRAMS_FOR_RATIO = 4;
+
+/** How many leading brand-list slots get the diversity walk (SPEC-1.27 §2). */
+const TEXT_DIVERSITY_PREFIX = MAX_BRAND_PER_PAGE;
+
+/** The review text the sieve judges — a subset of both Review and candidates. */
+interface ReviewText {
+  title: string | null;
+  body: string;
+}
+
+/** Precomputed similarity fingerprint of one review's text. */
+interface TextEntry {
+  titleKey: string;
+  titleGrams: Set<string>;
+  bodyGrams: Set<string>;
+}
+
+/**
+ * NFKD → strip combining marks → lowercase → every run of other
+ * non-letter/non-digit characters becomes one space → trim.
+ *
+ * The strip covers ALL Unicode marks (\p{M}), not only the Latin block:
+ * Arabic harakat (and any other optional pointing) must FOLD, so the pointed
+ * and unpointed spellings of the same word fingerprint identically — a
+ * narrower strip would leave those marks to the word-boundary replace below,
+ * splitting words mid-letter. One deliberate exception: the Japanese voicing
+ * marks U+3099/U+309A (which NFKD splits off every voiced kana) are RETAINED
+ * — here and in the word-boundary class — so genuinely different words like
+ * だ/た or が/か cannot collapse into one fingerprint. Character-level and
+ * Unicode-class based, so it behaves consistently across all 17 store
+ * languages (diacritics in fr/ro/hu, Greek accents, Arabic diacritics,
+ * unsegmented ja — no word splitting anywhere).
+ */
+function normalizeForSimilarity(text: string): string {
+  return text
+    .normalize("NFKD")
+    .replace(/[^\P{M}\u3099\u309A]+/gu, "")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\u3099\u309A]+/gu, " ")
+    .trim();
+}
+
+/** Character-trigram set of a normalized text, space-padded at both ends. */
+function charTrigrams(normalized: string): Set<string> {
+  const grams = new Set<string>();
+  if (!normalized) return grams;
+  const padded = ` ${normalized} `;
+  for (let i = 0; i + 3 <= padded.length; i += 1) grams.add(padded.slice(i, i + 3));
+  return grams;
+}
+
+/** |A ∩ B| — iterates the smaller set. */
+function trigramOverlap(a: Set<string>, b: Set<string>): number {
+  const [small, large] = a.size <= b.size ? [a, b] : [b, a];
+  let count = 0;
+  for (const gram of small) if (large.has(gram)) count += 1;
+  return count;
+}
+
+function toTextEntry(text: ReviewText): TextEntry {
+  const titleKey = normalizeForSimilarity(text.title ?? "");
+  return {
+    titleKey,
+    titleGrams: charTrigrams(titleKey),
+    bodyGrams: charTrigrams(normalizeForSimilarity(text.body).slice(0, BODY_SIMILARITY_WINDOW)),
+  };
+}
+
+/**
+ * The SPEC-1.27 similarity sieve. `admits` answers whether a candidate reads
+ * distinctly from every review added so far; a kept candidate must then be
+ * `add`ed. Too similar = ANY of: equal non-empty normalized titles; title
+ * trigram containment >= TITLE_SIMILARITY_MAX; body trigram Jaccard >=
+ * BODY_SIMILARITY_MAX (ratio tests only when both sides have >=
+ * MIN_TRIGRAMS_FOR_RATIO trigrams). Comparison is only against kept entries —
+ * never all pairs — so cost stays bounded by the slots being filled.
+ */
+function createTextDiversitySieve(seeds: readonly ReviewText[] = []) {
+  const kept: TextEntry[] = [];
+  const keptTitleKeys = new Set<string>();
+
+  function add(entry: TextEntry): void {
+    kept.push(entry);
+    if (entry.titleKey) keptTitleKeys.add(entry.titleKey);
+  }
+
+  function admits(entry: TextEntry): boolean {
+    if (entry.titleKey && keptTitleKeys.has(entry.titleKey)) return false;
+    for (const other of kept) {
+      if (
+        entry.titleGrams.size >= MIN_TRIGRAMS_FOR_RATIO &&
+        other.titleGrams.size >= MIN_TRIGRAMS_FOR_RATIO
+      ) {
+        const shared = trigramOverlap(entry.titleGrams, other.titleGrams);
+        const containment = shared / Math.min(entry.titleGrams.size, other.titleGrams.size);
+        if (containment >= TITLE_SIMILARITY_MAX) return false;
+      }
+      if (
+        entry.bodyGrams.size >= MIN_TRIGRAMS_FOR_RATIO &&
+        other.bodyGrams.size >= MIN_TRIGRAMS_FOR_RATIO
+      ) {
+        const shared = trigramOverlap(entry.bodyGrams, other.bodyGrams);
+        const union = entry.bodyGrams.size + other.bodyGrams.size - shared;
+        if (shared / union >= BODY_SIMILARITY_MAX) return false;
+      }
+    }
+    return true;
+  }
+
+  for (const seed of seeds) add(toTextEntry(seed));
+  return { add, admits };
+}
+
+/**
+ * Brand-list display order with the SPEC-1.27 §2 diverse prefix: the first
+ * TEXT_DIVERSITY_PREFIX slots (= MAX_BRAND_PER_PAGE, so every possible first
+ * page) prefer textually distinct reviews; everything the sieve skips is
+ * demoted — it follows immediately after the prefix in pure score order, as
+ * does everything past the prefix. Every candidate appears exactly once, so
+ * `total` and pagination are untouched. Worst case (everything similar) is
+ * one sieve check per candidate against <= TEXT_DIVERSITY_PREFIX kept
+ * fingerprints — bounded, and this path sits behind the same 60 s cache /
+ * rate bucket as the scoring scan (see fetchScoredCandidates).
+ */
+function orderWithTextDiversity(
+  candidates: ScoredCandidate[],
+  seedTexts: readonly ReviewText[],
+): string[] {
+  if (candidates.length <= 1) return candidates.map((candidate) => candidate.id);
+  const sieve = createTextDiversitySieve(seedTexts);
+  const prefixIds: string[] = [];
+  const prefixSet = new Set<string>();
+  for (const candidate of candidates) {
+    if (prefixIds.length >= TEXT_DIVERSITY_PREFIX) break;
+    // Loop-local fingerprint — see applyDiversity: live entries stay O(kept).
+    const entry = toTextEntry(candidate);
+    if (!sieve.admits(entry)) continue;
+    sieve.add(entry);
+    prefixIds.push(candidate.id);
+    prefixSet.add(candidate.id);
+  }
+  return [
+    ...prefixIds,
+    ...candidates.filter((candidate) => !prefixSet.has(candidate.id)).map((c) => c.id),
+  ];
 }
 
 /** score desc, then createdAt desc, then id desc — fully deterministic. */
@@ -269,24 +451,35 @@ function compareScored(a: ScoredCandidate, b: ScoredCandidate): number {
 
 /**
  * Walk score-ordered candidates and keep at most `need` of them while
- * enforcing the diversity rule: max 2 reviews per product in the final list
+ * enforcing the diversity rules: max 2 reviews per product in the final list
  * (`seedCounts` carries products already used by picked reviews, so the
- * backfill respects the cap across the whole list). Excess candidates are
- * skipped, later ones backfill. The seed map is cloned — both relax passes
- * must start from the same baseline.
+ * backfill respects the cap across the whole list) and the SPEC-1.27 textual
+ * sieve (`seedTexts` carries the picked reviews' texts, so the backfill
+ * cannot echo a hand-picked card). Excess candidates are skipped, later ones
+ * backfill. The seed map and the sieve are rebuilt per call — both relax
+ * passes must start from the same baseline.
  */
 function applyDiversity(
   candidates: ScoredCandidate[],
   need: number,
   seedCounts: ReadonlyMap<string, number>,
+  seedTexts: readonly ReviewText[],
 ): ScoredCandidate[] {
   const counts = new Map(seedCounts);
+  const sieve = createTextDiversitySieve(seedTexts);
   const out: ScoredCandidate[] = [];
   for (const candidate of candidates) {
     if (out.length >= need) break;
     const used = counts.get(candidate.productId) ?? 0;
     if (used >= 2) continue;
+    // Fingerprints are loop-local ON PURPOSE: only kept entries survive (in
+    // the sieve), so live fingerprints stay O(slots), never O(candidates) —
+    // memoizing on the candidate would pin ~10-20 KB per review for the whole
+    // request on the very samey datasets this rule exists for.
+    const entry = toTextEntry(candidate);
+    if (!sieve.admits(entry)) continue;
     counts.set(candidate.productId, used + 1);
+    sieve.add(entry);
     out.push(candidate);
   }
   return out;
@@ -297,12 +490,22 @@ function applyDiversity(
  * walk cannot fill `need` slots, the rating gate relaxes to >= 3 (one full
  * re-rank over the wider pool — deterministic, and the 2-per-product cap
  * never relaxes). Never goes below rating 3.
+ *
+ * SPEC-1.27 never-shrink guarantee: when even the relaxed pool cannot fill
+ * `need` slots under the textual sieve, the remaining slots top up from the
+ * skipped-for-similarity candidates in score order — product cap and rating
+ * floor still hold, so the featured list is never shorter than the SPEC-1.9
+ * rules alone would produce. Within the top-up, candidates that echo a
+ * hand-picked review (the `seedTexts`) are deferred behind every other
+ * skipped candidate: a picked echo can reach the featured list ONLY when the
+ * alternative is a slot SPEC-1.9 would have filled staying empty.
  */
 async function autoRankCandidates(
   shop: string,
   need: number,
   excludeIds: readonly string[],
   seedCounts: ReadonlyMap<string, number>,
+  seedTexts: readonly ReviewText[],
 ): Promise<ScoredCandidate[]> {
   if (need <= 0) return [];
   const baseWhere = (minRating: number): Prisma.ReviewWhereInput => ({
@@ -312,12 +515,45 @@ async function autoRankCandidates(
     ...(excludeIds.length > 0 ? { id: { notIn: [...excludeIds] } } : {}),
   });
 
-  const strict = await fetchScoredCandidates(baseWhere(4));
-  let selection = applyDiversity(strict, need, seedCounts);
+  let pool = await fetchScoredCandidates(baseWhere(4));
+  let selection = applyDiversity(pool, need, seedCounts, seedTexts);
   if (selection.length < need) {
-    const relaxed = await fetchScoredCandidates(baseWhere(3));
-    selection = applyDiversity(relaxed, need, seedCounts);
+    pool = await fetchScoredCandidates(baseWhere(3));
+    selection = applyDiversity(pool, need, seedCounts, seedTexts);
   }
+
+  if (selection.length < need) {
+    const chosen = new Set(selection.map((candidate) => candidate.id));
+    const counts = new Map(seedCounts);
+    for (const candidate of selection) {
+      counts.set(candidate.productId, (counts.get(candidate.productId) ?? 0) + 1);
+    }
+    // Static sieve holding ONLY the picked texts — used to defer picked
+    // echoes to the very end of the top-up (never added to, so any other
+    // skipped candidate outranks an echo regardless of score).
+    const pickedSieve = createTextDiversitySieve(seedTexts);
+    const deferredEchoes: ScoredCandidate[] = [];
+    for (const candidate of pool) {
+      if (selection.length >= need) break;
+      if (chosen.has(candidate.id)) continue;
+      const used = counts.get(candidate.productId) ?? 0;
+      if (used >= 2) continue;
+      if (seedTexts.length > 0 && !pickedSieve.admits(toTextEntry(candidate))) {
+        deferredEchoes.push(candidate);
+        continue;
+      }
+      counts.set(candidate.productId, used + 1);
+      selection.push(candidate);
+    }
+    for (const candidate of deferredEchoes) {
+      if (selection.length >= need) break;
+      const used = counts.get(candidate.productId) ?? 0;
+      if (used >= 2) continue;
+      counts.set(candidate.productId, used + 1);
+      selection.push(candidate);
+    }
+  }
+
   return selection;
 }
 
@@ -331,8 +567,12 @@ async function autoRankCandidates(
  *   - "picked": pickedIds verbatim (PUBLISHED-only, stale/foreign ids
  *     silently dropped), then the auto ranking backfills the remaining slots
  *     — picked products count toward the 2-per-product diversity cap, so a
- *     product the merchant already featured twice gets no backfill.
- *   - "auto" (default): the pure auto ranking.
+ *     product the merchant already featured twice gets no backfill, and
+ *     picked texts seed the SPEC-1.27 sieve, so the backfill avoids echoing
+ *     a hand-picked card whenever any distinct candidate can fill the slot
+ *     (see the top-up note on autoRankCandidates for the only exception).
+ *   - "auto" (default): the pure auto ranking (with the SPEC-1.27 textual
+ *     sieve and its never-shrink top-up — see autoRankCandidates).
  * Returns full Review rows so the metafield sync can serialize them.
  */
 export async function pickTopBrandReviews(
@@ -345,11 +585,15 @@ export async function pickTopBrandReviews(
 
   const orderedIds: string[] = [];
   const productCounts = new Map<string, number>();
+  // SPEC-1.27: picked reviews stay verbatim but seed the textual sieve, so
+  // the auto backfill echoes a hand-picked card only as the last resort of
+  // the never-shrink top-up (see autoRankCandidates).
+  const pickedTexts: ReviewText[] = [];
 
   if (config.mode === "picked" && config.pickedIds.length > 0) {
     const pickedRows = await prisma.review.findMany({
       where: { shop, status: "PUBLISHED", id: { in: config.pickedIds } },
-      select: { id: true, productId: true },
+      select: { id: true, productId: true, title: true, body: true },
     });
     const byId = new Map(pickedRows.map((row) => [row.id, row] as const));
     for (const id of config.pickedIds) {
@@ -358,6 +602,7 @@ export async function pickTopBrandReviews(
       if (!row) continue; // stale, unpublished or cross-shop id — dropped
       orderedIds.push(id);
       productCounts.set(row.productId, (productCounts.get(row.productId) ?? 0) + 1);
+      pickedTexts.push({ title: row.title, body: row.body });
     }
   }
 
@@ -367,6 +612,7 @@ export async function pickTopBrandReviews(
       max - orderedIds.length,
       orderedIds,
       productCounts,
+      pickedTexts,
     );
     for (const candidate of backfill) orderedIds.push(candidate.id);
   }
@@ -400,11 +646,14 @@ export interface BrandListParams {
 /**
  * One page of the brand-wide review list (SPEC-1.9 §1): every PUBLISHED
  * review across all products, ordered by the auto score (deterministic
- * tiebreaks). The optional `stars` filter narrows the set BEFORE scoring;
- * when unfiltered, hand-picked reviews (mode "picked") occupy the first
- * global slots in their stored order and the scored remainder excludes them,
- * so no page can duplicate a review. `stats` is always the unfiltered
- * shop-wide aggregate. Product info comes from the Review rows (best-effort
+ * tiebreaks) with the SPEC-1.27 diverse prefix — the first
+ * TEXT_DIVERSITY_PREFIX slots prefer textually distinct reviews; skipped
+ * ones are demoted, never removed. The optional `stars` filter narrows the
+ * set BEFORE scoring (the prefix then applies within the filtered set); when
+ * unfiltered, hand-picked reviews (mode "picked") occupy the first global
+ * slots in their stored order and the scored remainder excludes them, so no
+ * page can duplicate a review. `stats` is always the unfiltered shop-wide
+ * aggregate. Product info comes from the Review rows (best-effort
  * sibling-row enrichment) — no Admin API calls anywhere on this path.
  */
 export async function listBrandReviews(
@@ -451,19 +700,30 @@ export async function listBrandReviews(
   // Global display order: picked ids first (unfiltered "picked" mode only —
   // a stars filter must honor the filter and the pure score order), then the
   // scored list minus the picked ids. `scored` covers every matching
-  // PUBLISHED row, so picked validation is plain set membership.
+  // PUBLISHED row, so picked validation is plain set membership. SPEC-1.27:
+  // the leading slots after the picked block prefer textually distinct
+  // reviews — the picked texts seed the sieve, and skipped look-alikes are
+  // demoted behind the diverse prefix, never removed (so they can still
+  // surface once the distinct reviews run out).
   const byId = new Map(scored.map((candidate) => [candidate.id, candidate] as const));
   let orderedIds: string[];
   const config = parseOverallWidget(settings.overallWidget);
   if (!filtered && config.mode === "picked" && config.pickedIds.length > 0) {
     const picked = config.pickedIds.filter((id) => byId.has(id));
     const pickedSet = new Set(picked);
+    const pickedTexts = picked.map((id) => {
+      const candidate = byId.get(id) as ScoredCandidate;
+      return { title: candidate.title, body: candidate.body };
+    });
     orderedIds = [
       ...picked,
-      ...scored.filter((candidate) => !pickedSet.has(candidate.id)).map((c) => c.id),
+      ...orderWithTextDiversity(
+        scored.filter((candidate) => !pickedSet.has(candidate.id)),
+        pickedTexts,
+      ),
     ];
   } else {
-    orderedIds = scored.map((candidate) => candidate.id);
+    orderedIds = orderWithTextDiversity(scored, []);
   }
 
   const total = orderedIds.length;

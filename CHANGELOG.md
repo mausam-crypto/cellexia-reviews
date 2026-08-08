@@ -4,32 +4,47 @@ All notable changes to Cellexia Reviews are documented here. The version number 
 `package.json` and stamped into the release ZIP built by `npm run package`
 (`dist/cellexia-reviews-v<version>.zip`).
 
-## 1.26.3 — 2026-08-08
+## 1.27.0 — 2026-08-08
 
-### Fixed — health check, more robustly this time
+### Improved — home page "Overall reviews" widget
 
-- **"Preview token round-trip" no longer has a size ceiling at all.** 1.26.2 raised the
-  amount of the response read before parsing from 2 KB to 32 KB, which fixes every product
-  seen so far but is still a guess at "big enough." The check now parses the FULL response
-  as JSON unconditionally and only caps the separate snippet kept for a merchant-facing
-  failure message — so no reviews payload, however large, can ever be cut before parsing
-  again.
+- **Featured reviews no longer read alike** (SPEC-1.27). The widget's auto-ranking used to
+  judge reviews only by helpfulness, verified purchase, photos, length and recency — it never
+  looked at the words. On stores with imported or generated reviews, several featured cards
+  could open with the same headline ("Love this cream" / "Love this cream!") or bodies that
+  read like the same review re-worded. The ranking now skips a candidate whose headline or
+  text reads too much like a review already on display and features the next best distinct
+  one instead — in every language the app supports.
+  - **No review disappears.** Look-alikes are only demoted, never hidden: they still appear
+    further down the widget's list, on later pages of the reviews page, and in every count.
+    And if a store simply doesn't have enough distinct-reading reviews, the widget fills its
+    slots exactly as before rather than showing fewer cards.
+  - **Hand-picked reviews are untouchable.** Reviews you selected yourself are always shown
+    exactly as picked — the similarity rule only stops the automatic backfill from echoing
+    them.
+  - Applies everywhere the widget gets its data: the instant server-side render, the live
+    re-render when a shopper clicks a star bar, theme-editor previews, and the brand reviews
+    page's first screen.
+  - New real-code regression suite `scripts/dev-tests/brand-diversity.test.mjs` (41 checks)
+    covers headline clones, re-worded bodies, hand-picked seeding, the never-shrink
+    guarantee, the 2-per-product cap, star filters, pagination integrity and the
+    non-Latin-script edge cases (Arabic optional pointing folds; Japanese voiced/unvoiced
+    kana stay distinct words) — restoring the brand-page suite the dev-tests README notes
+    was lost.
 
 ## 1.26.2 — 2026-08-08
 
-### Fixed — false alarms on the Go Live checklist
+### Fixed — health check
 
-- **"Preview token round-trip" no longer fails on a healthy, well-reviewed product.** The
-  check read only the first 2 KB of the `/reviews` response before checking it for valid
-  JSON — comfortably enough for a quiet product, not enough for one with an AI summary,
-  several topics and a media gallery, so the response got cut mid-object and reported as
-  a failure even though the storefront was answering correctly. The check now reads enough
-  of the response to parse it in full.
-- **"Database persistence" no longer warns about SQLite on Render.** The check read the
-  local-dev schema (SQLite, baked into the container) even when this exact deployment was
-  built from the production schema (Postgres via `DATABASE_URL`) — the two ship side by
-  side specifically for this Render setup. It now reads whichever schema actually produced
-  the running process.
+- **"Preview token round-trip" no longer fails on stores with plenty of reviews.** The
+  health check truncated every probe response to 2,000 characters *before* parsing it as
+  JSON. A healthy reviews payload — the probe deliberately targets the most-reviewed
+  product, and a valid preview token adds the merchant-only meta block — is routinely
+  larger than that, so the truncated body failed to parse and the check reported a
+  Critical failure while quoting the perfectly valid HTTP 200 response it had just
+  received. The response is now parsed in full; the 2,000-character cap only applies to
+  the snippet kept for the merchant-facing failure detail. Previews and the storefront
+  were never affected — the check was wrong, not the connection.
 
 ## 1.26.1 — 2026-08-07
 

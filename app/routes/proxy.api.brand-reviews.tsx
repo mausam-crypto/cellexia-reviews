@@ -4,10 +4,12 @@
  *
  * Serves the brand-wide "Overall reviews" block:
  * `{ stats: ShopStatsDTO, reviews: BrandReviewDTO[] }` (+ pagination fields)
- * over every product's PUBLISHED reviews, ordered by the brand auto score —
- * the optional `stars` (1–5) filter applies before scoring, and hand-picked
- * reviews occupy the first slots when unfiltered. Product info on each card
- * comes from Review rows only: no Admin API call anywhere on this path.
+ * over every product's PUBLISHED reviews, ordered by the brand auto score
+ * with the SPEC-1.27 diverse prefix (the leading slots prefer textually
+ * distinct reviews; similar ones are demoted, never removed) — the optional
+ * `stars` (1–5) filter applies before scoring, and hand-picked reviews
+ * occupy the first slots when unfiltered. Product info on each card comes
+ * from Review rows only: no Admin API call anywhere on this path.
  *
  * Params: `page` (1-based, default 1), `per_page` (default 12, max 24),
  * `stars` (1–5, optional).

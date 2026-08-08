@@ -4,6 +4,17 @@ All notable changes to Cellexia Reviews are documented here. The version number 
 `package.json` and stamped into the release ZIP built by `npm run package`
 (`dist/cellexia-reviews-v<version>.zip`).
 
+## 1.26.3 — 2026-08-08
+
+### Fixed — health check, more robustly this time
+
+- **"Preview token round-trip" no longer has a size ceiling at all.** 1.26.2 raised the
+  amount of the response read before parsing from 2 KB to 32 KB, which fixes every product
+  seen so far but is still a guess at "big enough." The check now parses the FULL response
+  as JSON unconditionally and only caps the separate snippet kept for a merchant-facing
+  failure message — so no reviews payload, however large, can ever be cut before parsing
+  again.
+
 ## 1.26.2 — 2026-08-08
 
 ### Fixed — false alarms on the Go Live checklist

@@ -97,14 +97,12 @@ const STOREFRONT_HIT_FRESH_MS = 7 * 24 * 60 * 60 * 1000;
 const METAFIELD_SAMPLE_SIZE = 5;
 
 /**
- * Response bytes kept while inspecting a probe response. Must comfortably fit
- * a real `/reviews` payload — product stats, the AI summary with its topics,
- * one review, and (on page 1) the media gallery — or the round-trip check
- * (3) truncates valid JSON mid-object, `parseJsonObject` then rejects it as
- * malformed, and a perfectly healthy, well-reviewed product reports FAIL.
- * 32 KB is generous for that shape and still bounds a pathological response.
+ * Response bytes KEPT after a probe response has been parsed — plenty for any
+ * merchant-facing snippet. Parsing always sees the full body: v1.26.2 fixed a
+ * false negative where slicing happened before parsing, so any healthy reviews
+ * payload over this size read as invalid JSON and failed the round-trip check.
  */
-const MAX_BODY_CHARS = 32_768;
+const MAX_BODY_CHARS = 2000;
 
 /** Response snippet length shown to the merchant. */
 const MAX_DETAIL_SNIPPET = 120;
@@ -280,7 +278,7 @@ function evaluatePing(subpath: string, response: HttpResult): ProxyProbeAttempt 
     return { subpath, status: response.status, ok: false, detail: `HTTP ${response.status}${hint}` };
   }
 
-  const parsed = parseJsonObject(response.body);
+  const parsed = response.json;
   if (!parsed) {
     return {
       subpath,
@@ -563,7 +561,7 @@ async function checkPreviewRoundTrip(
     };
   }
 
-  const parsed = parseJsonObject(response.body);
+  const parsed = response.json;
 
   if (response.status === 200 && parsed && "product" in parsed) {
     return {
@@ -1083,7 +1081,10 @@ interface HttpResult {
   /** True when a response arrived (whatever its status). */
   received: boolean;
   status: number;
+  /** Body kept for merchant-facing snippets, capped at MAX_BODY_CHARS. */
   body: string;
+  /** The FULL body parsed as a JSON object, or null (non-JSON / non-object). */
+  json: Record<string, unknown> | null;
   /** URL the response came from, after the redirects `httpGet` accepted. */
   finalUrl: string;
   /** Short failure reason when `received` is false. */
@@ -1160,9 +1161,10 @@ function isPasswordPage(response: HttpResult): boolean {
 }
 
 /**
- * GET with a hard timeout, capped body read and no exceptions: every failure
- * mode (timeout, DNS, TLS, connection reset) comes back as a short, merchant-
- * readable reason instead of a rejected promise.
+ * GET with a hard timeout and no exceptions: every failure mode (timeout, DNS,
+ * TLS, connection reset) comes back as a short, merchant-readable reason
+ * instead of a rejected promise. The full body is parsed as JSON (`json`);
+ * only the kept snippet (`body`) is capped.
  *
  * Redirects are followed by hand (`redirect: "manual"` plus the
  * `mayFollowRedirect` policy) rather than by `fetch`, because the destination
@@ -1193,7 +1195,7 @@ async function httpGet(url: string, timeoutMs: number): Promise<HttpResult> {
         // Release the socket without reading a body we are not going to use.
         void response.body?.cancel().catch(() => {});
         if (!next) {
-          return { received: true, status: response.status, body: "", finalUrl: current, error: null };
+          return { received: true, status: response.status, body: "", json: null, finalUrl: current, error: null };
         }
         current = next;
         continue;
@@ -1203,7 +1205,10 @@ async function httpGet(url: string, timeoutMs: number): Promise<HttpResult> {
       return {
         received: true,
         status: response.status,
+        // Parse first, slice after: the cap bounds what is KEPT for snippets,
+        // never what is PARSED — a reviews payload is routinely over the cap.
         body: raw.length > MAX_BODY_CHARS ? raw.slice(0, MAX_BODY_CHARS) : raw,
+        json: parseJsonObject(raw),
         finalUrl: current,
         error: null,
       };
@@ -1214,6 +1219,7 @@ async function httpGet(url: string, timeoutMs: number): Promise<HttpResult> {
       received: false,
       status: 0,
       body: "",
+      json: null,
       finalUrl: url,
       error: timedOut
         ? `no answer within ${Math.round(timeoutMs / 1000)} s`
@@ -1233,7 +1239,7 @@ function parseJsonObject(body: string): Record<string, unknown> | null {
       return parsed as Record<string, unknown>;
     }
   } catch {
-    // Truncated or non-JSON body — treated as "not our app".
+    // Malformed JSON — treated as "not our app".
   }
   return null;
 }

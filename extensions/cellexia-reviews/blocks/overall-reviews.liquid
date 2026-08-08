@@ -93,7 +93,37 @@
       assign cx_skin = 'luxe'
   endcase
 
+  comment
+    v1.27.1: the heading SETTING is stored once, in the language the block
+    was added in, so every other storefront language kept showing it raw.
+    When the stored value is still a DEFAULT (the English default or this
+    locale's own), serve the shopper-locale string from the storefront
+    locale files instead; a merchant-customized heading is kept as-is
+    (v1.12.1 accent_color sentinel pattern).
+  endcomment
   assign cx_o_heading = block.settings.heading
+  assign cx_o_heading_t = 'cellexia.overall.heading_default' | t
+  assign cx_o_heading_cmp = cx_o_heading | strip
+  if cx_o_heading_cmp == 'What our customers say' or cx_o_heading_cmp == cx_o_heading_t
+    assign cx_o_heading = cx_o_heading_t
+  endif
+
+  comment
+    v1.27.1: locale-aware product links. routes.root_url is "/" on the
+    primary locale and "/fr" (possibly with a trailing slash) elsewhere —
+    normalize to no-trailing-slash so root + "/products/x" is always valid.
+    Card titles/URLs resolve through all_products[handle] (translated per
+    request locale, URL locale-prefixed); the stored metafield title is only
+    the fallback (deleted product). Up to 12 unique handles, safely under
+    Shopify's 20-per-page all_products cap.
+  endcomment
+  assign cx_root = routes.root_url | default: '/'
+  assign cx_root_last = cx_root | slice: -1, 1
+  if cx_root_last == '/'
+    assign cx_root_size = cx_root.size | minus: 1
+    assign cx_root = cx_root | slice: 0, cx_root_size
+  endif
+
   assign cx_o_max = block.settings.max_reviews | default: 6
   assign cx_o_layout = 'grid'
   if block.settings.layout == 'carousel'
@@ -112,12 +142,34 @@
 {%- endcomment -%}
 {%- capture cx_proxy -%}{% render 'cx-proxy' %}{%- endcapture -%}
 {%- assign cx_proxy = cx_proxy | remove: '<!-- BEGIN app snippet: cx-proxy -->' | remove: '<!-- END app snippet -->' | strip -%}
+{%- comment -%}
+  v1.27.1: handle → { t: locale title, u: locale URL } map for the JS
+  re-renders (translated-mode swap, star filters, editor preview) — the API
+  serves DB rows in the store's primary language only. Values go through
+  `json` plus a `<`→\u003c rewrite (SPEC-1.19 lesson: json escapes neither
+  `<` nor `/`, and this string lands in an HTML attribute). Deduped by
+  pipe-wrapped handle so `contains` can never match a substring.
+{%- endcomment -%}
+{%- capture cx_o_pmap -%}
+{%- assign cx_o_pmap_seen = '' -%}
+{%- for cx_r in cx_o_top -%}
+{%- if cx_r.productHandle == blank -%}{%- continue -%}{%- endif -%}
+{%- assign cx_o_hkey = cx_r.productHandle | prepend: '|' | append: '|' -%}
+{%- if cx_o_pmap_seen contains cx_o_hkey -%}{%- continue -%}{%- endif -%}
+{%- assign cx_rp = all_products[cx_r.productHandle] -%}
+{%- if cx_rp.title == blank -%}{%- continue -%}{%- endif -%}
+{%- if cx_o_pmap_seen != '' -%},{%- endif -%}{{ cx_r.productHandle | json }}:{"t":{{ cx_rp.title | json | replace: '<', '\u003c' }},"u":{{ cx_rp.url | json | replace: '<', '\u003c' }}}
+{%- assign cx_o_pmap_seen = cx_o_pmap_seen | append: cx_o_hkey -%}
+{%- endfor -%}
+{%- endcapture -%}
 <div
   class="cx cx-overall"
   {% if cx_lang == 'ar' %}dir="rtl"{% endif %}
   data-locale="{{ request.locale.iso_code }}"
   data-translation-display="{{ shop.metafields.cellexia.translation_display.value | default: 'original' }}"
   data-proxy="{{ cx_proxy }}"
+  data-root-url="{{ routes.root_url }}"
+  data-cx-pmap="{ {{ cx_o_pmap | escape }} }"
   data-heading="{{ cx_o_heading | escape }}"
   data-max-reviews="{{ cx_o_max }}"
   data-layout="{{ cx_o_layout }}"
@@ -187,6 +239,24 @@
       assign cx_r_date_fmt = cx_r.date | date: '%B %d, %Y'
       assign cx_r_prc = cx_r.productReviewCount | default: 0 | times: 1
       assign cx_r_prc_str = cx_r_prc | append: ''
+
+      comment
+        v1.27.1: shopper-locale product title + locale-prefixed URL via
+        all_products (see the assigns block up top); the metafield title and
+        a hand-built root+handle URL only cover a since-deleted product.
+      endcomment
+      assign cx_r_ptitle = cx_r.productTitle
+      assign cx_r_purl = ''
+      if cx_r.productHandle != blank
+        assign cx_rp = all_products[cx_r.productHandle]
+        if cx_rp.title != blank
+          assign cx_r_ptitle = cx_rp.title
+          assign cx_r_purl = cx_rp.url
+        endif
+        if cx_r_purl == blank
+          assign cx_r_purl = cx_root | append: '/products/' | append: cx_r.productHandle
+        endif
+      endif
     -%}
     <article class="cx-card cx-overall__card">
       <div class="cx-card__titleline">
@@ -197,7 +267,8 @@
       <p class="cx-card__meta">
         {%- if cx_r_author != blank -%}<span class="cx-card__author">{{ cx_r_author | escape }}</span>{%- endif -%}
         {%- if cx_r_author != blank and cx_r_date_fmt %} <span aria-hidden="true">·</span> {% endif -%}
-        {%- if cx_r_date_fmt -%}<span>{{ cx_r_date_fmt }}</span>{%- endif -%}
+        {%- comment -%} v1.27.1: data-cx-date lets the JS re-render the English-formatted SSR date in the shopper's locale {%- endcomment -%}
+        {%- if cx_r_date_fmt -%}<span data-cx-date="{{ cx_r.date | escape }}">{{ cx_r_date_fmt }}</span>{%- endif -%}
       </p>
       {%- if cx_r.verified -%}
       <p class="cx-badge-verified">{{ 'cellexia.review.verified' | t }}</p>
@@ -207,11 +278,11 @@
       {%- endif -%}
       {%- if block.settings.show_product_links and cx_r.productHandle != blank -%}
       <div class="cx-overall__foot">
-        {%- if cx_r.productTitle != blank -%}
-        <a class="cx-overall__plink" href="/products/{{ cx_r.productHandle }}#cellexia-reviews">{{ cx_r.productTitle | escape }}</a>
+        {%- if cx_r_ptitle != blank -%}
+        <a class="cx-overall__plink" href="{{ cx_r_purl }}#cellexia-reviews">{{ cx_r_ptitle | escape }}</a>
         {%- endif -%}
         {%- if cx_r_prc > 0 -%}
-        <a class="cx-link cx-overall__read" href="/products/{{ cx_r.productHandle }}#cellexia-reviews">{{ 'cellexia.overall.read_reviews' | t: count: cx_r_prc_str | replace: '[[count]]', cx_r_prc_str }}</a>
+        <a class="cx-link cx-overall__read" href="{{ cx_r_purl }}#cellexia-reviews">{{ 'cellexia.overall.read_reviews' | t: count: cx_r_prc_str | replace: '[[count]]', cx_r_prc_str }}</a>
         {%- endif -%}
       </div>
       {%- endif -%}

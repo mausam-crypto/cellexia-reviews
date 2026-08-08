@@ -4,6 +4,34 @@ All notable changes to Cellexia Reviews are documented here. The version number 
 `package.json` and stamped into the release ZIP built by `npm run package`
 (`dist/cellexia-reviews-v<version>.zip`).
 
+## 1.27.1 — 2026-08-08
+
+### Fixed — home page "Overall reviews" widget now speaks the shopper's language
+
+- **The heading translates.** "What our customers say" was stored once, in the language the
+  block was added in, and then shown as-is to every shopper. When the heading is still the
+  stock default it now renders in the shopper's storefront language on all 17 supported
+  languages (new storefront locale key `overall.heading_default`). A heading you customized
+  yourself is left exactly as you wrote it.
+- **Product names on the cards translate.** Card footers used to show each product's name in
+  the store's primary language. They now use the translated product title for the language
+  the shopper is browsing in — the same translation Shopify's Translate & Adapt manages —
+  everywhere the widget renders: the instant server-side render, the live re-render, star
+  filtering, and theme-editor previews. For products the server render didn't cover (e.g.
+  after a star filter), the widget looks the translated name up from the shop's own public
+  product data; if that lookup can't answer, the stored name is kept.
+- **Product links stay in the shopper's language.** Links used to point at `/products/…`,
+  which lands on the primary-language page. They now carry the storefront language prefix
+  (`/fr/products/…`), so a shopper reading French reviews lands on the French product page.
+  On the primary language nothing changes.
+- **Review dates localize too.** The server-rendered cards printed dates in English
+  ("March 15, 2026") in every language; they are now re-rendered in the shopper's locale
+  ("15 mars 2026") in both translation display modes.
+- Technical: the block resolves titles/URLs through Liquid `all_products` (translated per
+  request locale, URL locale-prefixed) and hands the JS a handle→title/URL map
+  (`data-cx-pmap`) plus the locale root (`data-root-url`); the widget JS asset budget was
+  raised deliberately 137→139 KiB for this (scripts/package.mjs gate note).
+
 ## 1.27.0 — 2026-08-08
 
 ### Improved — home page "Overall reviews" widget

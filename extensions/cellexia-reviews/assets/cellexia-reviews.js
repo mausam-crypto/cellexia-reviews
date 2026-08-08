@@ -3073,6 +3073,23 @@ function initOverall(root) {
  var car = ga("layout", "grid") === "carousel";
  var links = ga("show-product-links", "true") !== "false";
  var loc = ga("locale", "en");
+ /* v1.27.1: the API serves DB rows in the store's PRIMARY language; the SSR
+    pmap carries this locale's product title+URL per handle. Missed handles
+    (star filters) resolve via public /products/x.js under the locale root —
+    skipped on the primary locale (rootU ""), where stored titles are right. */
+ var rootU = ga("root-url", "/");
+ if (rootU.charAt(rootU.length - 1) === "/") rootU = rootU.slice(0, -1);
+ var pmap = {};
+ try { pmap = JSON.parse(root.getAttribute("data-cx-pmap") || "{}") || {}; } catch (e) { pmap = {}; }
+ var ptc = {};
+ function ptitle(h) {
+  if (!ptc[h]) {
+   ptc[h] = window.fetch(rootU + "/products/" + h + ".js", { credentials: "same-origin" })
+    .then((r) => { return r.ok ? r.json() : null; })
+    .then((j) => { return (j && j.title) || ""; }, () => { return ""; });
+  }
+  return ptc[h];
+ }
  // v1.15 §2: translated display mode (mirrors the product widget).
  var td = ga("translation-display", "original") === "translated" ? "translated" : "original";
  var I = makeI18n(loc);
@@ -3183,14 +3200,20 @@ function initOverall(root) {
   }
   var h = r.productHandle || p.handle || "";
   if (links && h) {
-   var url = (p.url || "").charAt(0) === "/" ? p.url : "/products/" + h;
+   // v1.27.1: pmap wins (locale title/URL); else demo p.url; else locale root.
+   var pm = pmap[h];
+   var url = (pm && pm.u) || ((p.url || "").charAt(0) === "/" ? p.url : rootU + "/products/" + h);
    if (url.indexOf("#") < 0) url += "#cellexia-reviews";
    var foot = el("div", "cx-overall__foot");
-   var pt = r.productTitle || p.title || "";
-   if (pt) sa(ap(foot, el("a", "cx-overall__plink", pt)), "href", url);
+   var pt = (pm && pm.t) || r.productTitle || p.title || "";
+   var pa = null;
+   if (pt) { pa = ap(foot, el("a", "cx-overall__plink", pt)); sa(pa, "href", url); }
    var pc = Number(r.productReviewCount) || 0;
    if (pc > 0) sa(ap(foot, el("a", "cx-link cx-overall__read", ot("overall.read_reviews", { count: pc }))), "href", url);
    if (foot.firstChild) ap(c, foot);
+   if (pa && !(pm && pm.t) && rootU && !demo && window.fetch) {
+    ptitle(h).then((t1) => { if (t1) { pa.textContent = t1; pmap[h] = pm || {}; pmap[h].t = t1; } });
+   }
   }
   readMore(c);
   return c;
@@ -3332,6 +3355,12 @@ function initOverall(root) {
   if (!token) { root.hidden = true; return; } // shopper: zero fetches, zero pixels
   if (!empty) root.hidden = false; // tokenized preview: SSR in the shell (ribbon: §5A bootstrap)
  }
+ // v1.27.1: SSR dates are Liquid-formatted in English — re-render them in the
+ // shopper's locale (SSR cards persist in BOTH display modes).
+ each(root.querySelectorAll("[data-cx-date]"), (n1) => {
+  var dl = I.fmtDate(n1.getAttribute("data-cx-date") || "");
+  if (dl) n1.textContent = dl;
+ });
  if (empty) { emptyBoot(); return; } // v1.10 §5C
  wire();
  // v1.15 §2: SSR cards are language-neutral (metafield) — translated mode

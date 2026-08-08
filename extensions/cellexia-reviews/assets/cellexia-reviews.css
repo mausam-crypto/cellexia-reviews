@@ -722,6 +722,8 @@ a.cx.cx-badge-inline:hover .cx-badge-inline__count { color:var(--cx-link-hover);
 .cx.cx-badge-inline--pdp { margin-block:6px 2px;}
 /* v1.5.1 Fix 3: card badges take their own flex row right after the title */
 .cx.cx-badge-inline--card { display:flex;}
+/* v1.28: cart line items — badge sits above the quantity stepper */
+.cx.cx-badge-inline--cart { margin:.25rem 0 .5rem;}
 
 /* 15b. SPEC-1.12 — Amazon-exact PDP badge: avg number + half-rounded stars +
    caret trigger + ratings-breakdown popover. Colors/radii ride the token

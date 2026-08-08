@@ -4,6 +4,25 @@ All notable changes to Cellexia Reviews are documented here. The version number 
 `package.json` and stamped into the release ZIP built by `npm run package`
 (`dist/cellexia-reviews-v<version>.zip`).
 
+## 1.28.0 — 2026-08-08
+
+### Added — cart star badges: your own switch, and a better spot (SPEC-1.28)
+
+- **New app embed option "Show star badges in the cart"** (on by default). Turn it off and
+  cart items show no star badges at all — on the cart page and in the slide-out cart drawer.
+  Star badges on product cards elsewhere (home, collections, search) are not affected; those
+  keep following "Show star badges on product cards site-wide" and the position settings.
+- **Cart badges now sit above the quantity selector.** Previously the badge landed wherever
+  the product-card position rules put it — on the cart page that meant below the quantity
+  stepper, under the line price. In the cart the badge now always renders directly above the
+  quantity selector, regardless of the card badge position settings, which keep applying
+  everywhere else.
+- Technical: a cart line item is recognized only when the card sits in a cart context (cart
+  form, cart drawer, cart-classed container) AND carries its own quantity control — so
+  "You may also like" recommendation cards on the cart page keep behaving like normal
+  product cards. With the option off, suppressed items are skipped before any rating fetch.
+  The widget JS budget was raised deliberately 139→141 KiB (scripts/package.mjs gate note).
+
 ## 1.27.1 — 2026-08-08
 
 ### Fixed — home page "Overall reviews" widget now speaks the shopper's language

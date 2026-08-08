@@ -23,6 +23,14 @@ export interface PersonaBrief {
   key: string;
   /** Writing instruction handed to the model for this review. */
   brief: string;
+  /**
+   * v1.29 (SPEC-1.29): hair-product variant, used verbatim in place of
+   * `brief` when the generator config's hairProduct flag is on. Only briefs
+   * whose wording is skin-locked carry one — product-agnostic briefs are
+   * covered by the reinterpret rule buildUserContent emits in hair mode.
+   * Same writing rules as `brief` (no em/en dashes, no real brands).
+   */
+  hairBrief?: string;
   tone: string;
   length: LengthBand;
   /** Occasional humanizing quirks the model may apply sparingly. */
@@ -45,6 +53,8 @@ export const PERSONA_BRIEFS: readonly PersonaBrief[] = [
     key: "skeptic_converted",
     brief:
       "A shopper who almost didn't buy because they've been burned by skincare marketing before. Open with the doubt, pivot to what changed their mind after real use. Mention one concrete observable result.",
+    hairBrief:
+      "A shopper who almost didn't buy because they've been burned by hair product marketing before. Open with the doubt, pivot to what changed their mind after real use. Mention one concrete observable result.",
     tone: "wry, honest",
     length: "medium",
   },
@@ -72,6 +82,8 @@ export const PERSONA_BRIEFS: readonly PersonaBrief[] = [
     key: "routine_storyteller",
     brief:
       "Describes exactly where the product sits in their morning or evening routine (what comes before and after) and how it layers. The routine details make it credible.",
+    hairBrief:
+      "Describes exactly where the product sits in their wash-day or daily routine (what comes before and after) and how it combines with styling. The routine details make it credible.",
     tone: "chatty, methodical",
     length: "long",
   },
@@ -79,6 +91,8 @@ export const PERSONA_BRIEFS: readonly PersonaBrief[] = [
     key: "long_term_repurchaser",
     brief:
       "On their second or third jar/bottle. Compares how their skin was before they started months ago versus now. Mentions rebuying without being asked.",
+    hairBrief:
+      "On their second or third bottle. Compares how their hair was before they started months ago versus now. Mentions rebuying without being asked.",
     tone: "settled, loyal",
     length: "medium",
   },
@@ -93,6 +107,8 @@ export const PERSONA_BRIEFS: readonly PersonaBrief[] = [
     key: "sensitive_skin_cautious",
     brief:
       "Has reactive skin and patch-tested first. Reports on irritation (or the relieving absence of it), redness, and how their skin tolerated daily use.",
+    hairBrief:
+      "Has a sensitive, easily irritated scalp and introduced the product carefully. Reports on itching or flaking (or the relieving absence of either) and how their scalp tolerated regular use.",
     tone: "careful, relieved or disappointed",
     length: "medium",
   },
@@ -121,6 +137,8 @@ export const PERSONA_BRIEFS: readonly PersonaBrief[] = [
     key: "texture_obsessed",
     brief:
       "Cares about feel above all: how it spreads, sinks in, layers under sunscreen or makeup, whether it pills. Barely mentions results. It's all sensory detail.",
+    hairBrief:
+      "Cares about feel above all: how it spreads through the lengths, whether it weighs hair down, leaves residue, or makes brushing easier. Barely mentions results. It's all sensory detail.",
     tone: "sensory, vivid",
     length: "short",
   },
@@ -135,6 +153,8 @@ export const PERSONA_BRIEFS: readonly PersonaBrief[] = [
     key: "busy_parent",
     brief:
       "Has ninety seconds a day for skincare. Values speed and simplicity; judges the product on whether it fits a rushed life and still does something.",
+    hairBrief:
+      "Has ninety seconds a day for hair care. Values speed and simplicity; judges the product on whether it fits a rushed life and still does something.",
     tone: "hurried, no-nonsense",
     length: "short",
   },
@@ -142,6 +162,8 @@ export const PERSONA_BRIEFS: readonly PersonaBrief[] = [
     key: "first_luxury_splurge",
     brief:
       "This is the most they've ever spent on skincare. Nervous-excited energy; they inspect everything (box, jar, texture) and really want it to be worth it.",
+    hairBrief:
+      "This is the most they've ever spent on hair care. Nervous-excited energy; they inspect everything (box, bottle, texture) and really want it to be worth it.",
     tone: "excited, a little anxious",
     length: "medium",
   },
@@ -156,6 +178,8 @@ export const PERSONA_BRIEFS: readonly PersonaBrief[] = [
     key: "humid_climate_user",
     brief:
       "Lives somewhere hot and humid. Reviews the product through that lens: weight, grease, how it holds up through sweat and sunscreen.",
+    hairBrief:
+      "Lives somewhere hot and humid. Reviews the product through that lens: frizz control, weight, and how the style holds through sweat and humidity.",
     tone: "practical, regional",
     length: "short",
   },
@@ -163,6 +187,8 @@ export const PERSONA_BRIEFS: readonly PersonaBrief[] = [
     key: "menopause_perspective",
     brief:
       "Skin changed dramatically in their 50s and old products stopped working. Evaluates whether this one actually addresses mature, hormonally-changed skin.",
+    hairBrief:
+      "Hair changed dramatically in their 50s (thinner, drier, a different texture) and old products stopped working. Evaluates whether this one actually addresses mature, changing hair.",
     tone: "frank, experienced",
     length: "medium",
   },
@@ -221,6 +247,8 @@ export const PERSONA_BRIEFS: readonly PersonaBrief[] = [
     key: "fragrance_sensitive",
     brief:
       "Gets headaches or irritation from scented products. Reviews almost entirely through the scent/fragrance-free lens and their skin's response.",
+    hairBrief:
+      "Gets headaches or irritation from scented products. Reviews almost entirely through the scent/fragrance-free lens and their scalp's response.",
     tone: "relieved or let down",
     length: "short",
   },
@@ -228,6 +256,8 @@ export const PERSONA_BRIEFS: readonly PersonaBrief[] = [
     key: "before_after_describer",
     brief:
       "Describes their skin 'before' in unflattering specifics (dullness, lines, dryness) and 'after' in careful, believable improvements. No miracle language.",
+    hairBrief:
+      "Describes their hair 'before' in unflattering specifics (frizz, breakage, dullness) and 'after' in careful, believable improvements. No miracle language.",
     tone: "candid",
     length: "medium",
   },
@@ -256,6 +286,8 @@ export const PERSONA_BRIEFS: readonly PersonaBrief[] = [
     key: "derm_recommended",
     brief:
       "Their dermatologist or aesthetician suggested this type of product. They report following professional advice and what happened, in plain language.",
+    hairBrief:
+      "Their hairdresser or dermatologist suggested this type of product. They report following professional advice and what happened, in plain language.",
     tone: "dutiful, trusting",
     length: "short",
   },
@@ -263,6 +295,8 @@ export const PERSONA_BRIEFS: readonly PersonaBrief[] = [
     key: "night_routine_specifics",
     brief:
       "Uses it only at night. Describes evening application, how skin feels on waking, and any difference in makeup application the next morning.",
+    hairBrief:
+      "Applies it in the evening or overnight. Describes the evening application and how their hair looks and behaves the next morning, styling included.",
     tone: "observational",
     length: "medium",
   },
@@ -270,6 +304,8 @@ export const PERSONA_BRIEFS: readonly PersonaBrief[] = [
     key: "mature_voice_60plus",
     brief:
       "A reviewer in their 60s or 70s with decades of skincare behind them. Unimpressed by trends, precise about what realistic improvement looks like at their age.",
+    hairBrief:
+      "A reviewer in their 60s or 70s with decades of hair care behind them. Unimpressed by trends, precise about what realistic improvement looks like at their age.",
     tone: "dry, seasoned",
     length: "medium",
   },
@@ -277,6 +313,8 @@ export const PERSONA_BRIEFS: readonly PersonaBrief[] = [
     key: "oily_combination_balancer",
     brief:
       "Combination or oily skin; most rich products break them out. Reviews pore-feel, shine at midday, and whether it clogged.",
+    hairBrief:
+      "Fine or quickly greasy hair; most rich products weigh it down. Reviews root oiliness, limpness by midday, and whether it left any residue.",
     tone: "wary, specific",
     length: "short",
   },
@@ -284,6 +322,8 @@ export const PERSONA_BRIEFS: readonly PersonaBrief[] = [
     key: "patch_tester",
     brief:
       "Methodical to a fault: patch-tested on the jaw for a week before daily use. The caution itself is the personality; verdict delivered like a lab note.",
+    hairBrief:
+      "Methodical to a fault: tried it on a small section of hair for a week before regular use. The caution itself is the personality; verdict delivered like a lab note.",
     tone: "meticulous",
     length: "short",
   },
@@ -291,6 +331,8 @@ export const PERSONA_BRIEFS: readonly PersonaBrief[] = [
     key: "seasonal_dryness",
     brief:
       "Skin falls apart every winter (or in dry office air). Judges the product on whether it carried them through the bad season.",
+    hairBrief:
+      "Hair falls apart every winter (static, dryness, breakage) or in dry office air. Judges the product on whether it carried them through the bad season.",
     tone: "grateful or resigned",
     length: "short",
   },
@@ -320,6 +362,8 @@ export const PERSONA_BRIEFS: readonly PersonaBrief[] = [
     key: "science_curious",
     brief:
       "Curious about how the product claims to work (from the description) and honest about what they can and cannot verify on their own face. Distinguishes feeling from proof.",
+    hairBrief:
+      "Curious about how the product claims to work (from the description) and honest about what they can and cannot verify on their own hair. Distinguishes feeling from proof.",
     tone: "thoughtful, epistemic",
     length: "long",
   },

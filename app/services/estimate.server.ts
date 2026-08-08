@@ -202,8 +202,15 @@ interface CountCacheEntry {
 
 const countCache = new Map<string, CountCacheEntry>();
 
-function countCacheKey(shop: string, model: string, productId: string): string {
-  return `${shop}|${model}|${productId}`;
+function countCacheKey(shop: string, model: string, config: SyntheticConfig): string {
+  // v1.29: hairProduct and extraProductInfo change the counted prompt, so
+  // they join the key (v1.26 lesson: estimates must invalidate over every
+  // input) — a cheap djb2 hash keeps merchant text out of the key itself.
+  let h = 5381;
+  for (let i = 0; i < config.extraProductInfo.length; i += 1) {
+    h = ((h * 33) ^ config.extraProductInfo.charCodeAt(i)) >>> 0;
+  }
+  return `${shop}|${model}|${config.productId}|${config.hairProduct ? "h" : "s"}|${h}`;
 }
 
 function pruneCountCache(now: number): void {
@@ -354,7 +361,7 @@ async function countedInputTokensPerReview(
   brandDisplayName: string,
   config: SyntheticConfig,
 ): Promise<number | null> {
-  const key = countCacheKey(shop, model, config.productId);
+  const key = countCacheKey(shop, model, config);
   const now = Date.now();
   const hit = countCache.get(key);
   if (hit && now - hit.at < COUNT_CACHE_TTL_MS) return hit.perReviewInputTokens;
@@ -380,7 +387,7 @@ async function countedInputTokensPerReview(
     const tokens = await countTokens(
       apiKey,
       model,
-      buildSystemPrompt(brandDisplayName),
+      buildSystemPrompt(brandDisplayName, sampleConfig.hairProduct),
       buildUserContent(sampleConfig, specs),
     );
     if (tokens === null || tokens <= 0) return null;

@@ -4,6 +4,29 @@ All notable changes to Cellexia Reviews are documented here. The version number 
 `package.json` and stamped into the release ZIP built by `npm run package`
 (`dist/cellexia-reviews-v<version>.zip`).
 
+## 1.29.0 — 2026-08-08
+
+### Added — QA generator: hair products + your own product notes (SPEC-1.29)
+
+- **New "Hair product" option.** The generator was built around skincare, so a hair
+  serum got reviews about skin. Tick "Hair product" and everything switches: reviews
+  talk about hair and scalp (texture, frizz, shine, breakage, volume, scalp comfort),
+  the reviewer personas become hair shoppers (18 briefs rewritten for hair), and the
+  skin-specific tags ("skin concerns", results like "fewer fine lines") are left off
+  the generated reviews so the widget never shows skin filters on a hair product.
+  In a multi-product launch every product row has its own checkbox, so one launch can
+  mix face creams and hair serums.
+- **New "Additional product info" box (optional).** Free text the AI reads alongside
+  the product's Shopify description — and treats as the authority when they disagree.
+  The field suggests what helps most: what the product does, key ingredients, texture
+  and scent, how and when it's used, who it's for, and what realistic results look
+  like and after how long. Available per product in multi-product launches too.
+  Cost estimates account for the extra prompt text automatically.
+- Safe by construction: generation plans stay resume-stable with the new options
+  (verified by a new 29-check test suite, `scripts/dev-tests/qa-hair-mode.test.mjs`),
+  and existing configs behave exactly as before — both options are off/empty by
+  default.
+
 ## 1.28.1 — 2026-08-08
 
 ### Fixed — cart badges vs. in-cart upsell apps

@@ -170,6 +170,18 @@ export interface SyntheticConfig {
   /** Reviews per skeptic call ("every batch of X"), clamped 5–60. */
   skepticBatchSize: number;
   /**
+   * v1.29 (SPEC-1.29): this product is a HAIR product. Reviews talk about
+   * hair and scalp (hair-variant persona briefs + a category instruction in
+   * the prompt), skin-concern attributes are left empty and results_seen is
+   * restricted to hair-safe keys. Default false = the skincare behavior.
+   */
+  hairProduct: boolean;
+  /**
+   * v1.29: optional merchant-written product context, appended verbatim to
+   * the prompt's PRODUCT CONTEXT block (≤ 2000 chars). Empty = omitted.
+   */
+  extraProductInfo: string;
+  /**
    * Optional per-language shares (SPEC-1.10 §2). Keys ⊆ `languages`, values
    * ≥ 0 relative weights (the UI sends percentages; any positive scale
    * works — counts are apportioned by largest remainder over the total).
@@ -351,6 +363,8 @@ export function parseSyntheticConfig(
     humanTouch: clampInt(v.humanTouch, 0, 100, 50),
     skepticCheck: !(v.skepticCheck === false || v.skepticCheck === "false"),
     skepticBatchSize: clampInt(v.skepticBatchSize, 5, 60, 20),
+    hairProduct: v.hairProduct === true || v.hairProduct === "true",
+    extraProductInfo: cleanString(v.extraProductInfo, 2000),
     ...(languageWeights ? { languageWeights } : {}),
     ...(variantWeights ? { variantWeights } : {}),
   };
@@ -762,7 +776,20 @@ export function buildBatchPlan(config: SyntheticConfig, batchId: string): Synthe
       const richness = 1 + Math.floor(rng() * (1 + Math.min(2, timeIndex)));
       resultsSeen = shuffle([...POSITIVE_RESULTS], rng).slice(0, richness);
     }
-    attrs.push({ ageRange, skinConcerns, timeUsing, resultsSeen });
+    // v1.29: hair products carry NO skin-concern chips and only hair-safe
+    // results. Filtered AFTER sampling, never instead of it — the rng draw
+    // sequence must be identical with the flag on or off (the batch plan's
+    // RNG consumption is resume-stable by contract).
+    if (config.hairProduct) {
+      attrs.push({
+        ageRange,
+        skinConcerns: [],
+        timeUsing,
+        resultsSeen: resultsSeen.filter((k) => HAIR_SAFE_RESULTS.has(k)),
+      });
+    } else {
+      attrs.push({ ageRange, skinConcerns, timeUsing, resultsSeen });
+    }
   }
 
   // 8. Helpful votes — long tail: ≈60% get 0–1, a few approach the max;
@@ -889,7 +916,10 @@ export function buildBatchPlan(config: SyntheticConfig, batchId: string): Synthe
       wantsReply: replyFlags[i],
       replyAt: replyAtMs[i] !== null ? new Date(replyAtMs[i] as number).toISOString() : null,
       personaKey: persona.key,
-      brief: persona.brief,
+      // v1.29: hair mode swaps in the persona's hair-variant brief; personas
+      // without one keep the shared brief (the prompt's reinterpret rule
+      // covers those). Deterministic from config — no rng involved.
+      brief: config.hairProduct && persona.hairBrief ? persona.hairBrief : persona.brief,
       tone: persona.tone,
       length: persona.length,
       quirks: persona.quirks ?? null,
@@ -973,6 +1003,21 @@ const RESULTS_PROMPT: Record<string, string> = {
 };
 
 /**
+ * v1.29 (SPEC-1.29): the results_seen keys a HAIR product may carry — the
+ * stored keys stay inside RESULTS_SEEN (the widget's fixed filter taxonomy),
+ * so only the category-neutral ones qualify; the skin-worded rest
+ * (fewer_lines, firmer, calmer, even_tone, radiance) never appear on a hair
+ * review. Prompt phrasing comes from RESULTS_PROMPT_HAIR.
+ */
+const HAIR_SAFE_RESULTS: ReadonlySet<string> = new Set(["smoother", "hydration", "too_early"]);
+
+const RESULTS_PROMPT_HAIR: Record<string, string> = {
+  smoother: "smoother, more manageable hair",
+  hydration: "better hydrated, less dry hair",
+  too_early: "too early to tell",
+};
+
+/**
  * The generator's system prompt. Exported (v1.7) so estimate.server.ts can
  * token-count ONE real chunk prompt with the exact builders the generator
  * uses (SPEC-1.7 §4 "counted baseline").
@@ -996,8 +1041,8 @@ export function writingStyleFor(
   return "casual_sloppy";
 }
 
-export function buildSystemPrompt(brandDisplayName: string): string {
-  return `You write realistic customer product reviews used as internal QA/test data for a premium anti-aging skincare storefront. Each request supplies real product context and a list of review specifications. For every spec you write ONLY the free-text parts: a natural title, the review body, and (when reply_needed is true) the merchant's public reply. Every structured fact (rating, language, verified, variant, usage time, results) is already fixed. Your text must agree with it.
+export function buildSystemPrompt(brandDisplayName: string, hairProduct = false): string {
+  return `You write realistic customer product reviews used as internal QA/test data for a premium ${hairProduct ? "hair care" : "anti-aging skincare"} storefront. Each request supplies real product context and a list of review specifications. For every spec you write ONLY the free-text parts: a natural title, the review body, and (when reply_needed is true) the merchant's public reply. Every structured fact (rating, language, verified, variant, usage time, results) is already fixed. Your text must agree with it.
 
 Respond with a single JSON array and NOTHING else: no markdown fences, no commentary before or after.
 [{ "i": number, "title": string, "body": string, "reply": string | null }]
@@ -1032,6 +1077,24 @@ export function buildUserContent(config: SyntheticConfig, specs: SyntheticReview
   }
   lines.push("Description:");
   lines.push(config.productDescription || "(no description provided)");
+  // v1.29: merchant-written context, verbatim. Placed after the description
+  // so it reads as part of PRODUCT CONTEXT, and marked authoritative so it
+  // wins over a thin or outdated Shopify description.
+  if (config.extraProductInfo) {
+    lines.push("");
+    lines.push(
+      "Additional product info from the merchant (authoritative — prefer this over the description when they disagree):",
+    );
+    lines.push(config.extraProductInfo);
+  }
+  // v1.29: the category instruction that stops a skincare-trained persona
+  // bank from writing about skin for a hair product.
+  if (config.hairProduct) {
+    lines.push("");
+    lines.push(
+      "CATEGORY: this is a HAIR product. Every review is about hair and scalp: texture, frizz, shine, softness, breakage, split ends, volume, manageability, scalp comfort. Never describe effects on facial skin, wrinkles, complexion or skincare routines. If a persona brief mentions skin or skincare, reinterpret it for hair care.",
+    );
+  }
   lines.push("");
   lines.push(
     `REVIEW SPECS: write exactly ${specs.length} review${specs.length === 1 ? "" : "s"}, one JSON object per spec:`,
@@ -1052,7 +1115,11 @@ export function buildUserContent(config: SyntheticConfig, specs: SyntheticReview
           ? { time_using: exactTimeUsing(spec.timeUsing, spec.index) ?? spec.timeUsing }
           : {}),
         ...(spec.resultsSeen.length
-          ? { results_seen: spec.resultsSeen.map((k) => RESULTS_PROMPT[k] ?? k).join("; ") }
+          ? {
+              results_seen: spec.resultsSeen
+                .map((k) => (config.hairProduct ? RESULTS_PROMPT_HAIR[k] : RESULTS_PROMPT[k]) ?? k)
+                .join("; "),
+            }
           : {}),
         reply_needed: spec.wantsReply,
         writing: spec.writing,
@@ -1256,7 +1323,7 @@ async function generateChunkTexts(
   config: SyntheticConfig,
   specs: SyntheticReviewSpec[],
 ): Promise<ChunkTextsOutcome> {
-  const system = buildSystemPrompt(brandDisplayName);
+  const system = buildSystemPrompt(brandDisplayName, config.hairProduct);
   const userContent = buildUserContent(config, specs);
   let inputTokens = 0;
   let outputTokens = 0;
@@ -1770,6 +1837,10 @@ const PER_PRODUCT_KEYS = [
   "variantWeights",
   "dateStart",
   "dateEnd",
+  // v1.29: category and merchant context are per-product by nature — a
+  // launch mixing a hair serum with face creams needs them on the rows.
+  "hairProduct",
+  "extraProductInfo",
 ] as const;
 
 export interface MultiProductRow {

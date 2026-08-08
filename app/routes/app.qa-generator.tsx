@@ -1075,6 +1075,9 @@ const LAUNCH_PER_PRODUCT_KEYS = [
   "variantWeights",
   "dateStart",
   "dateEnd",
+  // v1.29: category + merchant context are per-product (SPEC-1.29).
+  "hairProduct",
+  "extraProductInfo",
 ] as const;
 
 /**
@@ -1110,6 +1113,10 @@ interface ExtraRowState {
   dateStart: string;
   dateEnd: string;
   assignVariants: boolean;
+  /** v1.29: this row's product is a hair product (SPEC-1.29). */
+  hairProduct: boolean;
+  /** v1.29: this row's optional extra product context for the AI. */
+  extraInfoText: string;
   /** Merchant touched this row's variants checkbox — stop applying defaults. */
   variantsTouched: boolean;
   /**
@@ -1651,6 +1658,23 @@ function ExtraLaunchRow({
               helpText="Weighted with the default split across this product's variants — custom weights stay a main-product feature"
             />
           ) : null}
+          {/* v1.29 (SPEC-1.29): per-row category + extra AI context. */}
+          <Checkbox
+            label={rowFieldLabel("Hair product")}
+            checked={row.hairProduct}
+            onChange={(checked) => patch({ hairProduct: checked })}
+            helpText="Reviews talk about hair and scalp instead of skin, with no skin-concern tags"
+          />
+          <TextField
+            label={rowFieldLabel("Additional product info (optional)")}
+            value={row.extraInfoText}
+            onChange={(value) => patch({ extraInfoText: value })}
+            multiline={2}
+            maxLength={2000}
+            showCharacterCount
+            autoComplete="off"
+            helpText="What it does, key ingredients, how it's used, who it's for, realistic results and timeframe — the AI reads this alongside the product's Shopify description"
+          />
         </FormLayout>
       </BlockStack>
     </Box>
@@ -1688,6 +1712,10 @@ export default function QaGeneratorRoute() {
   const [structuredAttrs, setStructuredAttrs] = useState(true);
   const [humanTouch, setHumanTouch] = useState(50);
   const [skepticCheck, setSkepticCheck] = useState(true);
+  // v1.29 (SPEC-1.29): per-product category + extra AI context. Both describe
+  // the SELECTED product, so selectProduct resets them.
+  const [hairProduct, setHairProduct] = useState(false);
+  const [extraInfo, setExtraInfo] = useState("");
   const [skepticBatchSize, setSkepticBatchSize] = useState("20");
   const [status, setStatus] = useState<"PUBLISHED" | "PENDING">("PUBLISHED");
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
@@ -1775,6 +1803,11 @@ export default function QaGeneratorRoute() {
     setProduct(picked);
     variantsTouched.current = false;
     setAssignVariants(picked.variants.length > 1);
+    // v1.29: both fields describe the selected product — carrying a hair
+    // flag or another product's info text onto a new pick would silently
+    // mis-brief the AI.
+    setHairProduct(false);
+    setExtraInfo("");
     // A different product invalidates the on-screen estimate entirely — the
     // combined launch estimate included (the main form is product 1 of the
     // launch, SPEC-1.26 §2).
@@ -2046,6 +2079,8 @@ export default function QaGeneratorRoute() {
       humanTouch,
       skepticCheck,
       skepticBatchSize: Math.min(60, Math.max(5, Number(skepticBatchSize) || 20)),
+      hairProduct,
+      extraProductInfo: extraInfo.trim(),
       status,
       ...(languageWeights ? { languageWeights } : {}),
       ...(variantWeights ? { variantWeights } : {}),
@@ -2120,6 +2155,8 @@ export default function QaGeneratorRoute() {
         humanTouch,
         skepticCheck,
         skepticBatchSize,
+        hairProduct,
+        extraInfo,
         status,
         langShares,
         variantShares,
@@ -2133,6 +2170,8 @@ export default function QaGeneratorRoute() {
           row.dateStart,
           row.dateEnd,
           row.assignVariants,
+          row.hairProduct,
+          row.extraInfoText,
         ]),
       ]),
     [
@@ -2150,6 +2189,8 @@ export default function QaGeneratorRoute() {
       humanTouch,
       skepticCheck,
       skepticBatchSize,
+      hairProduct,
+      extraInfo,
       status,
       langShares,
       variantShares,
@@ -2205,6 +2246,11 @@ export default function QaGeneratorRoute() {
           dateStart,
           dateEnd,
           assignVariants,
+          // v1.29: the hair flag snapshots like the other shared-ish values
+          // (a hair-heavy launch keeps it on); the info text is inherently
+          // about ONE product and always starts empty.
+          hairProduct,
+          extraInfoText: "",
           variantsTouched: false,
           needsProductHint: false,
           errors: {},
@@ -2320,6 +2366,8 @@ export default function QaGeneratorRoute() {
       assignVariants: config.assignVariants,
       dateStart: config.dateStart,
       dateEnd: config.dateEnd,
+      hairProduct: config.hairProduct,
+      extraProductInfo: config.extraProductInfo,
     };
     if (config.variantWeights) mainRow.variantWeights = config.variantWeights;
 
@@ -2347,6 +2395,8 @@ export default function QaGeneratorRoute() {
           : {}),
         dateStart: row.dateStart,
         dateEnd: row.dateEnd,
+        hairProduct: row.hairProduct,
+        extraProductInfo: row.extraInfoText.trim(),
       })),
     ];
     const total = productRows.reduce((sum, p) => sum + (Number(p.count) || 0), 0);
@@ -3122,6 +3172,27 @@ export default function QaGeneratorRoute() {
                       helpText="Review dates spread across the range with a mild recency bias"
                     />
                   </FormLayout.Group>
+
+                  {/* v1.29 (SPEC-1.29): per-product category + extra AI context. */}
+                  <Checkbox
+                    label="Hair product"
+                    checked={hairProduct}
+                    onChange={setHairProduct}
+                    helpText="Reviews talk about hair and scalp instead of skin: hair-fit reviewer personas, a hair-only writing instruction, and no skin-concern tags on the generated reviews."
+                  />
+                  <TextField
+                    label="Additional product info (optional)"
+                    value={extraInfo}
+                    onChange={setExtraInfo}
+                    multiline={3}
+                    maxLength={2000}
+                    showCharacterCount
+                    autoComplete="off"
+                    placeholder={
+                      "E.g. Lightweight leave-in serum for thinning hair. Key actives: caffeine and biotin. Applied to a towel-dried scalp morning and night, not rinsed out. Light herbal scent. Visible fullness after 6 to 8 weeks."
+                    }
+                    helpText="Anything the AI should know beyond the Shopify description: what the product does, key ingredients, texture and scent, how and when it's used, who it's for, and what realistic results look like and after how long. The more context, the more credible and on-product the reviews."
+                  />
 
                   <FormLayout.Group>
                     <Checkbox

@@ -4,7 +4,48 @@ All notable changes to Cellexia Reviews are documented here. The version number 
 `package.json` and stamped into the release ZIP built by `npm run package`
 (`dist/cellexia-reviews-v<version>.zip`).
 
+## 1.30.0 — 2026-08-10
+
+### Added — QA generator: scheduled auto-publish ("publish time") (SPEC-1.30.md)
+
+The "Status at creation" select is now **Publishing**, with a third option:
+*create as pending, publish automatically at a set time (UTC)*. Picking it
+shows a UTC date + time (prefilled with the next **06:00 UTC**, the default
+publish time); the helper text names UTC as the timezone in use and shows the
+equivalent in the merchant's own timezone. The setting is launch-wide: in a
+multi-product launch every product's batch publishes at the same instant.
+
+Scheduled batches are generated as ordinary **Pending** reviews (they appear
+in Reviews and can be published early by hand). A new in-process publish
+scheduler flips each batch to Published once its generation job has fully
+finished — the skeptical double-check included — and the instant has passed,
+then runs the same aggregate/metafield sync and Q&A-cache invalidation a
+manual publish does. The scheduler arms itself for the exact due instant (a
+06:00 schedule publishes at 06:00, not "within the hour"), survives restarts
+(re-armed by any admin or storefront traffic), and "Retry remaining" on a
+scheduled job auto-publishes the retry's new rows too. The jobs table shows
+"Pending — auto-publishes …" / "Auto-published …" (always in UTC) on the row.
+
+New migration `20260810090000_add_publish_time` (GenerationJob gains
+`publishAt`/`publishedAt`). Admin-only feature: no theme-extension or locale
+changes. New dev-test suite `scripts/dev-tests/qa-publish-time.test.mjs`.
+
 ## 1.29.1 — 2026-08-09
+
+### Fixed — reviews page: the server-rendered page now has a design
+
+The stylesheet only ever covered the interactive layer (filter bar, JS-rendered
+cards, ask/recommend panels, pager) — the entire server-rendered page (header,
+stat band, rating distribution, analysis sections, both product tables, the ~36
+review cards, methodology) had NO styles at all and rendered as a wall of
+browser-default text. The page is now fully designed in the widget's Amazon
+style, on the same `--cx-*` tokens (so the "cellexia" skin remap applies
+automatically): a 4-card stat band (2-column on mobile), orange distribution
+bars, carded analysis sections with accent-bordered quotes, clean data tables
+(uppercase muted headers, horizontal-scroll on small screens), review cards
+with star rows / verified badge / gray reply boxes / source captions, and a
+styled methodology section. Everything uses logical properties and was
+visually verified LTR and RTL at mobile and desktop widths.
 
 ### Fixed — reviews page: language & i18n fixes across all 17 locales
 

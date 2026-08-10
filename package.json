@@ -1,6 +1,6 @@
 {
   "name": "cellexia-reviews",
-  "version": "1.29.1",
+  "version": "1.30.0",
   "private": true,
   "description": "Amazon-grade product reviews for the Cellexia storefront — Shopify embedded app with theme app extension, AI summaries and 17 storefront languages.",
   "license": "UNLICENSED",

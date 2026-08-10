@@ -59,6 +59,10 @@ export interface JobView {
   etaSeconds: number | null;
   error: string | null;
   cancelRequested: boolean;
+  /** v1.30: scheduled auto-publish instant (ISO, UTC); null = not scheduled. */
+  publishAt?: string | null;
+  /** v1.30: when the scheduled publish actually ran; null until then. */
+  publishedAt?: string | null;
   startedAt: string | null;
   finishedAt: string | null;
   createdAt: string | null;
@@ -101,6 +105,8 @@ export function normalizeJob(raw: unknown): JobView | null {
         : null,
     error: typeof v.error === "string" && v.error ? v.error : null,
     cancelRequested: v.cancelRequested === true,
+    publishAt: asIsoString(v.publishAt),
+    publishedAt: asIsoString(v.publishedAt),
     startedAt: asIsoString(v.startedAt),
     finishedAt: asIsoString(v.finishedAt),
     createdAt: asIsoString(v.createdAt),

@@ -53,6 +53,7 @@ import {
   topicsToDTO,
 } from "./ai.server";
 import { ensureCurationScheduler } from "./curation-scheduler.server";
+import { ensurePublishScheduler } from "./publish-scheduler.server";
 import { fetchRankedPage, getEffectiveDisplay } from "./ranking.server";
 import { getSettings } from "./settings.server";
 import { translateReviews } from "./translate.server";
@@ -153,6 +154,9 @@ export async function listReviews(shop: string, params: ListParams): Promise<Lis
   // scheduler armed on shops whose admin rarely opens. Arming is an
   // idempotent no-op once armed; NO sweep ever runs inline on this path.
   ensureCurationScheduler();
+  // v1.30 (SPEC-1.30): same rule for the scheduled-publish chain — a 6 AM UTC
+  // publish must fire even when nobody has the admin open.
+  ensurePublishScheduler();
   const settings = await getSettings(shop);
   const productId = String(params.productId);
   const page = clampInt(params.page ?? 1, 1, 100000);

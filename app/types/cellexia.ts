@@ -557,6 +557,13 @@ export interface JobDTO {
   /** Per-chunk failure messages, capped at 20. */
   errors: string[];
   cancelRequested: boolean;
+  /**
+   * v1.30 (SPEC-1.30): scheduled auto-publish instant (ISO 8601, UTC) — null
+   * for immediate/manual-status jobs. `publishedAt` is when the scheduler
+   * actually flipped the batch to PUBLISHED; null until then.
+   */
+  publishAt: string | null;
+  publishedAt: string | null;
   startedAt: string | null;
   finishedAt: string | null;
   heartbeatAt: string | null;

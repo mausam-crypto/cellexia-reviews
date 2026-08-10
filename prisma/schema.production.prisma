@@ -264,6 +264,8 @@ model GenerationJob {
   estimate       String?
   error          String?
   errors         String    @default("[]")
+  publishAt      DateTime?
+  publishedAt    DateTime?
   startedAt      DateTime?
   finishedAt     DateTime?
   heartbeatAt    DateTime?

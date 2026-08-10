@@ -160,6 +160,15 @@ export interface SyntheticConfig {
   /** Status at creation. */
   status: "PUBLISHED" | "PENDING";
   /**
+   * v1.30 (SPEC-1.30): scheduled auto-publish. An ISO-8601 UTC instant
+   * (always stored normalized, e.g. "2026-08-12T06:00:00.000Z"). When
+   * present the reviews are created as PENDING (`status` is forced) and the
+   * publish scheduler flips the batch to PUBLISHED once the job has finished
+   * — skeptic pass included — AND this time has passed. Absent = the
+   * pre-1.30 behavior (the merchant's chosen status, no scheduling).
+   */
+  publishAt?: string;
+  /**
    * v1.25: how human the writing reads, 0-100. 0 = every review polished,
    * 100 = most reviews carry slips. Maps onto the clean/minor/sloppy mix;
    * 50 (the default) restores the v1.23 feel after v1.24 overshot.
@@ -256,6 +265,18 @@ function todayIsoDay(): string {
 }
 
 /**
+ * v1.30 (SPEC-1.30 §1): the scheduled publish instant must be an EXPLICIT
+ * UTC ISO string — the trailing Z is required, because a zone-less string
+ * would be parsed in the server's local timezone (a silent dialect the UI
+ * never speaks). Seconds/milliseconds are optional; the value is stored
+ * normalized via toISOString().
+ */
+const PUBLISH_AT_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d{1,3})?)?Z$/;
+/** Static validity bounds — deterministic under re-parse, unlike "now". */
+const PUBLISH_AT_MIN_MS = Date.UTC(2020, 0, 1);
+const PUBLISH_AT_MAX_MS = Date.UTC(2100, 0, 1);
+
+/**
  * Sanitizes an untrusted (client-supplied) config object into a valid
  * SyntheticConfig. Everything except the product reference clamps to safe
  * defaults; a missing/invalid product id is the only hard error.
@@ -341,6 +362,32 @@ export function parseSyntheticConfig(
       ? parseShareWeights(v.variantWeights, [VARIANT_NONE_KEY, ...variants])
       : undefined;
 
+  // v1.30 (SPEC-1.30 §1): scheduled auto-publish. A malformed schedule is a
+  // HARD error, never a silent drop — dropping it would either publish the
+  // reviews immediately or strand them pending forever, both a silent
+  // contradiction of what the merchant configured (the v1.17 sanitizer
+  // lesson). A publish time in the past is accepted: the job may be enqueued
+  // moments before the instant, or retried after it — the scheduler then
+  // publishes as soon as the job finishes.
+  let publishAt: string | undefined;
+  if (v.publishAt !== undefined && v.publishAt !== null && v.publishAt !== "") {
+    const rawPublish = typeof v.publishAt === "string" ? v.publishAt.trim() : "";
+    const ms = PUBLISH_AT_RE.test(rawPublish) ? Date.parse(rawPublish) : NaN;
+    if (!Number.isFinite(ms)) {
+      return {
+        config: null,
+        error:
+          "The scheduled publish time is invalid — use a UTC time like 2026-08-12T06:00:00.000Z",
+      };
+    }
+    // Upper bound exclusive — the exact same contract as the admin form's
+    // client mirror, so no instant passes one check and fails the other.
+    if (ms < PUBLISH_AT_MIN_MS || ms >= PUBLISH_AT_MAX_MS) {
+      return { config: null, error: "The scheduled publish time is out of range" };
+    }
+    publishAt = new Date(ms).toISOString();
+  }
+
   const config: SyntheticConfig = {
     productId,
     productTitle: cleanString(v.productTitle, 255) || `Product ${productId}`,
@@ -359,12 +406,15 @@ export function parseSyntheticConfig(
     dateEnd,
     assignVariants,
     structuredAttrs: !(v.structuredAttrs === false || v.structuredAttrs === "false"),
-    status: v.status === "PENDING" ? "PENDING" : "PUBLISHED",
+    // A scheduled batch always starts PENDING — that is the whole point of
+    // the schedule; a client-sent PUBLISHED must not leak the reviews early.
+    status: publishAt ? "PENDING" : v.status === "PENDING" ? "PENDING" : "PUBLISHED",
     humanTouch: clampInt(v.humanTouch, 0, 100, 50),
     skepticCheck: !(v.skepticCheck === false || v.skepticCheck === "false"),
     skepticBatchSize: clampInt(v.skepticBatchSize, 5, 60, 20),
     hairProduct: v.hairProduct === true || v.hairProduct === "true",
     extraProductInfo: cleanString(v.extraProductInfo, 2000),
+    ...(publishAt ? { publishAt } : {}),
     ...(languageWeights ? { languageWeights } : {}),
     ...(variantWeights ? { variantWeights } : {}),
   };
@@ -1827,7 +1877,12 @@ async function cancelAndDeleteJobs(shop: string, batchId?: string): Promise<void
 
 export const MAX_MULTI_PRODUCTS = 20;
 
-/** The fields a launch may vary per product; everything else is shared. */
+/**
+ * The fields a launch may vary per product; everything else is shared.
+ * v1.30: `publishAt` is deliberately NOT here — one publish time applies to
+ * the whole launch (it rides in `shared` untouched), and rows cannot smuggle
+ * their own (overrides copy only these keys).
+ */
 const PER_PRODUCT_KEYS = [
   "count",
   "targetAverage",

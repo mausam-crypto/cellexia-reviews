@@ -11,7 +11,9 @@
  *      (with a per-language share editor when more than one is selected —
  *      SPEC-1.10 §2), replies %, max helpful votes, date range, variants
  *      toggle (with a per-variant share editor incl. a "No variant" row —
- *      SPEC-1.10 §3), structured-attributes toggle, status at creation.
+ *      SPEC-1.10 §3), structured-attributes toggle, and the Publishing
+ *      select (SPEC-1.30): immediate / pending / scheduled auto-publish at a
+ *      UTC date+time (prefilled with the next 06:00 UTC, launch-wide).
  *      Share editors prefill (even split / the default variant weighting),
  *      show a live "Total: N%" with a ±1 tolerance, and ship
  *      languageWeights / variantWeights in the config; the server normalizes
@@ -843,6 +845,57 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
 function todayIso(): string {
   return new Date().toISOString().slice(0, 10);
+}
+
+/* ---- Scheduled publish helpers (SPEC-1.30) -------------------------------- */
+
+/** The publishing modes of the "Publishing" select. */
+type PublishMode = "PUBLISHED" | "PENDING" | "SCHEDULED";
+
+/**
+ * MIRROR of PUBLISH_AT_MAX_MS in synthetic.server.ts (a .server constant
+ * cannot be used in the browser bundle — keep in sync): the static upper
+ * validity bound of a scheduled publish instant.
+ */
+const PUBLISH_AT_MAX_MS = Date.UTC(2100, 0, 1);
+
+/**
+ * Default schedule: the NEXT 06:00 UTC (today if it has not passed yet,
+ * otherwise tomorrow) — the spec's default publish time.
+ */
+function defaultPublishParts(): { date: string; time: string } {
+  const now = new Date();
+  const next = new Date(
+    Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 6, 0, 0),
+  );
+  if (next.getTime() <= now.getTime()) next.setUTCDate(next.getUTCDate() + 1);
+  return { date: next.toISOString().slice(0, 10), time: "06:00" };
+}
+
+/**
+ * Parses the two schedule fields into a UTC epoch-ms instant, or null when
+ * either is malformed. Time inputs may emit "HH:MM" or "HH:MM:SS".
+ */
+function publishInstantMs(date: string, time: string): number | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return null;
+  if (!/^\d{2}:\d{2}(:\d{2})?$/.test(time)) return null;
+  const ms = Date.parse(`${date}T${time.slice(0, 5)}:00.000Z`);
+  return Number.isFinite(ms) ? ms : null;
+}
+
+/** "Aug 12, 2026, 06:00 UTC" — always rendered in UTC, suffix included. */
+function formatUtcInstant(iso: string): string {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return `${d.toLocaleString("en-US", {
+    timeZone: "UTC",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  })} UTC`;
 }
 
 /**
@@ -1717,7 +1770,12 @@ export default function QaGeneratorRoute() {
   const [hairProduct, setHairProduct] = useState(false);
   const [extraInfo, setExtraInfo] = useState("");
   const [skepticBatchSize, setSkepticBatchSize] = useState("20");
-  const [status, setStatus] = useState<"PUBLISHED" | "PENDING">("PUBLISHED");
+  // v1.30 (SPEC-1.30): publishing mode + the scheduled UTC instant. The
+  // date/time fields prefill with the NEXT 06:00 UTC and apply launch-wide
+  // (they live in the shared settings, single- and multi-product alike).
+  const [publishMode, setPublishMode] = useState<PublishMode>("PUBLISHED");
+  const [publishDate, setPublishDate] = useState(() => defaultPublishParts().date);
+  const [publishTime, setPublishTime] = useState("06:00");
   const [formErrors, setFormErrors] = useState<Record<string, string>>({});
   // SPEC-1.10 §2/§3 — share editor fields (percent strings, keyed by locale /
   // variant title + VARIANT_NONE_KEY). Prefilled by the effects below.
@@ -2054,6 +2112,26 @@ export default function QaGeneratorRoute() {
       }
     }
 
+    // v1.30 (SPEC-1.30): the scheduled publish instant — entered in UTC,
+    // must parse and lie in the future (a past instant would publish the
+    // moment generation ends, which is surely not what was meant).
+    let publishAtIso: string | null = null;
+    if (publishMode === "SCHEDULED") {
+      const ms = publishInstantMs(publishDate, publishTime);
+      if (ms === null) {
+        errors.publishAt = "Enter a valid publish date and time";
+      } else if (ms <= Date.now()) {
+        errors.publishAt = "The publish time must be in the future — times are UTC";
+      } else if (ms >= PUBLISH_AT_MAX_MS) {
+        // MIRROR of the server's static upper bound (synthetic.server.ts) —
+        // without it a 9999-12-31 date passes the form and dies server-side
+        // as a generic toast with no field highlighted.
+        errors.publishAt = "Enter a publish date before the year 2100";
+      } else {
+        publishAtIso = new Date(ms).toISOString();
+      }
+    }
+
     if (Object.keys(errors).length > 0 || !product) {
       return { errors, configJson: null, total: 0 };
     }
@@ -2081,7 +2159,9 @@ export default function QaGeneratorRoute() {
       skepticBatchSize: Math.min(60, Math.max(5, Number(skepticBatchSize) || 20)),
       hairProduct,
       extraProductInfo: extraInfo.trim(),
-      status,
+      // A scheduled batch is created PENDING; the server forces this too.
+      status: publishMode === "PUBLISHED" ? "PUBLISHED" : "PENDING",
+      ...(publishAtIso ? { publishAt: publishAtIso } : {}),
       ...(languageWeights ? { languageWeights } : {}),
       ...(variantWeights ? { variantWeights } : {}),
     };
@@ -2120,6 +2200,28 @@ export default function QaGeneratorRoute() {
   );
   const multiMode = activeLaunchRows.length > 0;
 
+  // v1.30 (SPEC-1.30): human-readable schedule hint — names UTC as the
+  // timezone in use and translates the instant into the merchant's own
+  // timezone so 06:00 UTC is never mistaken for 6 AM local.
+  const scheduledPublishHint = useMemo(() => {
+    const base =
+      "Reviews are created as Pending and publish automatically once generation " +
+      "(and the double-check) has finished and this time has passed. Times are in " +
+      "UTC — the default is 06:00 UTC.";
+    const ms = publishInstantMs(publishDate, publishTime);
+    if (ms === null) return base;
+    try {
+      const zone = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      const local = new Date(ms).toLocaleString(undefined, {
+        dateStyle: "medium",
+        timeStyle: "short",
+      });
+      return `${base} In your timezone (${zone}) this is ${local}.`;
+    } catch {
+      return base;
+    }
+  }, [publishDate, publishTime]);
+
   // Launch total for the Generate button label — invalid row counts read as 0
   // here; validation names them properly on submit.
   const launchReviewTotal = useMemo(() => {
@@ -2157,7 +2259,9 @@ export default function QaGeneratorRoute() {
         skepticBatchSize,
         hairProduct,
         extraInfo,
-        status,
+        publishMode,
+        publishDate,
+        publishTime,
         langShares,
         variantShares,
         extraRows.map((row) => [
@@ -2191,7 +2295,9 @@ export default function QaGeneratorRoute() {
       skepticBatchSize,
       hairProduct,
       extraInfo,
-      status,
+      publishMode,
+      publishDate,
+      publishTime,
       langShares,
       variantShares,
       extraRows,
@@ -2663,6 +2769,56 @@ export default function QaGeneratorRoute() {
     if (changed && revalidator.state === "idle") revalidator.revalidate();
   }, [liveSummary, revalidator]);
 
+  // v1.30 (SPEC-1.30): terminal rows only refresh via the loader, and the
+  // live poll returns ACTIVE jobs only — so without this, a page left open
+  // across a scheduled instant would show "Pending — auto-publishes …"
+  // forever after the flip actually ran. Re-run the loader shortly after the
+  // earliest awaited instant (the sweep needs a few seconds), then keep
+  // re-checking on a slow cadence while any awaited schedule remains.
+  //
+  // The effect is keyed on a STABLE fingerprint of the awaited instants —
+  // NOT on mergedJobs, whose reference changes on every 3 s / 30 s poll and
+  // would clear the pending timer before it can ever fire (the armed delay
+  // is always longer than a poll interval). The nonce re-arms the next check
+  // after each firing even when the awaited set did not change (sweep late /
+  // publish failing), and the chain ends when the set empties.
+  const awaitedPublishKey = useMemo(
+    () =>
+      mergedJobs
+        .filter(
+          (job) =>
+            job.publishAt &&
+            !job.publishedAt &&
+            !isActiveJobStatus(job.status) &&
+            Number.isFinite(Date.parse(job.publishAt)),
+        )
+        .map((job) => job.publishAt as string)
+        .sort()
+        .join("|"),
+    [mergedJobs],
+  );
+  const [publishRecheck, setPublishRecheck] = useState(0);
+  // Ref-captured so the revalidator's per-render identity cannot churn the
+  // effect (that churn is the exact starvation this structure avoids).
+  const revalidatorRef = useRef(revalidator);
+  revalidatorRef.current = revalidator;
+  useEffect(() => {
+    if (!awaitedPublishKey) return undefined;
+    const earliest = Math.min(
+      ...awaitedPublishKey.split("|").map((iso) => Date.parse(iso)),
+    );
+    const now = Date.now();
+    // Aim 5 s past the instant so the sweep has landed; an instant already
+    // well past (sweep delayed/failing) re-checks on a slow 60 s cadence.
+    const target = earliest + 5_000;
+    const delay = target > now ? Math.max(1_000, target - now) : 60_000;
+    const timer = setTimeout(() => {
+      if (revalidatorRef.current.state === "idle") revalidatorRef.current.revalidate();
+      setPublishRecheck((n) => n + 1);
+    }, delay);
+    return () => clearTimeout(timer);
+  }, [awaitedPublishKey, publishRecheck]);
+
   const cancelJob = (job: JobView) => {
     if (jobActionBusy) return;
     setPendingJobAction({ id: job.id, kind: "cancel" });
@@ -2759,6 +2915,17 @@ export default function QaGeneratorRoute() {
             <Text as="span" variant="bodyMd">
               {job.productTitle ?? `Product ${job.productId}`}
             </Text>
+            {/* v1.30 (SPEC-1.30): scheduled-publish state, always in UTC. */}
+            {job.publishAt && !job.publishedAt ? (
+              <Text as="span" variant="bodySm" tone="subdued">
+                {`Pending — auto-publishes ${formatUtcInstant(job.publishAt)}`}
+              </Text>
+            ) : null}
+            {job.publishAt && job.publishedAt ? (
+              <Text as="span" variant="bodySm" tone="subdued">
+                {`Auto-published ${formatUtcInstant(job.publishedAt)}`}
+              </Text>
+            ) : null}
             {job.status === "COMPLETED" && job.errors && job.errors.length > 0 ? (
               <Text as="p" variant="bodySm" tone="caution">
                 {truncateText(job.errors[0], 140)}
@@ -3303,15 +3470,74 @@ export default function QaGeneratorRoute() {
                     </Box>
                   ) : null}
 
+                  {/* ---- Publishing / scheduled publish (SPEC-1.30) -------- */}
                   <Select
-                    label="Status at creation"
+                    label="Publishing"
                     options={[
-                      { label: "Published", value: "PUBLISHED" },
-                      { label: "Pending", value: "PENDING" },
+                      { label: "Publish immediately", value: "PUBLISHED" },
+                      { label: "Create as pending (publish manually)", value: "PENDING" },
+                      {
+                        label: "Create as pending, publish automatically at a set time (UTC)",
+                        value: "SCHEDULED",
+                      },
                     ]}
-                    value={status}
-                    onChange={(value) => setStatus(value === "PENDING" ? "PENDING" : "PUBLISHED")}
+                    value={publishMode}
+                    onChange={(value) => {
+                      setPublishMode(
+                        value === "PENDING" || value === "SCHEDULED" ? value : "PUBLISHED",
+                      );
+                      // Re-prefill on every switch INTO scheduling so a form
+                      // left open overnight never offers a stale (past) 06:00.
+                      if (value === "SCHEDULED") {
+                        const parts = defaultPublishParts();
+                        setPublishDate(parts.date);
+                        setPublishTime(parts.time);
+                      }
+                      // The mode switch replaces the schedule values, so any
+                      // earlier "must be in the future" error no longer
+                      // describes what is on screen — drop it.
+                      setFormErrors((prev) => {
+                        if (!prev.publishAt) return prev;
+                        const { publishAt: _dropped, ...rest } = prev;
+                        return rest;
+                      });
+                    }}
+                    helpText={
+                      multiMode
+                        ? "Applies to every product in this launch."
+                        : undefined
+                    }
                   />
+                  {publishMode === "SCHEDULED" ? (
+                    <Box background="bg-surface-secondary" padding="300" borderRadius="200">
+                      <BlockStack gap="200">
+                        <FormLayout>
+                          <FormLayout.Group condensed>
+                            <TextField
+                              label="Publish date (UTC)"
+                              type="date"
+                              autoComplete="off"
+                              value={publishDate}
+                              onChange={setPublishDate}
+                            />
+                            <TextField
+                              label="Publish time (UTC)"
+                              type="time"
+                              autoComplete="off"
+                              value={publishTime}
+                              onChange={setPublishTime}
+                            />
+                          </FormLayout.Group>
+                        </FormLayout>
+                        {formErrors.publishAt ? (
+                          <InlineError message={formErrors.publishAt} fieldID="qa-publish-at" />
+                        ) : null}
+                        <Text as="p" variant="bodySm" tone="subdued">
+                          {scheduledPublishHint}
+                        </Text>
+                      </BlockStack>
+                    </Box>
+                  ) : null}
                 </FormLayout>
 
                 {/* ---- Combined launch estimate (SPEC-1.26 §2) ------------ */}
@@ -3395,7 +3621,8 @@ export default function QaGeneratorRoute() {
                 <Text as="p" tone="subdued">
                   Everything configured above applies to every product in the launch —
                   languages, human touch, the skeptical double-check, structured attributes,
-                  status and helpful-votes cap. Each product added here only overrides what
+                  publishing (a scheduled publish time included) and helpful-votes cap. Each
+                  product added here only overrides what
                   differs: review count, star average, verified and reply percentages, dates
                   and the variant toggle. Each row is a copy of the settings above from the
                   moment you added it — changing the settings above later does not update

@@ -40,17 +40,173 @@
   color: var(--cx-muted, #565959); font-size: 14px;
 }
 
-/* ===== SSR: rating distribution ===== */
-/* The bar cell's <span> only carries an inline width — without these rules
-   an inline non-replaced element ignores width and the bar never renders. */
-.cx-brand-page .cx-bp-dist { border-collapse: collapse; margin-block-start: 8px; }
-.cx-brand-page .cx-bp-dist th,
-.cx-brand-page .cx-bp-dist td { padding-block: 3px; padding-inline-end: 10px; font-size: 13px; text-align: start; font-weight: 400; }
-.cx-brand-page .cx-bp-dist-bar { inline-size: 200px; max-inline-size: 40vw; }
-.cx-brand-page .cx-bp-dist-bar span {
-  display: block; block-size: 12px; border-radius: 6px;
-  background: var(--cx-star, #FF6200);
+/* ===================================================================== *
+ * SSR page design — everything reviews-page.liquid renders server-side.
+ * Same design system as the widget: Amazon-style type scale, --cx-* tokens
+ * (so the cellexia skin remap applies), logical properties for RTL.
+ * ===================================================================== */
+
+.cx-brand-page {
+  max-inline-size: 1000px;
+  margin-inline: auto;
+  padding-block: 8px 48px;
+  padding-inline: 16px;
 }
+
+/* Type scale + section rhythm */
+.cx-brand-page h1 {
+  margin: 0 0 10px;
+  font-size: 28px; line-height: 1.2; font-weight: 700;
+  color: var(--cx-ink, #0F1111);
+}
+.cx-brand-page h2 {
+  margin: 0 0 14px;
+  font-size: 20px; line-height: 1.25; font-weight: 700;
+  color: var(--cx-ink, #0F1111);
+}
+.cx-brand-page h3 { margin: 0 0 8px; font-size: 16px; line-height: 1.3; font-weight: 700; }
+.cx-brand-page p { margin: 0 0 10px; }
+.cx-brand-page > section {
+  margin-block-start: 28px;
+  padding-block-start: 24px;
+  border-block-start: 1px solid #e3e3e3;
+}
+
+/* ===== header: opening, stat band, distribution ===== */
+.cx-brand-page .cx-bp-opening {
+  max-inline-size: 76ch;
+  font-size: 15px; line-height: 1.6;
+}
+.cx-brand-page .cx-bp-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+  margin-block: 16px;
+}
+.cx-brand-page .cx-bp-stat {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 14px 16px;
+  background: #f7f8f8; border: 1px solid #ececec; border-radius: 10px;
+  font-size: 12px; color: var(--cx-muted, #565959);
+}
+.cx-brand-page .cx-bp-stat-num {
+  font-size: 24px; line-height: 1.15; font-weight: 700;
+  color: var(--cx-ink, #0F1111);
+}
+@media (max-width: 767.98px) {
+  .cx-brand-page .cx-bp-stats { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
+/* Rating distribution — the bar cell's <span> only carries an inline width,
+   so it MUST be display:block here or the bar never renders. */
+.cx-brand-page .cx-bp-dist { border-collapse: collapse; margin-block-start: 4px; }
+.cx-brand-page .cx-bp-dist caption {
+  text-align: start; font-size: 14px; font-weight: 700;
+  padding-block-end: 6px;
+}
+.cx-brand-page .cx-bp-dist th,
+.cx-brand-page .cx-bp-dist td {
+  padding-block: 4px; padding-inline: 0 12px;
+  font-size: 13px; font-weight: 400; text-align: start;
+  color: var(--cx-ink, #0F1111); white-space: nowrap;
+}
+.cx-brand-page .cx-bp-dist th { color: var(--cx-link, #007185); }
+.cx-brand-page .cx-bp-dist-bar { inline-size: 220px; max-inline-size: 44vw; }
+.cx-brand-page .cx-bp-dist-bar span {
+  display: block; block-size: 14px; border-radius: 7px;
+  background: var(--cx-star, #FF6200);
+  box-shadow: inset 0 0 0 1px rgba(15, 17, 17, .08);
+}
+
+/* ===== analysis (five Q&A sections with verbatim quotes) ===== */
+.cx-brand-page .cx-bp-based { margin-block-start: -6px; font-size: 13px; color: var(--cx-muted, #565959); }
+.cx-brand-page .cx-bp-qa {
+  margin-block-start: 18px; padding: 16px 18px;
+  border: 1px solid #e7e7e7; border-radius: 10px; background: #fff;
+}
+.cx-brand-page .cx-bp-qa > p { font-size: 14px; line-height: 1.6; max-inline-size: 80ch; }
+.cx-brand-page .cx-bp-qa .cx-bp-quote { margin-block-start: 12px; }
+.cx-brand-page .cx-bp-quote footer {
+  margin-block-start: 4px;
+  font-size: 12px; color: var(--cx-muted, #565959);
+}
+
+/* ===== winners / per-product tables ===== */
+.cx-brand-page .cx-bp-winners table,
+.cx-brand-page .cx-bp-products table {
+  border-collapse: collapse; inline-size: 100%;
+  font-size: 14px;
+}
+.cx-brand-page .cx-bp-winners th,
+.cx-brand-page .cx-bp-products th {
+  padding-block: 8px; padding-inline: 0 14px;
+  font-size: 12px; font-weight: 700; text-align: start;
+  text-transform: uppercase; letter-spacing: .03em;
+  color: var(--cx-muted, #565959);
+  border-block-end: 1px solid #d5d9d9;
+}
+.cx-brand-page .cx-bp-winners td,
+.cx-brand-page .cx-bp-products td {
+  padding-block: 9px; padding-inline: 0 14px;
+  border-block-end: 1px solid #efefef;
+  text-align: start; vertical-align: top;
+}
+@media (max-width: 599.98px) {
+  .cx-brand-page .cx-bp-winners table,
+  .cx-brand-page .cx-bp-products table { display: block; overflow-x: auto; }
+}
+
+/* ===== SSR review cards ===== */
+.cx-brand-page .cx-bp-review {
+  padding-block: 18px;
+  border-block-end: 1px solid #e3e3e3;
+}
+.cx-brand-page .cx-bp-review:last-of-type { border-block-end: 0; }
+.cx-brand-page .cx-bp-review-head {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px;
+  margin: 0 0 4px; font-size: 15px;
+}
+/* SSR stars are ★☆ text (the JS cards use SVG) — same color token. */
+.cx-brand-page .cx-bp-review .cx-bp-stars {
+  color: var(--cx-star, #FF6200);
+  font-size: 16px; letter-spacing: 1px;
+}
+.cx-brand-page .cx-bp-review-meta {
+  display: block; margin: 0 0 2px;
+  font-size: 13px; color: var(--cx-muted, #565959);
+}
+.cx-brand-page .cx-bp-review-attrs {
+  margin: 0 0 6px;
+  font-size: 12px; color: var(--cx-muted, #565959);
+}
+.cx-brand-page .cx-bp-review-body {
+  margin: 6px 0 0; max-inline-size: 80ch;
+  font-size: 14px; line-height: 1.55;
+  overflow-wrap: break-word; white-space: pre-line;
+}
+.cx-brand-page .cx-bp-review-reply {
+  margin: 10px 0 0; padding: 10px 14px; max-inline-size: 78ch;
+  background: #f7f8f8; border-radius: 8px;
+  font-size: 13px; line-height: 1.5;
+}
+.cx-brand-page .cx-bp-review-source { margin: 8px 0 0; font-size: 12px; color: var(--cx-muted, #565959); }
+.cx-brand-page .cx-bp-archive { margin-block-start: 16px; font-size: 14px; font-weight: 600; }
+
+/* ===== methodology + footer lines ===== */
+.cx-brand-page .cx-bp-method p { max-inline-size: 80ch; font-size: 14px; line-height: 1.6; }
+.cx-brand-page .cx-bp-method ul {
+  margin: 0 0 10px; padding-inline-start: 22px;
+  font-size: 14px; line-height: 1.7;
+}
+.cx-brand-page .cx-bp-updated { font-size: 12px; color: var(--cx-muted, #565959); }
+
+/* ===== design-mode placeholder ===== */
+.cx-brand-page--placeholder {
+  padding: 28px; text-align: center;
+  border: 1px dashed #c9cdcd; border-radius: 10px;
+  color: var(--cx-muted, #565959);
+}
+.cx-brand-page--placeholder h1 { margin-block-end: 6px; }
 
 /* ===== filter bar ===== */
 .cx-brand-page .cx-bp-filters {

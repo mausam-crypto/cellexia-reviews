@@ -46,6 +46,10 @@ import type { EstimateDTO, JobDTO, JobStatus } from "~/types/cellexia";
 import { syncProductData } from "~/components/admin/moderation.server";
 import { MODEL_PRICING } from "./estimate.server";
 import {
+  ensurePublishScheduler,
+  kickPublishScheduler,
+} from "./publish-scheduler.server";
+import {
   SYNTHETIC_CHUNK_SIZE,
   buildBatchPlan,
   generateChunk,
@@ -143,6 +147,15 @@ globalStore.__cellexiaJobRunner = runner;
  * enqueues and freed slots must be picked up now, not on the next poll.
  */
 export function kickRunner(): void {
+  // v1.30: every surface that keeps the job runner alive also keeps the
+  // publish scheduler armed (idempotent no-op while it has nothing to do) —
+  // a process restart must find scheduled publishes without waiting for a
+  // scheduled job to be enqueued or finished.
+  try {
+    ensurePublishScheduler();
+  } catch (error) {
+    console.error("[cellexia] publish scheduler arming failed", error);
+  }
   if (runner.ticking) {
     runner.kickAgain = true;
     return;
@@ -611,6 +624,17 @@ async function executeJob(job: GenerationJob): Promise<void> {
     costUsd:
       state.baseCostUsd + actualCostUsd(state.model, state.inputTokens, state.outputTokens),
   });
+
+  // v1.30 (SPEC-1.30): the job is terminal — wake the publish scheduler so a
+  // schedule whose instant already passed mid-generation publishes within
+  // seconds, and a future one gets an exact timer armed.
+  if (job.publishAt) {
+    try {
+      kickPublishScheduler();
+    } catch (error) {
+      console.error(`[cellexia] job ${job.id}: publish scheduler kick failed`, error);
+    }
+  }
 }
 
 async function persistChunkProgress(
@@ -735,6 +759,9 @@ export async function enqueueGeneration(
   estimate: EstimateDTO | null,
 ): Promise<GenerationJob> {
   const batchId = crypto.randomUUID();
+  // parseSyntheticConfig guarantees publishAt (when present) is a valid,
+  // normalized UTC ISO string — the column mirrors it for the sweep query.
+  const publishAt = config.publishAt ? new Date(config.publishAt) : null;
   const job = await prisma.generationJob.create({
     data: {
       shop,
@@ -746,9 +773,13 @@ export async function enqueueGeneration(
       target: config.count,
       chunksTotal: Math.ceil(config.count / CHUNK_SIZE),
       estimate: estimate ? JSON.stringify(estimate) : null,
+      publishAt,
     },
   });
   kickRunner();
+  // v1.30: a scheduled job clears the scheduler's empty-stop flag so its
+  // chain re-arms even if no sweepable work exists yet.
+  if (publishAt) kickPublishScheduler();
   return job;
 }
 
@@ -801,7 +832,20 @@ export async function requestCancel(shop: string, jobId: string): Promise<void> 
       where: { id: jobId, shop, status: "RUNNING" },
       data: { cancelRequested: true },
     });
+    // A RUNNING job goes terminal through executeJob, whose end-of-run kick
+    // covers its schedule — nothing more to do here.
+    return;
   }
+  // v1.30: a QUEUED job just turned terminal WITHOUT ever reaching the
+  // runner, so the end-of-run kick never fires for it. If it carries an
+  // unpublished schedule (e.g. a scheduled retry cancelled before starting —
+  // its kept rows still publish at the instant), wake the scheduler: the
+  // chain may be armed on the slow 6 h net, or empty-stopped entirely.
+  const row = await prisma.generationJob.findUnique({
+    where: { id: jobId },
+    select: { publishAt: true, publishedAt: true },
+  });
+  if (row?.publishAt && !row.publishedAt) kickPublishScheduler();
 }
 
 /**
@@ -819,6 +863,10 @@ export async function retryJob(shop: string, jobId: string): Promise<GenerationJ
       error: null,
       finishedAt: null,
       heartbeatAt: null,
+      // v1.30: a retried scheduled job publishes again when IT finishes —
+      // rows the sweep already published stay published (the flip only
+      // touches PENDING rows); this makes the retry's new rows eligible.
+      publishedAt: null,
     },
   });
   if (res.count !== 1) {
@@ -827,6 +875,12 @@ export async function retryJob(shop: string, jobId: string): Promise<GenerationJ
   kickRunner();
   const job = await prisma.generationJob.findUnique({ where: { id: jobId } });
   if (!job) throw new Error("The job no longer exists.");
+  // v1.30: clearing publishedAt re-created a schedulable row, and the
+  // scheduler may be empty-stopped (its last tick saw everything published).
+  // Without this kick, a retry that is then cancelled while QUEUED turns
+  // terminal without ever reaching the runner's end-of-run kick — and its
+  // batch would strand unpublished until unrelated scheduled work arrives.
+  if (job.publishAt) kickPublishScheduler();
   return job;
 }
 
@@ -984,6 +1038,8 @@ function toJobDTO(row: GenerationJob, nowMs: number): JobDTO {
     error: row.error ?? null,
     errors: parseErrorList(row.errors),
     cancelRequested: row.cancelRequested,
+    publishAt: row.publishAt ? row.publishAt.toISOString() : null,
+    publishedAt: row.publishedAt ? row.publishedAt.toISOString() : null,
     startedAt: row.startedAt ? row.startedAt.toISOString() : null,
     finishedAt: row.finishedAt ? row.finishedAt.toISOString() : null,
     heartbeatAt: row.heartbeatAt ? row.heartbeatAt.toISOString() : null,

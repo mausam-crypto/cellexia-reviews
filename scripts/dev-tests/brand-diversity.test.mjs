@@ -93,7 +93,12 @@ const stubPlugin = {
     build.onResolve({ filter: /^~\/db\.server$/ }, () => ({ path: path.join(HERE, "bd-db-stub.js") }));
     build.onResolve({ filter: /^~\/shopify\.server$/ }, () => ({ path: path.join(HERE, "bd-shopify-stub.js") }));
     build.onResolve({ filter: /translate\.server$/ }, () => ({ path: path.join(HERE, "bd-translate-stub.js") }));
-    build.onResolve({ filter: /^~\// }, (a) => ({ path: path.join(ROOT, "app", a.path.slice(2) + ".ts") }));
+    // .ts with a .tsx fallback (moderation.server is a .tsx — reached since
+    // v1.30 via reviews.server → publish-scheduler.server).
+    build.onResolve({ filter: /^~\// }, (a) => {
+      const base = path.join(ROOT, "app", a.path.slice(2));
+      return { path: fs.existsSync(base + ".ts") ? base + ".ts" : base + ".tsx" };
+    });
   },
 };
 await esbuild.build({

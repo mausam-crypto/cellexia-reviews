@@ -40,6 +40,18 @@
   color: var(--cx-muted, #565959); font-size: 14px;
 }
 
+/* ===== SSR: rating distribution ===== */
+/* The bar cell's <span> only carries an inline width — without these rules
+   an inline non-replaced element ignores width and the bar never renders. */
+.cx-brand-page .cx-bp-dist { border-collapse: collapse; margin-block-start: 8px; }
+.cx-brand-page .cx-bp-dist th,
+.cx-brand-page .cx-bp-dist td { padding-block: 3px; padding-inline-end: 10px; font-size: 13px; text-align: start; font-weight: 400; }
+.cx-brand-page .cx-bp-dist-bar { inline-size: 200px; max-inline-size: 40vw; }
+.cx-brand-page .cx-bp-dist-bar span {
+  display: block; block-size: 12px; border-radius: 6px;
+  background: var(--cx-star, #FF6200);
+}
+
 /* ===== filter bar ===== */
 .cx-brand-page .cx-bp-filters {
   display: flex; flex-wrap: wrap; align-items: center; gap: 10px;
@@ -136,8 +148,10 @@
 .cx-brand-page .cx-bp-answer { margin-block-start: 4px; }
 .cx-brand-page .cx-bp-answer__text { margin: 12px 0 0; font-size: 14px; line-height: 1.55; }
 
-/* recommend: prominent product link-buttons above the quotes */
-.cx-brand-page .cx-bp-products { display: flex; flex-wrap: wrap; gap: 8px; margin-block-start: 12px; }
+/* recommend: prominent product link-buttons above the quotes.
+   "cx-bp-product-row", NOT "cx-bp-products" — that class is the SSR
+   "Reviews by product" <section>, which this flex rule used to break. */
+.cx-brand-page .cx-bp-product-row { display: flex; flex-wrap: wrap; gap: 8px; margin-block-start: 12px; }
 .cx-brand-page .cx-bp-product-btn {
   display: inline-block; padding-block: 9px; padding-inline: 16px;
   border: 1px solid var(--cx-link, #007185); border-radius: 100px;

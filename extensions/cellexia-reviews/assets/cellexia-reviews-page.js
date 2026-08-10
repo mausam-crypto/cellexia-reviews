@@ -145,6 +145,18 @@ function boot() {
  if (/^\/apps\/[^/]+\/api$/.test(proxy)) proxy = proxy.replace(/\/api$/, "");
  var apiBase = proxy + "/api";
  var locale = attr("data-locale", document.documentElement.lang || "en");
+ /* Locale-aware product links: root-relative "/products/x" would eject a
+    /fr/ shopper to the primary-locale product page. Prefer the runtime
+    Shopify.routes.root (always trailing-slashed), fall back to the section's
+    data-root (same value, SSR'd), then "/". */
+ var rootUrl = String(attr("data-root", "/"));
+ try {
+  if (window.Shopify && window.Shopify.routes && typeof window.Shopify.routes.root === "string" && window.Shopify.routes.root) {
+   rootUrl = window.Shopify.routes.root;
+  }
+ } catch (e) {}
+ if (rootUrl.charAt(rootUrl.length - 1) !== "/") rootUrl += "/";
+ function productUrl(handle) { return rootUrl + "products/" + encodeURIComponent(String(handle)); }
  var totalCount = parseInt(attr("data-count", ""), 10);
  var products = jsonAttr("data-products", []);
  var concerns = jsonAttr("data-concerns", []);
@@ -176,10 +188,18 @@ function boot() {
   var d = new Date(iso);
   try { return isNaN(d.getTime()) ? "" : DF.format(d); } catch (e) { return ""; }
  }
+ /* "1 star" vs "n stars" — falls back to the plural string if the singular
+    key is missing (an older cached section). */
+ function starsLabel(n) {
+  var key = n === 1 && typeof I18N.filter_stars_one === "string" && I18N.filter_stars_one
+   ? "filter_stars_one"
+   : "filter_stars";
+  return i(key, { n: n });
+ }
  function starRow(rating, size) {
   var wrap = el("span", "cx-bp-stars");
   sa(wrap, "role", "img");
-  sa(wrap, "aria-label", i("filter_stars", { n: rating }));
+  sa(wrap, "aria-label", starsLabel(rating));
   for (var k = 0; k < 5; k++) ap(wrap, starSvg(k < rating, size || 16));
   return wrap;
  }
@@ -236,7 +256,7 @@ function boot() {
   var mc = makeSelect("cx-bp-f-concern", i("filter_all_concerns"), opts);
   selConcern = mc.sel; ap(bar, mc.wrap);
   opts = [];
-  for (k = 5; k >= 1; k--) opts.push({ value: String(k), label: i("filter_stars", { n: k }) });
+  for (k = 5; k >= 1; k--) opts.push({ value: String(k), label: starsLabel(k) });
   var ms = makeSelect("cx-bp-f-stars", i("filter_all_ratings"), opts);
   selStars = ms.sel; ap(bar, ms.wrap);
  }
@@ -278,6 +298,11 @@ function boot() {
  function rvProductTitle(r) { return r.productTitle || (r.product && r.product.title) || ""; }
  function renderCard(r, display) {
   var card = el("article", "cx-bp-card");
+  /* SSR parity: the server-rendered cards carry lang="<review language>";
+     without it a ja/ar/el body re-rendered after a filter change is
+     announced and hyphenated as the page's locale. dir=auto keeps RTL
+     bodies right-aligned inside the LTR chrome. */
+  if (r.language) { sa(card, "lang", String(r.language)); sa(card, "dir", "auto"); }
   var trv = r.translated;
   var hasTr = !!(trv && typeof trv === "object" && typeof trv.body === "string" && trv.body);
   var showTr = hasTr && display === "translated";
@@ -302,12 +327,16 @@ function boot() {
   if (handle) {
    var pline = ap(card, el("p", "cx-bp-card__product"));
    var a = el("a", "cx-bp-card__plink", String(rvProductTitle(r) || handle));
-   a.href = "/products/" + encodeURIComponent(String(handle));
+   a.href = productUrl(handle);
    ap(pline, a);
   }
   /* No source line: BrandReviewDTO (= ReviewDTO + product) carries no
-     `source` field — toBrandReviewDTO never emits one. The SSR cards render
-     it from the metafield payload, which the API does not reproduce. */
+     `source` field — toBrandReviewDTO never emits one (the SPEC-1.4 §0
+     whitelist forbids provenance columns in storefront payloads). The SSR
+     cards render it from the metafield payload, which the API does not
+     reproduce. DEBUG MODE (v1.29.1) consequence: a synthetic review's
+     "Synthetic test review" caption disappears once the JS re-renders the
+     list — SSR only. */
   if (hasTr) {
    var tgl = el("button", "cx-bp-translate", i(showTr ? "see_original" : "translate"));
    tgl.type = "button";
@@ -320,6 +349,45 @@ function boot() {
     tgl.textContent = i(showTr ? "see_original" : "translate");
    });
    ap(card, tgl);
+  } else if (r.id && r.language && r.language !== locale) {
+   /* On-demand translation (SPEC-1.19 §9: "translate this review" via the
+      existing endpoint) — in "original" display mode the server attaches no
+      translation, so foreign-language cards fetch one on first click. The
+      widget's contract: POST /translate {ids, target} → {translations:{id:
+      {title, body, …}}}. Any failure (disabled 403, invalid target 422,
+      no translation) quietly removes the button — shopper-quiet rule. */
+   var fetched = null, showingTr = false, busy = false;
+   var tbtn = el("button", "cx-bp-translate", i("translate"));
+   tbtn.type = "button";
+   on(tbtn, "click", () => {
+    if (busy) return;
+    if (fetched) {
+     showingTr = !showingTr;
+     titleEl.textContent = showingTr ? (fetched.title || r.title || "") : (r.title || "");
+     titleEl.hidden = !titleEl.textContent;
+     bodyEl.textContent = showingTr ? fetched.body : (r.body || "");
+     tbtn.textContent = i(showingTr ? "see_original" : "translate");
+     return;
+    }
+    busy = true;
+    var payload = { ids: [String(r.id)], target: locale };
+    if (previewToken) payload.preview_token = previewToken;
+    postJSON(apiBase + "/translate", payload).then((res) => {
+     busy = false;
+     var tr2 = res.ok && res.body && res.body.translations ? res.body.translations[r.id] : null;
+     if (!tr2 || typeof tr2.body !== "string" || !tr2.body) {
+      if (tbtn.parentNode) tbtn.parentNode.removeChild(tbtn);
+      return;
+     }
+     fetched = tr2;
+     showingTr = true;
+     titleEl.textContent = fetched.title || r.title || "";
+     titleEl.hidden = !titleEl.textContent;
+     bodyEl.textContent = fetched.body;
+     tbtn.textContent = i("see_original");
+    });
+   });
+   ap(card, tbtn);
   }
   return card;
  }
@@ -407,9 +475,12 @@ function boot() {
    for (var k = 0; k < b.products.length; k++) {
     var p2 = b.products[k];
     if (!p2 || typeof p2.handle !== "string" || !p2.handle || !p2.title) continue;
-    if (!rowEl) rowEl = ap(out, el("div", "cx-bp-products"));
+    /* "cx-bp-product-row", NOT "cx-bp-products": the SSR "Reviews by
+       product" <section> already uses cx-bp-products, and this row's flex
+       rule was breaking that section's layout. */
+    if (!rowEl) rowEl = ap(out, el("div", "cx-bp-product-row"));
     var a = el("a", "cx-bp-product-btn", String(p2.title));
-    a.href = "/products/" + encodeURIComponent(p2.handle);
+    a.href = productUrl(p2.handle);
     ap(rowEl, a);
    }
   }

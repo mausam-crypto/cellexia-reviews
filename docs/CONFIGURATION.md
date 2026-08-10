@@ -644,8 +644,10 @@ filter as before.
 **What the agent counts as a review.** Exactly what the product page shows: every published
 review of that product, whatever created it — the storefront form, a CSV import, or the QA
 generator (§12). That is deliberate: the curator decides the order shoppers see, so it has to
-be looking at the same list they are. The one place QA-generated reviews *are* excluded is the
-public **Cellexia Reviews** brand page (§11), which makes public claims about real customers.
+be looking at the same list they are. The public **Cellexia Reviews** brand page (§11)
+normally excludes QA-generated reviews because it makes public claims about real
+customers — but as of v1.29.1 that exclusion is temporarily lifted (DEBUG MODE, see the
+changelog): synthetic reviews currently appear there too, labeled "Synthetic test review".
 Unpublished reviews are never curated.
 
 **Press "Estimate cost" before you spend anything.** The button builds exactly the payload
@@ -778,8 +780,9 @@ plain-link pagination; no crawler ever has to click a button or run JavaScript.
    **Cellexia Reviews page**. This section renders the whole page.
 3. **Generate the review analysis** — the AI writes five short sections ("Are Cellexia
    reviews positive?", results reported, common complaints, best products by skin concern,
-   how long results take). Every number in them is computed by the app from your real
-   reviews — the AI never invents a statistic — and every quote is verified
+   how long results take). Every number in them is computed by the app from your
+   published reviews (in v1.29.1 DEBUG MODE that includes synthetic QA reviews) — the
+   AI never invents a statistic — and every quote is verified
    character-for-character against the source review, with a link to it.
 4. **Publish the page data** — writes everything the section renders. It also refreshes
    automatically (about a minute after) whenever reviews are approved, rejected, imported
@@ -797,8 +800,13 @@ Verified Purchase, skin concerns, age range, usage duration, results seen, sourc
 your reply); a review-collection & moderation methodology section with counts by source;
 and links into the full archive. Critical reviews are always represented — both in the
 cards and in a dedicated "complaints" analysis section — because a page with only praise
-is neither credible to shoppers nor to AI systems. Synthetic QA reviews are **always**
-excluded from this page, whatever their status.
+is neither credible to shoppers nor to AI systems. Synthetic QA reviews are normally
+excluded from this page whatever their status — but v1.29.1 (DEBUG MODE) temporarily
+includes published synthetic reviews so the page can be debugged on a store whose
+reviews are all synthetic; they are labeled "Synthetic test review" on the page and in
+the archive. Restore the exclusion before using this page for real marketing (see the
+`DEBUG MODE (v1.29.1)` comments listed on `PUBLIC_WHERE` in
+`app/services/brand-page.server.ts`).
 
 **The archive.** Every published review is browsable at `/apps/<subpath>/reviews` —
 server-rendered pages of 24 reviews with plain-link pagination and crawlable filters by

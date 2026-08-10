@@ -65,6 +65,15 @@
 {%- endcomment -%}
 {%- capture cx_base -%}{% render 'cx-base' %}{%- endcapture -%}
 {%- assign cx_base = cx_base | remove: '<!-- BEGIN app snippet: cx-base -->' | remove: '<!-- END app snippet -->' | strip -%}
+{%- comment -%}
+  Locale-aware root for product links: a root-relative "/products/x" ejects a
+  shopper browsing /fr/pages/cellexia-reviews to the primary-locale product
+  page. routes.root_url is "/" on the primary locale and "/fr" (no trailing
+  slash) on others — normalize to always end with "/".
+{%- endcomment -%}
+{%- assign cx_root = routes.root_url -%}
+{%- assign cx_root_last = cx_root | slice: -1 -%}
+{%- unless cx_root_last == '/' -%}{%- assign cx_root = cx_root | append: '/' -%}{%- endunless -%}
 {{ 'cellexia-reviews-page.css' | asset_url | stylesheet_tag }}
 {%- if cx_bp == nil or cx_bp.facts == nil or cx_bp.facts.count == 0 -%}
   {%- if request.design_mode -%}
@@ -83,6 +92,7 @@
   "filter_all_concerns": "All skin concerns",
   "filter_all_ratings": "All ratings",
   "filter_stars": "{n} stars",
+  "filter_stars_one": "{n} star",
   "loading": "Loading reviews…",
   "load_error": "The reviews could not be loaded right now. Please try again in a moment.",
   "empty": "No reviews match this filter yet.",
@@ -115,6 +125,7 @@
   data-cx-brand-page
   data-cx-skin="{{ cx_skin }}"
   data-proxy="{{ cx_base }}"
+  data-root="{{ cx_root }}"
   data-locale="{{ request.locale.iso_code }}"
   data-count="{{ cx_f.count }}"
   data-products="{{ cx_products_json | strip | escape }}"
@@ -161,11 +172,11 @@
       <h3>{%- case skey -%}{%- when 'positive' -%}Are Cellexia reviews positive?{%- when 'results' -%}What results do customers report?{%- when 'complaints' -%}What do critical reviews say?{%- when 'byConcern' -%}Which product is best for each skin concern?{%- else -%}How long do results take?{%- endcase -%}</h3>
       <p>{{ sec.prose | escape }}</p>
       {%- for q in sec.quotes -%}
-      <blockquote class="cx-bp-quote" lang="en">
+      <blockquote class="cx-bp-quote" lang="{{ q.language | default: 'en' }}" dir="auto">
         <p>“{{ q.excerpt | escape }}”</p>
         <footer>
           {{ q.author | escape }} · {{ q.rating }}/5 · {{ q.date }}
-          {%- if q.productTitle %} · {% if q.productHandle %}<a href="/products/{{ q.productHandle | escape }}">{{ q.productTitle | escape }}</a>{% else %}{{ q.productTitle | escape }}{% endif %}{% endif %}
+          {%- if q.productTitle %} · {% if q.productHandle %}<a href="{{ cx_root }}products/{{ q.productHandle | escape }}">{{ q.productTitle | escape }}</a>{% else %}{{ q.productTitle | escape }}{% endif %}{% endif %}
           · <a href="{{ cx_base }}/reviews?review={{ q.id | escape }}#r{{ q.id | escape }}">Read the full review</a>
         </footer>
       </blockquote>
@@ -185,7 +196,7 @@
         {%- for w in cx_f.concernWinners -%}
         <tr>
           <td>{{ 'cellexia.skin.' | append: w.concern | t }}</td>
-          <td>{% if w.handle %}<a href="/products/{{ w.handle | escape }}">{{ w.title | escape }}</a>{% else %}{{ w.title | escape }}{% endif %}</td>
+          <td>{% if w.handle %}<a href="{{ cx_root }}products/{{ w.handle | escape }}">{{ w.title | escape }}</a>{% else %}{{ w.title | escape }}{% endif %}</td>
           <td>{{ w.average }}/5</td>
           <td><a href="{{ cx_base }}/reviews?concern={{ w.concern | escape }}">{{ w.count }}</a></td>
         </tr>
@@ -202,7 +213,7 @@
       <tbody>
         {%- for p in cx_f.products -%}
         <tr>
-          <td>{% if p.handle %}<a href="/products/{{ p.handle | escape }}">{{ p.title | escape }}</a>{% else %}{{ p.title | escape }}{% endif %}</td>
+          <td>{% if p.handle %}<a href="{{ cx_root }}products/{{ p.handle | escape }}">{{ p.title | escape }}</a>{% else %}{{ p.title | escape }}{% endif %}</td>
           <td>{{ p.average }}/5</td>
           <td>{{ p.count }}</td>
           <td>{% if p.handle %}<a href="{{ cx_base }}/reviews?product={{ p.handle | escape }}">Read reviews</a>{% endif %}</td>
@@ -228,7 +239,7 @@
         <p class="cx-bp-review-meta">
           {{ r.author | escape }} · {{ r.date }}
           {%- if r.verified %} · <span class="cx-bp-verified">Verified Purchase</span>{% endif %}
-          {%- if r.productTitle %} · {% if r.productHandle %}<a href="/products/{{ r.productHandle | escape }}">{{ r.productTitle | escape }}</a>{% else %}{{ r.productTitle | escape }}{% endif %}{% endif %}
+          {%- if r.productTitle %} · {% if r.productHandle %}<a href="{{ cx_root }}products/{{ r.productHandle | escape }}">{{ r.productTitle | escape }}</a>{% else %}{{ r.productTitle | escape }}{% endif %}{% endif %}
         </p>
         {%- assign has_attrs = false -%}
         {%- if r.ageRange or r.timeUsing or r.concerns.size > 0 or r.results.size > 0 -%}{%- assign has_attrs = true -%}{%- endif -%}
@@ -245,7 +256,7 @@
         <p class="cx-bp-review-reply"><strong>Response from our team:</strong> {{ r.reply | escape }}</p>
         {%- endif -%}
         {%- assign source_key = r.source | default: 'storefront' | replace: '-', '_' -%}
-        <p class="cx-bp-review-source">{%- case source_key -%}{%- when 'csv_import' -%}Imported from our previous review platform{%- when 'bulk_add' -%}Added by our team from direct customer feedback{%- else -%}Verified review collected on our store{%- endcase -%}</p>
+        <p class="cx-bp-review-source">{%- case source_key -%}{%- when 'csv_import' -%}Imported from our previous review platform{%- when 'bulk_add' -%}Added by our team from direct customer feedback{%- when 'synthetic' -%}Synthetic test review{%- else -%}Verified review collected on our store{%- endcase -%}</p>
       </article>
       {%- endfor -%}
     </div>
@@ -261,7 +272,7 @@
     <ul>
       {%- for s in cx_f.sources -%}
       {%- assign skey2 = s.key | replace: '-', '_' -%}
-      <li>{%- case skey2 -%}{%- when 'csv_import' -%}Imported from our previous review platform{%- when 'bulk_add' -%}Added by our team from direct customer feedback{%- else -%}Verified review collected on our store{%- endcase -%}: {{ s.count }}</li>
+      <li>{%- case skey2 -%}{%- when 'csv_import' -%}Imported from our previous review platform{%- when 'bulk_add' -%}Added by our team from direct customer feedback{%- when 'synthetic' -%}Synthetic test review{%- else -%}Verified review collected on our store{%- endcase -%}: {{ s.count }}</li>
       {%- endfor -%}
     </ul>
     <p class="cx-bp-updated">Page data updated {{ cx_bp.publishedAt }}.</p>
@@ -317,6 +328,17 @@
             "worstRating": 1
           }
           {%- assign p_reviews = cx_bp.reviews | where: 'productId', p.productId -%}
+          {%- comment -%}
+            DEBUG MODE (v1.29.1): the payload may contain synthetic rows, but
+            they must never become schema.org Review objects — JSON-LD has no
+            "Synthetic test review" caption, so one would read as a genuine
+            customer review to Google. Liquid has no "where not", so union
+            the three real sources instead.
+          {%- endcomment -%}
+          {%- assign pr_store = p_reviews | where: 'source', 'storefront' -%}
+          {%- assign pr_csv = p_reviews | where: 'source', 'csv-import' -%}
+          {%- assign pr_bulk = p_reviews | where: 'source', 'bulk-add' -%}
+          {%- assign p_reviews = pr_store | concat: pr_csv | concat: pr_bulk -%}
           {%- if p_reviews.size > 0 -%}
           ,
           "review": [

@@ -137,12 +137,13 @@ export async function computeShopStats(
   shop: string,
   options: { publicOnly?: boolean } = {},
 ): Promise<ShopStatsDTO> {
-  // v1.19: the brand PAGE surface excludes synthetic QA rows; every other
-  // caller keeps the historical behavior (all published reviews).
+  // v1.19: `publicOnly` marks the brand PAGE surface. DEBUG MODE (v1.29.1):
+  // that surface currently includes synthetic rows too, so the flag adds no
+  // filter — see PUBLIC_WHERE in brand-page.server.ts. Restore
+  // `{ isSynthetic: false }` under the flag with it.
   const where: Prisma.ReviewWhereInput = {
     shop,
     status: "PUBLISHED",
-    ...(options.publicOnly ? { isSynthetic: false } : {}),
   };
   const [grouped, verifiedCount] = await Promise.all([
     prisma.review.groupBy({
@@ -639,7 +640,9 @@ export interface BrandListParams {
   product?: string;
   /** v1.19 (SPEC-1.19 §9): optional SKIN_CONCERNS key filter. */
   concern?: string;
-  /** v1.19: exclude synthetic QA rows (the brand PAGE always sets this). */
+  /** v1.19: marks brand-PAGE traffic. DEBUG MODE (v1.29.1): currently a
+   * no-op — synthetic rows are included on that surface too (see
+   * PUBLIC_WHERE in brand-page.server.ts). */
   publicOnly?: boolean;
 }
 
@@ -687,7 +690,8 @@ export async function listBrandReviews(
     // skinConcerns is a JSON array string — substring match on the quoted key
     // is exact because keys are a fixed whitelist with no overlaps.
     ...(concern ? { skinConcerns: { contains: `"${concern}"` } } : {}),
-    ...(params.publicOnly ? { isSynthetic: false } : {}),
+    // DEBUG MODE (v1.29.1): `publicOnly` no longer excludes synthetic rows —
+    // see PUBLIC_WHERE in brand-page.server.ts.
   };
   const filtered = stars !== undefined || productHandle || concern;
 

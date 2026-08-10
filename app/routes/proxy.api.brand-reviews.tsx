@@ -92,7 +92,9 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const product = productRaw && /^[a-z0-9-]{1,120}$/.test(productRaw) ? productRaw : undefined;
   const concernRaw = (params.get("concern") ?? "").trim();
   const concern = concernRaw && /^[a-z_]{1,40}$/.test(concernRaw) ? concernRaw : undefined;
-  // The brand PAGE always excludes synthetic QA rows (SPEC-1.19 §6).
+  // v1.19: `public=1` marks brand-PAGE traffic. DEBUG MODE (v1.29.1): that
+  // surface currently includes synthetic rows — the flag is accepted but
+  // adds no filter (see PUBLIC_WHERE in brand-page.server.ts).
   const publicOnly = params.get("public") === "1";
 
   if (Object.keys(errors).length > 0) return errorJson(422, errors);

@@ -4,7 +4,8 @@
  * Three jobs:
  *  1. computeBrandPageFacts(shop) — every number on the page, computed
  *     deterministically from the DB (the model NEVER invents a number).
- *     Synthetic QA reviews are excluded from EVERY query on this surface.
+ *     DEBUG MODE: synthetic QA reviews are currently INCLUDED on this
+ *     surface (see PUBLIC_WHERE below) while the page is being debugged.
  *  2. generateBrandAnalysis(shop) — admin-triggered Claude prose around the
  *     facts, with verbatim-quote verification (≥ 40-char substring, same
  *     rule as Q&A); failed quotes are dropped, never invented.
@@ -100,11 +101,28 @@ export const SOURCE_LABELS: Record<string, string> = {
   storefront: "Verified review collected on our store",
   "csv-import": "Imported from our previous review platform",
   "bulk-add": "Added by our team from direct customer feedback",
+  // DEBUG MODE (v1.29.1): synthetic rows now reach this surface. Without this
+  // entry their source would be coerced to "storefront" (toEntry) and every
+  // synthetic card would be captioned "Verified review collected on our
+  // store" — an outright false provenance. Keep the label honest even in
+  // debug mode; harmless to leave in once the exclusion is restored.
+  synthetic: "Synthetic test review",
 };
 
 /* ------------------------------------------------------------------------- *
  * liquidSafe — HTML-escape + Liquid-neutralize user content (SPEC-1.19 §8)
  * ------------------------------------------------------------------------- */
+
+/**
+ * String.slice on UTF-16 code units can cut inside a surrogate pair (any
+ * emoji / astral character), leaving a lone surrogate that renders as U+FFFD
+ * and is ill-formed inside JSON-LD. Same slice, minus a trailing orphan.
+ */
+export function sliceSafe(value: string, max: number): string {
+  const out = value.slice(0, max);
+  const last = out.charCodeAt(out.length - 1);
+  return last >= 0xd800 && last <= 0xdbff ? out.slice(0, -1) : out;
+}
 
 export function liquidSafe(value: string | null | undefined): string {
   if (!value) return "";
@@ -245,7 +263,13 @@ function largestRemainderPercents(counts: number[]): number[] {
   return out;
 }
 
-const PUBLIC_WHERE = { status: "PUBLISHED", isSynthetic: false } as const;
+// DEBUG MODE (v1.29.1): synthetic QA reviews are treated like any other
+// published review on the whole brand-page surface while the page is being
+// debugged. This deviates from SPEC-1.19 §6 ("synthetic always excluded") —
+// to restore the honesty rule, add `isSynthetic: false` back here and in
+// proxy.reviews.tsx, brand.server.ts (publicOnly) and qna.server.ts
+// (loadBrandCorpus).
+const PUBLIC_WHERE = { status: "PUBLISHED" } as const;
 
 export async function computeBrandPageFacts(shop: string): Promise<BrandPageFacts> {
   const rows: FactRow[] = await prisma.review.findMany({
@@ -458,6 +482,10 @@ export interface AnalysisQuote {
   productTitle: string | null;
   productHandle: string | null;
   date: string;
+  /** BCP-47 language of the SOURCE review — quotes are verbatim, so the
+   * page must not serve e.g. a Japanese excerpt as lang="en". Optional
+   * because pre-v1.29.1 analysis rows lack it (publish re-stamps it). */
+  language?: string;
 }
 
 export interface AnalysisSections {
@@ -474,6 +502,7 @@ interface AnalysisCorpusRow {
   title: string | null;
   body: string;
   authorName: string;
+  language: string;
   verified: boolean;
   createdAt: Date;
   productTitle: string | null;
@@ -490,6 +519,7 @@ async function loadAnalysisCorpus(shop: string): Promise<AnalysisCorpusRow[]> {
     title: true,
     body: true,
     authorName: true,
+    language: true,
     verified: true,
     createdAt: true,
     productTitle: true,
@@ -563,7 +593,7 @@ export async function generateBrandAnalysis(shop: string): Promise<AnalysisResul
         if (typeof q.id !== "string" || typeof q.excerpt !== "string") continue;
         const review = byId.get(q.id);
         if (!review) continue;
-        const excerpt = q.excerpt.trim().slice(0, 300);
+        const excerpt = sliceSafe(q.excerpt.trim(), 300);
         // Verbatim rule (SPEC-1.19 §4): ≥ 40 chars, exact substring of body
         // or title — fabricated/paraphrased quotes are dropped.
         if (excerpt.length < 40) continue;
@@ -576,6 +606,7 @@ export async function generateBrandAnalysis(shop: string): Promise<AnalysisResul
           productTitle: review.productTitle,
           productHandle: review.productHandle,
           date: review.createdAt.toISOString().slice(0, 10),
+          language: review.language,
         });
       }
     }
@@ -664,7 +695,7 @@ function toEntry(r: {
     id: r.id,
     rating: r.rating,
     title: r.title,
-    body: r.body.slice(0, BODY_EXCERPT_CHARS),
+    body: sliceSafe(r.body, BODY_EXCERPT_CHARS),
     author: r.authorName,
     date: r.createdAt.toISOString().slice(0, 10),
     verified: r.verified,
@@ -680,7 +711,7 @@ function toEntry(r: {
     // Coerce to the known label keys — the Liquid t: lookup must never see
     // an unexpected value ("translation missing" renders as literal text).
     source: SOURCE_LABELS[r.source ?? "storefront"] ? (r.source ?? "storefront") : "storefront",
-    reply: r.reply ? r.reply.slice(0, REPLY_EXCERPT_CHARS) : null,
+    reply: r.reply ? sliceSafe(r.reply, REPLY_EXCERPT_CHARS) : null,
   };
 }
 
@@ -772,7 +803,7 @@ export async function buildBrandPagePayload(shop: string): Promise<BrandPagePayl
           (quotedIds.length
             ? await prisma.review.findMany({
                 where: { shop, ...PUBLIC_WHERE, id: { in: quotedIds } },
-                select: { id: true, body: true, title: true },
+                select: { id: true, body: true, title: true, language: true },
               })
             : []
           ).map((r) => [r.id, r]),
@@ -783,11 +814,16 @@ export async function buildBrandPagePayload(shop: string): Promise<BrandPagePayl
           if (!section) continue;
           sections[key] = {
             prose: section.prose,
-            quotes: (section.quotes ?? []).filter((q) => {
-              const live = stillLive.get(q.id);
-              if (!live) return false;
-              return live.body.includes(q.excerpt) || (live.title ?? "").includes(q.excerpt);
-            }),
+            quotes: (section.quotes ?? [])
+              .filter((q) => {
+                const live = stillLive.get(q.id);
+                if (!live) return false;
+                return live.body.includes(q.excerpt) || (live.title ?? "").includes(q.excerpt);
+              })
+              // Re-stamp the quote's language from the LIVE row: quotes are
+              // verbatim, so the page must tag them with their real language
+              // (pre-v1.29.1 analysis rows carry no language at all).
+              .map((q) => ({ ...q, language: stillLive.get(q.id)?.language ?? q.language })),
           };
         }
         analysis = {
@@ -814,7 +850,7 @@ export async function buildBrandPagePayload(shop: string): Promise<BrandPagePayl
   const byteLength = (value: string) => Buffer.byteLength(value, "utf8");
   let json = JSON.stringify(payload);
   if (byteLength(json) > MAX_METAFIELD_BYTES) {
-    payload.reviews = payload.reviews.map((r) => ({ ...r, body: r.body.slice(0, 400) }));
+    payload.reviews = payload.reviews.map((r) => ({ ...r, body: sliceSafe(r.body, 400) }));
     json = JSON.stringify(payload);
   }
   while (byteLength(json) > MAX_METAFIELD_BYTES && payload.reviews.length > 0) {

@@ -20,8 +20,9 @@
  *    Setting.brandPageConfig — progressive extras only, every review and
  *    summary stays server-rendered regardless (SPEC-1.19 §9).
  *  - "What's on the page" card: nothing hidden — exactly what is SSR'd, what
- *    the AI wrote vs what the app computed, and that synthetic QA reviews
- *    are ALWAYS excluded from this surface (SPEC-1.19 §10).
+ *    the AI wrote vs what the app computed. DEBUG MODE: synthetic QA reviews
+ *    are currently INCLUDED on this surface (SPEC-1.19 §10 deviation — see
+ *    PUBLIC_WHERE in brand-page.server.ts).
  */
 import { useState } from "react";
 import type { ReactNode } from "react";
@@ -174,8 +175,9 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
   const { admin, session } = await authenticate.admin(request);
   const shop = session.shop;
 
-  // computeBrandPageFacts scans every published, non-synthetic review row for
-  // this shop on each load. That full scan is intentional here: it is the same
+  // computeBrandPageFacts scans every published review row for this shop
+  // (synthetic included while in debug mode — see brand-page.server.ts) on
+  // each load. That full scan is intentional here: it is the same
   // computation the published page uses, this is a low-traffic admin screen,
   // and a stale cached copy would make the "Current stats" line dishonest.
   const [settings, analysisRow, facts] = await Promise.all([
@@ -333,7 +335,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
             result.status === "no_ai"
               ? "No Claude API key configured — add one in Settings first."
               : result.status === "no_reviews"
-                ? "No published customer reviews yet — the analysis needs at least one published, non-synthetic review."
+                ? "No published reviews yet — the analysis needs at least one published review."
                 : "The AI call failed — try again in a minute.";
           return json({ ok: false, message }, { status: 400 });
         }
@@ -897,8 +899,8 @@ export default function ReviewsPageRoute() {
                   </List.Item>
                 </List>
                 <Text as="p" variant="bodySm" tone="subdued">
-                  Honesty rules: synthetic QA reviews are ALWAYS excluded from this
-                  page and its numbers, and critical reviews are always visible when
+                  Debug mode: synthetic QA reviews are currently INCLUDED on this
+                  page and in its numbers. Critical reviews are always visible when
                   they exist.
                 </Text>
                 <Divider />

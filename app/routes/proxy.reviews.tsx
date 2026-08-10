@@ -22,7 +22,8 @@
  *    404 JSON, never a rendered page);
  *  - `path_prefix` (a visitor-supplied, HMAC-covered query param) is
  *    whitelist-validated before it reaches any href;
- *  - synthetic QA reviews are excluded (SPEC-1.19 §6);
+ *  - DEBUG MODE: synthetic QA reviews are currently INCLUDED (SPEC-1.19 §6
+ *    deviation — see PUBLIC_WHERE in brand-page.server.ts);
  *  - `archive` rate bucket (crawler-friendly); public cache 300 s when live, no-store for
  *    tokenized preview traffic.
  */
@@ -48,6 +49,7 @@ import {
   computeBrandPageFacts,
   jsonLdSafe,
   liquidSafe,
+  sliceSafe,
 } from "~/services/brand-page.server";
 
 const PER_PAGE = 24;
@@ -138,7 +140,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
   const where = {
     shop,
     status: "PUBLISHED",
-    isSynthetic: false,
+    // DEBUG MODE (v1.29.1): synthetic reviews included — see PUBLIC_WHERE in
+    // brand-page.server.ts. Restore `isSynthetic: false` here with it.
     ...(product ? { productHandle: product } : {}),
     ...(concern ? { skinConcerns: { contains: `"${concern}"` } } : {}),
     ...(starFilter ? { rating: starFilter } : {}),
@@ -263,7 +266,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
     if (concerns.length) tags.push(`Concerns: ${concerns.join(", ")}`);
     if (r.timeUsing && TIME_LABELS[r.timeUsing]) tags.push(`Used for ${TIME_LABELS[r.timeUsing]}`);
     if (results.length) tags.push(`Results: ${results.join(", ")}`);
-    parts.push(`<article id="r${liquidSafe(r.id)}" lang="${liquidSafe(r.language)}" style="border-top:1px solid #e3e3e3;padding:16px 0;">`);
+    // dir="auto" — the chrome is English/LTR, but the review text renders in
+    // its own language; without a direction hint an Arabic body displays
+    // left-aligned with its punctuation on the wrong side.
+    parts.push(`<article id="r${liquidSafe(r.id)}" lang="${liquidSafe(r.language)}" dir="auto" style="border-top:1px solid #e3e3e3;padding:16px 0;">`);
     parts.push(
       `<p style="margin:0;font-size:14px;"><span aria-label="${r.rating} out of 5 stars">${stars(r.rating)}</span> <strong>${liquidSafe(r.title ?? "")}</strong></p>`,
     );
@@ -343,14 +349,25 @@ export async function loader({ request }: LoaderFunctionArgs) {
           bestRating: 5,
           worstRating: 1,
         },
-        review: rows.slice(0, 5).map((r) => ({
-          "@type": "Review",
-          reviewRating: { "@type": "Rating", ratingValue: r.rating, bestRating: 5, worstRating: 1 },
-          author: { "@type": "Person", name: r.authorName },
-          datePublished: r.createdAt.toISOString().slice(0, 10),
-          reviewBody: r.body.slice(0, 500),
-          ...(r.title ? { name: r.title } : {}),
-        })),
+        // DEBUG MODE (v1.29.1): synthetic rows may be in `rows`, but they must
+        // never become schema.org Review objects — structured data has no
+        // "Synthetic test review" caption, so a synthetic row here would be
+        // presented to Google as a genuine customer review.
+        ...(() => {
+          const ldRows = rows.filter((r) => r.source !== "synthetic").slice(0, 5);
+          return ldRows.length
+            ? {
+                review: ldRows.map((r) => ({
+                  "@type": "Review",
+                  reviewRating: { "@type": "Rating", ratingValue: r.rating, bestRating: 5, worstRating: 1 },
+                  author: { "@type": "Person", name: r.authorName },
+                  datePublished: r.createdAt.toISOString().slice(0, 10),
+                  reviewBody: sliceSafe(r.body, 500),
+                  ...(r.title ? { name: r.title } : {}),
+                })),
+              }
+            : {};
+        })(),
       });
     }
   }

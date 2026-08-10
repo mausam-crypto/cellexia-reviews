@@ -4,6 +4,91 @@ All notable changes to Cellexia Reviews are documented here. The version number 
 `package.json` and stamped into the release ZIP built by `npm run package`
 (`dist/cellexia-reviews-v<version>.zip`).
 
+## 1.29.1 — 2026-08-09
+
+### Fixed — reviews page: language & i18n fixes across all 17 locales
+
+A full multi-language audit of the brand page (the section, its interactive JS,
+the archive, and the server locale paths). Reminder of the documented design
+(SPEC-1.19 v1.19.1): the page's chrome and analysis prose are English by design
+(the SEO target language); review bodies render in their own language; skin/age/
+time/results labels are localized (verified: all 29 keys resolve in all 17
+locale files); ask/recommend answer in the shopper's locale. Fixes:
+
+- **Product links no longer eject non-primary-locale shoppers.** All six product
+  links (four server-rendered, two in the JS layer — filtered cards and the
+  recommender's buttons) were root-relative `/products/x`, sending a shopper on
+  `/fr/pages/cellexia-reviews` to the primary-locale product page. They now use
+  the locale root (`routes.root_url` / `Shopify.routes.root`).
+- **"See translation" now works in original display mode.** SPEC-1.19 §9
+  promises per-review translation on the page, but the JS never called the
+  existing `/api/translate` endpoint — foreign-language cards in the default
+  "original" mode had no translate control at all. Filtered cards now fetch a
+  translation on demand (quietly removing the button when translation is
+  disabled or unavailable).
+- **Verbatim quote language metadata.** Analysis blockquotes hardcoded
+  `lang="en"` even when quoting a Japanese/Arabic/Greek review verbatim. Quotes
+  now carry their source review's language (stamped at publish time, so old
+  analysis rows are covered) and render with `lang` + `dir="auto"`.
+- **JS-rendered cards keep their language.** After the first filter change the
+  re-rendered cards lost the per-review `lang` attribute the SSR cards have;
+  they now set `lang` and `dir="auto"`.
+- **Archive RTL.** Archive review articles now carry `dir="auto"`, so Arabic
+  bodies are right-aligned with punctuation on the correct side.
+- **Multibyte-safe truncation.** All body/reply/excerpt truncations (metafield
+  payload, size-gate re-trim, quote excerpts, archive JSON-LD) could split a
+  surrogate pair (emoji) and emit a broken character — or ill-formed JSON-LD.
+  Now surrogate-safe.
+- **Layout bugs visible in every language:** the recommender's product-button
+  flex rule also matched the SSR "Reviews by product" section (class collision —
+  renamed), and the rating-distribution bar never rendered because its CSS
+  didn't exist (added).
+- **"1 stars" → "1 star"** in the stars filter and star aria-labels.
+- **JSON-LD honesty in debug mode:** synthetic reviews are excluded from
+  schema.org Review objects on both the page and the archive (structured data
+  has no "Synthetic test review" caption, so they'd read as genuine customer
+  reviews to Google). Known remaining caveats while debug mode is on: the
+  per-product AggregateRating counts still include synthetic reviews, and
+  JS-filtered cards cannot show the "Synthetic test review" caption (the
+  SPEC-1.4 §0 DTO whitelist forbids provenance fields in storefront payloads)
+  — both acceptable for debugging, both gone once the synthetic exclusion is
+  restored.
+
+### Changed — reviews page: synthetic reviews included (DEBUG MODE)
+
+The "Cellexia Reviews" brand page surface now treats synthetic QA reviews like any
+other published review, so the page can be debugged on a store whose reviews are
+all synthetic. Before this, a store with only synthetic reviews got "No published
+customer reviews yet" from the analysis generator and an empty
+/pages/cellexia-reviews (the section renders nothing when the published facts
+count is 0).
+
+Synthetic reviews now count on every part of the feature:
+
+- the page facts, stats and star distribution (`computeBrandPageFacts`),
+- the AI review analysis corpus (`generateBrandAnalysis`),
+- the ~36 review cards in the published page payload (`pickBrandPageReviews`),
+- the crawlable archive at `/apps/<subpath>/reviews`,
+- the brand-reviews list API (`public=1` is accepted but no longer filters),
+- the brand ask box / product recommender corpus.
+
+Synthetic reviews are labeled honestly wherever they now surface: a new
+`synthetic: "Synthetic test review"` entry in `SOURCE_LABELS` plus matching
+branches in the page section's Liquid. Without it, a synthetic review's source
+would have been coerced to "storefront" and captioned "Verified review
+collected on our store" — a false provenance. (The page's broader marketing
+copy — "our customers rate us…", the recommended "Real Customer Reviews" SEO
+strings, the methodology paragraph — is deliberately left unchanged; it reads
+wrong only while debug mode is on.)
+
+This is a deliberate, temporary deviation from SPEC-1.19 §6 ("synthetic always
+excluded"). Every change site is marked with a `DEBUG MODE (v1.29.1)` comment;
+to restore the honesty rule, re-add `isSynthetic: false` at the four spots
+listed on `PUBLIC_WHERE` in `app/services/brand-page.server.ts` (the synthetic
+label entries can stay — they are unreachable once the exclusion is back).
+After installing this version, press "Generate analysis" (or "Publish now") on
+the Reviews page admin screen to refresh the published page data.
+
 ## 1.29.0 — 2026-08-08
 
 ### Added — QA generator: hair products + your own product notes (SPEC-1.29)

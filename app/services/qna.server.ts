@@ -382,7 +382,9 @@ interface BrandCorpusReview extends CorpusReview {
 
 async function loadBrandCorpus(shop: string): Promise<BrandCorpusReview[]> {
   const pool = await prisma.review.findMany({
-    where: { shop, status: "PUBLISHED", isSynthetic: false },
+    // DEBUG MODE (v1.29.1): synthetic reviews included — see PUBLIC_WHERE in
+    // brand-page.server.ts. Restore `isSynthetic: false` here with it.
+    where: { shop, status: "PUBLISHED" },
     orderBy: [{ helpfulCount: "desc" }, { verified: "desc" }, { createdAt: "desc" }],
     take: 200,
     select: {

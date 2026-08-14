@@ -122,10 +122,13 @@ const ASSET_BUDGETS = [
   // Raised 132k→137k for v1.22's card badge position feature (price finder +
   // position resolution); 137k→139k for v1.27.1's overall-block localization
   // (locale product map + /products/x.js title fallback + SSR date re-render);
-  // 139k→141k for v1.28's cart badge toggle + above-quantity placement (all
-  // recorded in CHANGELOG). Raise this ONLY for a deliberate feature, never
-  // to absorb drift — that is the whole point of the gate.
-  ["extensions/cellexia-reviews/assets/cellexia-reviews.js", 144384],
+  // 139k→141k for v1.28's cart badge toggle + above-quantity placement;
+  // 141k→145k for v1.31's localized card badges (locale-root detection +
+  // carousel-clone re-queue) and its fetch-layer hardening (retry ladder,
+  // 403 body check, boot-guard move) (all recorded in CHANGELOG). Raise
+  // this ONLY for a deliberate feature, never to absorb drift — that is
+  // the whole point of the gate.
+  ["extensions/cellexia-reviews/assets/cellexia-reviews.js", 148480],
   ["extensions/cellexia-reviews/assets/cellexia-reviews.css", 65536],
   // v1.19 (SPEC-1.19 §9): the brand reviews page's own standalone assets.
   ["extensions/cellexia-reviews/assets/cellexia-reviews-page.js", 49152],

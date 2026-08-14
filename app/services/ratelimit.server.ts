@@ -2,7 +2,7 @@
  * In-memory token-bucket rate limiter for the storefront proxy API (SPEC §10).
  *
  * Buckets are keyed `shop:ip:action` with per-action hourly limits:
- * submit 5/h, vote 60/h, report 20/h, translate 120/h, badges 300/h
+ * submit 5/h, vote 60/h, report 20/h, translate 120/h, badges 2400/h
  * (SPEC-1.5 §2), brand 120/h (SPEC-1.9 §1). Routes that receive `false`
  * respond `429 {ok:false, errors:{_:"rate_limited"}}`.
  *
@@ -21,7 +21,17 @@ export const RATE_LIMITS = {
   vote: { max: 60, windowMs: HOUR_MS },
   report: { max: 20, windowMs: HOUR_MS },
   translate: { max: 120, windowMs: HOUR_MS },
-  badges: { max: 300, windowMs: HOUR_MS },
+  // v1.31 (SPEC-1.31 §5): raised 300→2400. The "ip" half of the bucket key
+  // comes from getClientIp, which behind the real chain (shopper → CDN →
+  // Shopify proxy → host) resolves to the LAST forwarded hop — in practice a
+  // small pool of shared proxy-egress IPs, so this bucket is effectively
+  // per-STORE(-ish), not per-visitor: 300/h starved real shoppers at peak
+  // (silent 429 → no card stars). Badges is a cheap read with a 300 s public
+  // cache (the archive precedent, ×2 for the shared-bucket reality); abuse
+  // amplification is separately capped by badges.server's storefront-fetch
+  // ceilings. For true per-visitor buckets set CELLEXIA_CLIENT_IP_HEADER
+  // (e.g. true-client-ip on Render) — see getClientIp.
+  badges: { max: 2400, windowMs: HOUR_MS },
   brand: { max: 120, windowMs: HOUR_MS },
   // v1.19 (SPEC-1.19 §8): the crawlable review archive is a PUBLIC SEO
   // surface — a search or AI crawler legitimately walks hundreds of pages in

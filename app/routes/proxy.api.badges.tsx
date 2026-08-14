@@ -1,13 +1,21 @@
 /**
- * Storefront proxy: `GET /apps/cellexia/api/badges?handles=h1,h2,…`
- * → `/proxy/api/badges` (SPEC-1.5 §2).
+ * Storefront proxy: `GET /apps/cellexia/api/badges?handles=h1,h2,…[&root=…]`
+ * → `/proxy/api/badges` (SPEC-1.5 §2, SPEC-1.31 §2).
  *
  * Returns `{ "badges": { "<handle>": { "average": 4.6, "count": 128 } } }`
  * computed over PUBLISHED reviews only; handles that resolve to nothing
  * (unknown products, no published reviews) are simply omitted. Accepts up to
  * 48 handles, each matching `[a-z0-9-]{1,255}`.
  *
- * Proxy-verified, rate limited (`badges`: 300/h per shop:ip) and gated by
+ * `root` (SPEC-1.31 §2) is the storefront locale root the widget runs under
+ * (`fr`, `/pt-br/`, …); it unlocks the storefront JSON lookup that resolves
+ * TRANSLATED URL handles. An invalid `root` is IGNORED (null), never an
+ * error — badges keep answering with canonical-only resolution. The widget
+ * omits the param entirely on the default locale, keeping those request
+ * URLs byte-identical to v1.30 (public cache keying unchanged there).
+ *
+ * Proxy-verified, rate limited (`badges`: 2400/h per shop:ip — see the
+ * SPEC-1.31 §4b shared-bucket rationale in ratelimit.server.ts) and gated by
  * the SPEC-1.2 live/preview rules exactly like the sibling routes. Responses
  * are publicly cacheable for 5 minutes when the shop is live and `no-store`
  * while previewing (token-gated access must never be cached).
@@ -26,7 +34,11 @@ import {
   verifyProxy,
 } from "~/services/proxy.server";
 import { checkRateLimit } from "~/services/ratelimit.server";
-import { badgeStatsByHandles, MAX_BADGE_HANDLES } from "~/services/badges.server";
+import {
+  badgeStatsByHandles,
+  MAX_BADGE_HANDLES,
+  normalizeBadgeRoot,
+} from "~/services/badges.server";
 import { recordObservedMarket } from "~/services/markets.server";
 import { getSettings } from "~/services/settings.server";
 
@@ -91,6 +103,10 @@ export async function loader({ request }: LoaderFunctionArgs) {
   // handles) rather than failing the whole batch.
   const handles = requested.filter((handle) => HANDLE_RE.test(handle));
 
+  // SPEC-1.31 §2: the widget's locale root, normalized to `/fr/` shape or
+  // null. Invalid values are IGNORED — never an error.
+  const rootPrefix = normalizeBadgeRoot(params.get("root"));
+
   // Live shops get publicly cacheable responses; preview traffic (the only
   // other way past the gate above) must never be cached.
   let headers = NO_STORE_HEADERS;
@@ -116,7 +132,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
   }
 
   try {
-    const badges = await badgeStatsByHandles(shop, admin, handles);
+    const badges = await badgeStatsByHandles(shop, admin, handles, rootPrefix);
     const body: BadgesResponse = { badges };
     return json(body, { headers });
   } catch (error) {

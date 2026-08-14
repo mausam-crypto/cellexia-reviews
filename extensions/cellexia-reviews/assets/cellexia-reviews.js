@@ -2343,7 +2343,9 @@ function insertAfter(node, ref) {
 // Memoised; editorToken exists only in the editor.
 var embedCfgCache;
 function readEmbedConfig() {
- if (embedCfgCache !== undefined) return embedCfgCache;
+ // v1.31 §1.4: never memoise ABSENCE — a config tag re-inserted late (script
+ // optimizers) must be readable by a later caller.
+ if (embedCfgCache !== undefined && embedCfgCache !== null) return embedCfgCache;
  var tag = document.getElementById("cx-embed-config");
  try {
   var parsed = tag ? JSON.parse(tag.textContent) : null;
@@ -2846,6 +2848,17 @@ function initBadges(cfgE, I) {
   '[class*="card"]', '[class*="grid__item"]', "li", "article"];
  var TITLE_SEL = '[class*="product__title"],[class*="product-title"],[class*="card__heading"],' +
   '[class*="title"]:not([class*="subtitle"]),h2,h3,h4';
+ /* v1.31 §1.1: locale root, once per run — card anchors on translated
+    locales carry TRANSLATED handles the server can only resolve when told
+    which locale asked. "/" (default) appends nothing, so default-locale
+    requests stay byte-identical and the public cache keying is unchanged. */
+ var localeRoot = (function () {
+  var r = null;
+  try { r = window.Shopify && window.Shopify.routes ? window.Shopify.routes.root : null; } catch (e) {}
+  if (typeof r === "string" && /^\/([a-z]{2,3}(-[a-z]{2,4})?\/)?$/i.test(r)) return r.toLowerCase();
+  var seg = window.location.pathname.split("/")[1] || "";
+  return /^[a-z]{2,3}(-[a-z]{2,4})?$/.test(seg) ? "/" + seg + "/" : "/";
+ })();
  // (b) /products/x, /xx(-XX)/products/x and /collections/…/products/x resolve.
  function handleFrom(a) {
   var href = a.getAttribute("href");
@@ -2907,6 +2920,10 @@ function initBadges(cfgE, I) {
   return m && m !== document.body && m !== document.documentElement ? m : null;
  }
  var pending = []; // collected {handle, card, titleEl, done}
+ /* v1.31 §1.2: cards THIS instance queued, adopted or suppressed. Slick
+    clones copy the data-cx-badged mark but a WeakSet membership never — a
+    marked card we don't track is a clone stamped between mark and inject. */
+ var tracked = new WeakSet();
  function collect() {
   var anchors;
   try { anchors = document.querySelectorAll('a[href*="/products/"]'); } catch (e) { return; }
@@ -2918,14 +2935,32 @@ function initBadges(cfgE, I) {
     var handle = handleFrom(a);
     if (!handle) continue;
     var card = cardFor(a);
+    if (!card) continue;
+    // marked strictly ABOVE (e.g. a stamped grid wrapper): skip, unchanged.
+    if (card.parentElement && card.parentElement.closest("[data-cx-badged]")) continue;
+    if (card.hasAttribute("data-cx-badged")) {
+     // v1.31 §1.2: self-marked = ours, or a slick clone that copied the mark.
+     // "pdp" is renderPdpBadge's sentinel on the TITLE-badge target (line
+     // ~2800) — never a card; re-queueing it would double-badge the PDP.
+     if (card.getAttribute("data-cx-badged") === "pdp") { tracked.add(card); continue; }
+     if (tracked.has(card)) continue; // this instance already owns it
+     // v1.8 audit #5 adopt: clone made after injection — badge came along.
+     if (card.querySelector(".cx-badge-inline--card")) { tracked.add(card); continue; }
+     // Clone stamped between mark and inject (§0.2): re-queue under the
+     // ANCHOR's handle — the attribute is a dedupe stamp, not an input.
+     if (s.cart_badges === false && cartCtx(card)) { tracked.add(card); continue; }
+     tracked.add(card);
+     pending.push({ handle: handle, card: card, titleEl: titleFor(card) || a, done: false });
+     continue;
+    }
     // nested matches = same card
-    if (!card || card.closest("[data-cx-badged]") || card.querySelector("[data-cx-badged]")) continue;
+    if (card.querySelector("[data-cx-badged]")) continue;
     // v1.8 audit #5: adopt a cloned badged card — never a second badge.
-    if (card.querySelector(".cx-badge-inline--card")) { sa(card, "data-cx-badged", handle); continue; }
+    if (card.querySelector(".cx-badge-inline--card")) { tracked.add(card); sa(card, "data-cx-badged", handle); continue; }
     // v1.28: cart badges toggled off — suppress before fetch, not at inject.
-    if (s.cart_badges === false && cartCtx(card)) { sa(card, "data-cx-badged", handle); continue; }
+    if (s.cart_badges === false && cartCtx(card)) { tracked.add(card); sa(card, "data-cx-badged", handle); continue; }
     var titleEl = titleFor(card) || a; // fallback: the anchor
-    sa(card, "data-cx-badged", handle); // dedupe ON the card
+    tracked.add(card); sa(card, "data-cx-badged", handle); // dedupe ON the card
     pending.push({ handle: handle, card: card, titleEl: titleEl, done: false });
    } catch (e) {}
   }
@@ -2948,15 +2983,28 @@ function initBadges(cfgE, I) {
   var attempt = (from, mayRetry) => {
    var b = from.replace(/\/$/, "");
    var url = b + "/badges?handles=" + encodeURIComponent(handles.join(","));
+   // v1.31 §1.1: only non-default locales name their root (see localeRoot).
+   if (localeRoot !== "/") url += "&root=" + encodeURIComponent(localeRoot);
    if (token) url += "&preview_token=" + encodeURIComponent(token);
    // v1.14 §6: report the Liquid-emitted market handle (admin picker source).
    if (cfgE.market) url += "&market=" + encodeURIComponent(String(cfgE.market).slice(0, 64));
    return window.fetch(url, { credentials: "same-origin" }).then((r) => {
-    if (r.status === 403) { // not_live: badges stop; a sent token = merchant → name the expiry (§5D)
-     stopped = true; disconnect(); removePreviewBar();
-     removeStampedHide(); // v1.14 §5: rejected token must not keep Stamped hidden
-     if (token) showExpiredPageNotice(I);
-     return false;
+    if (r.status === 403) {
+     /* v1.31 §1.4: only OUR not_live JSON stops badges — the domain sits
+        behind a CDN whose bot challenge/WAF also answers 403 (HTML), and
+        treating that as the kill-switch silently disabled every card badge
+        for flagged real browsers. Foreign 403 = transient, joins the
+        ladder. Mirrors httpError's body check (the widget transport). */
+     return r.text().then((text) => {
+      var nl = false;
+      try { var b = JSON.parse(text); nl = !!(b && b.errors && b.errors._ === "not_live"); } catch (e) {}
+      if (!nl) { unmark(); return false; }
+      // real not_live: badges stop; a sent token = merchant → name the expiry (§5D)
+      stopped = true; disconnect(); removePreviewBar();
+      removeStampedHide(); // v1.14 §5: rejected token must not keep Stamped hidden
+      if (token) showExpiredPageNotice(I);
+      return false;
+     }).catch(() => { unmark(); return false; });
     }
     if ((r.status === 404 || r.status === 410) && mayRetry) {
      // Wrong subpath: join the ONE shared discovery sweep, then retry once.
@@ -3022,6 +3070,23 @@ function initBadges(cfgE, I) {
   if (!observer || stopped) return;
   try { observer.observe(document.body, { childList: true, subtree: true }); } catch (e) { observer = null; }
  }
+ /* v1.31 §1.3: a failed batch fetch on a STATIC page never retried — the
+    only re-fetch trigger was DOM mutation, so a cold-starting backend
+    (measured on the live shop's host: sleeps when idle, ~tens of seconds to
+    wake) meant no card stars for the whole pageview, in EVERY language.
+    One outstanding timed retry at a time, ladder 5/15/45 s — the failed
+    fetches themselves keep the wake-up going and the ladder outlasts the
+    cold start. 403 stays final (stopped gates everything); retry passes
+    bypass the mutation-rescan fetch budget — the ladder is its own bound. */
+ var retrySlot = 0, retryTimer = null;
+ var RETRY_DELAYS = [5000, 15000, 45000];
+ function scheduleRetry() {
+  if (stopped || retryTimer !== null || retrySlot >= RETRY_DELAYS.length) return;
+  retryTimer = window.setTimeout(() => {
+   retryTimer = null;
+   pass("retry");
+  }, RETRY_DELAYS[retrySlot++]);
+ }
  // (c) one batched fetch ≤48 doc-order handles; (e) re-scans reuse the cache.
  function pass(isRescan) {
   if (stopped) return;
@@ -3040,11 +3105,14 @@ function initBadges(cfgE, I) {
    resumeMo();
   };
   if (!fresh.length) { finish(); return; }
-  if (isRescan) {
+  if (isRescan === true) {
    if (extraFetches >= 2) { finish(); return; }
    extraFetches += 1;
   }
-  fetchStats(fresh.slice(0, 48)).then(finish);
+  fetchStats(fresh.slice(0, 48)).then((ok) => {
+   finish();
+   if (!ok) scheduleRetry(); // v1.31 §1.3 — no-op once stopped or exhausted
+  });
  }
  function kickoff() {
   if (stopped) return;
@@ -3492,9 +3560,13 @@ function fireTokenOk() {
 }
 /* ---- start orchestration (§3.1) ---- */
 function start() {
- // block + embed both emit the (cached) script tag — run once
+ // block + embed both emit the (cached) script tag — run once. v1.31 §1.4:
+ // the guard lives on window — the OLD DOM-attribute guard could be
+ // serialized into a page-snapshot/optimizer's HTML and then blocked boot
+ // on every pageview. The attribute stays as a debug/CSS marker only.
  var de = document.documentElement;
- if (de.getAttribute("data-cx-booted") === "true") return;
+ if (window.__cxRvBooted === true) return;
+ window.__cxRvBooted = true;
  sa(de, "data-cx-booted", "true");
  previewBootstrap(); // v1.10 §5A: site-wide capture + ribbon before any surface boots
  var cfgE = readEmbedConfig();

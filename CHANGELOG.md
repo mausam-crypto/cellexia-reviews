@@ -4,6 +4,73 @@ All notable changes to Cellexia Reviews are documented here. The version number 
 `package.json` and stamped into the release ZIP built by `npm run package`
 (`dist/cellexia-reviews-v<version>.zip`).
 
+## 1.31.0 — 2026-08-11
+
+### Fixed — card star badges: translated languages & home-page carousel slides (SPEC-1.31.md)
+
+Two causes of missing star badges on product cards, both reproduced on the live
+store (the product-page title badge was never affected):
+
+- **Star badges now show on product cards in every language.** On translated
+  storefronts (e.g. `/fr/`), Shopify's Translate & Adapt gives products
+  translated URL handles, and the card links carry the translated handle — a
+  name the badge lookup only knew in the store's primary language. Every
+  collection and home-page card in the other 16 languages silently showed no
+  stars. The widget now tells the server which language the page is in, and the
+  server resolves the translated handle through the shop's own public product
+  data — so translated cards get the same stars as the primary language.
+  Requests on the primary language are byte-identical to before.
+- **Card stars no longer vanish store-wide at peak traffic (all languages).**
+  Deep-audit findings, both silent-killers in the badge fetch layer (the
+  product-page badge needs no fetch, which is why it always looked fine):
+  (1) the per-visitor rate limit was, in reality, shared — behind
+  CDN + Shopify proxy + hosting, the "visitor IP" resolves to a small pool of
+  shared proxy addresses, so the 300/hour bucket was effectively a per-store
+  cap; at busy hours it drained and every shopper's badge request was
+  silently rejected → no stars anywhere. Raised to 2400/hour (badges are a
+  cheap, publicly-cached read), documented the shared-bucket mechanics, and
+  pinned the floor in the test suite. For true per-visitor limits set
+  `CELLEXIA_CLIENT_IP_HEADER=true-client-ip` on Render.
+  (2) any HTTP 403 — e.g. a Cloudflare bot-challenge served to a real
+  shopper's browser — was misread as the app's own "not live" signal and
+  permanently disabled all card badges for that visitor. The widget now
+  verifies the 403 body is the app's own JSON before stopping; foreign 403s
+  retry on the ladder. Also: the run-once boot guard moved off the DOM (page-
+  snapshot optimizers could serialize it and block boot forever), and an
+  absent embed config is no longer cached as permanently absent.
+- **Card stars now survive a slow-waking backend (all languages).** The
+  production backend sleeps when idle on its current hosting tier and takes
+  tens of seconds to wake; the widget's single badge fetch failed during
+  that window and was never retried on a static page (re-fetches only fired
+  on DOM changes) — so quiet-store visitors, including the merchant, saw no
+  card stars in ANY language while the product page (server-rendered) looked
+  fine. The widget now retries a failed badge fetch on a 5/15/45-second
+  ladder — the retries themselves keep the wake-up going — so stars appear
+  as soon as the backend is up. NOTE for the deployer: this is a mitigation;
+  `docs/HANDOVER.md` prescribes an always-on (paid) instance, and an
+  idle-sleeping tier still delays stars by up to ~a minute for the first
+  visitor and slows every widget on the reviews page itself.
+- **Home-page carousel: every slide keeps its stars.** The product slider
+  (infinite mode) clones slides as it re-lays out; a clone created in the split
+  second between the widget claiming a card and inserting its badge inherited
+  the claim but not the stars — and claimed cards are skipped forever. The
+  widget now recognizes exactly those clones and re-queues them, so they get
+  their badge on the next pass (from the already-fetched rating, no extra
+  request).
+- Technical: the extension appends `&root=<locale>` to the badge request only on
+  non-default locales (the public cache splits per language by URL; default-
+  locale keying is unchanged); the server gains a storefront product-JSON
+  resolution step after the DB and Admin lookups, with locale-scoped positive
+  caching and a 10-minute negative cache, and never backfills canonical handles
+  from it. Adversarial-review hardening on that step: redirects are followed
+  manually (≤ 2 hops, https-only, same path, no IP-literal hosts), non-200
+  bodies are cancelled to free sockets, and outbound fan-out is double-capped
+  (16 fresh lookups per request, 12 in flight process-wide — saturation skips
+  without negative-caching). The PDP title badge's `data-cx-badged="pdp"`
+  sentinel is exempt from the clone re-queue. New dev-test suite
+  `scripts/dev-tests/badges-localized.test.mjs` (32 checks). Extension JS
+  asset budget raised 141→145 KiB for this release (package.mjs gate).
+
 ## 1.30.0 — 2026-08-10
 
 ### Added — QA generator: scheduled auto-publish ("publish time") (SPEC-1.30.md)

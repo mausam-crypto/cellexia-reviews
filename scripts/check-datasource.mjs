@@ -1,26 +1,29 @@
 /**
  * Boot guard: DATABASE_URL set but ignored (SPEC-1.19 deploy audit).
  *
- * prisma/schema.prisma ships with a hardcoded SQLite path so the app works
- * out of the box. Every host walkthrough in docs/INSTALL.md §5 tells the
- * developer to set DATABASE_URL — which Prisma SILENTLY IGNORES until the
- * datasource block is switched to env("DATABASE_URL") (§4). The failure mode
- * is invisible and expensive: the app boots, works, and loses every review on
- * the next redeploy because the database was on the container's ephemeral
- * disk the whole time.
+ * Adapted for this deployment's dual-schema setup: prisma/schema.prisma is
+ * the SQLite dev schema (hardcoded "file:dev.sqlite" on purpose — never
+ * meant to read DATABASE_URL) and prisma/schema.production.prisma is the
+ * Postgres twin `setup:production` actually generates/pushes from. This
+ * check inspects THAT file, not schema.prisma, so it can never false-positive
+ * against the intentional dev hardcoding while still catching the real risk:
+ * schema.production.prisma ever getting hand-patched to a literal URL, which
+ * would silently write reviews to whatever that literal pointed at instead of
+ * the real production database.
  *
- * This runs as part of `npm run setup` (and therefore `npm run docker-start`)
- * and turns that silent data loss into a loud, actionable boot failure.
+ * Runs as part of `npm run setup:production` (and therefore
+ * `npm run docker-start`) and turns that silent-data-loss shape into a loud,
+ * actionable boot failure.
  */
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const SCHEMA = path.join(ROOT, "prisma", "schema.prisma");
+const SCHEMA = path.join(ROOT, "prisma", "schema.production.prisma");
 
 const databaseUrl = (process.env.DATABASE_URL ?? "").trim();
-if (!databaseUrl) process.exit(0); // nothing set — the shipped default applies
+if (!databaseUrl) process.exit(0); // nothing set — production always sets this; nothing to check yet
 
 let schema = "";
 try {
@@ -36,27 +39,22 @@ if (readsEnv) process.exit(0); // correctly wired
 const hardcoded = /url\s*=\s*"([^"]+)"/.exec(datasource)?.[1] ?? "(unknown)";
 console.error(`
 ────────────────────────────────────────────────────────────────────────────
- DATABASE_URL is set but Prisma is IGNORING it.
+ DATABASE_URL is set but prisma/schema.production.prisma is IGNORING it.
 
-   DATABASE_URL      = ${databaseUrl}
-   schema.prisma url = "${hardcoded}"   <-- hardcoded, wins
+   DATABASE_URL                 = ${databaseUrl}
+   schema.production.prisma url = "${hardcoded}"   <-- hardcoded, wins
 
- The app would start normally and write to "${hardcoded}" instead. On a
- container host that path is ephemeral, so every review would be lost on the
- next redeploy — silently.
+ The app would start normally and write to "${hardcoded}" instead of the
+ real production database — silently.
 
- Fix (docs/INSTALL.md §4), in prisma/schema.prisma:
+ Fix, in prisma/schema.production.prisma:
 
    datasource db {
-     provider = "sqlite"                  // "postgresql" for Postgres
+     provider = "postgresql"
      url      = env("DATABASE_URL")
    }
 
- Then redeploy. Postgres also needs the provider changed AND a fresh
- migration generated (INSTALL.md §4 Option B).
-
- Deliberately keeping the hardcoded path? Unset DATABASE_URL and this check
- passes.
+ Then redeploy.
 ────────────────────────────────────────────────────────────────────────────
 `);
 process.exit(1);

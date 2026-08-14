@@ -4,6 +4,66 @@ All notable changes to Cellexia Reviews are documented here. The version number 
 `package.json` and stamped into the release ZIP built by `npm run package`
 (`dist/cellexia-reviews-v<version>.zip`).
 
+## 1.32.0 — 2026-08-14
+
+### Fixed — the numeric star rating now shows on every card badge (SPEC-1.32.md)
+
+This was the original report. From the merchant's first message ("the star
+rating is not visible … only the visible stars and number of reviews") the
+missing piece was the numeric rating VALUE on card badges — not missing
+badges. The card badge has never rendered the number — by design, on any
+surface, for anyone: stars + "(count)" only. The product-page title badge
+shows it and the star-rating block shows it; cards were the one surface
+without it. The 1.31 fetch-layer fixes address real defects and stand — but
+they were not what the merchant was reporting.
+
+- **Card badges now read number → stars → (count)** — the same anatomy as the
+  product page's title badge — everywhere the "stars and review count" style renders:
+  collection, home-page and search cards, and cart items. The number is one
+  decimal, produced by the exact same locale formatter as the product page's
+  average, so the two can never disagree. The "stars only" style stays
+  literally stars-only, and screen readers hear the rating exactly once (the
+  stars already announce it; the visible number is not read out again).
+- **Nothing to re-save.** The fix depends on no theme-editor setting —
+  existing installs show the number as soon as the new build is deployed.
+
+### Added — the "Badge doctor" tab (admin)
+
+A new nav tab that verifies every link of the card-star pipeline from inside
+the admin, step by step, each step PASS / WARN / FAIL with a plain-language
+"what this means / what to do" line: a before/after preview of the card badge
+built from your own top-reviewed product (so the 1.32 fix is unmissable); a
+per-product review-data table (published counts, averages, and every product
+handle observed on review rows — a product whose reviews are all unpublished
+is flagged); an API dry-run that feeds handles you type to the real badge
+lookup and shows, per handle, which path resolved it (cache / review rows /
+Admin API / storefront lookup / negative cache / unresolved) plus the exact
+JSON the storefront would receive; the live/markets gating state (naming the
+by-design 403 and the exact Dashboard toggle to flip); the badge rate-limit
+configuration as actually deployed; and a button-invoked deployed-extension
+check that fetches your own storefront and verifies the build shoppers
+actually receive renders the numeric rating — telling you to redeploy when it
+predates 1.32.
+
+- Technical: the dry-run needed a trace hook in the badge service — an
+  optional, append-only parameter (default off, zero behavior change for
+  existing callers; the 1.31 suite runs untouched and green). New dev-test
+  suite `scripts/dev-tests/badge-doctor.test.mjs` (37 checks). The card-badge
+  diff is ~350 bytes and stays under the existing 145 KiB extension asset
+  gate (not raised). No settings changes, no new scopes, no migrations, no
+  locale-file changes (the Badge doctor is admin-side English like every
+  other admin page).
+- Technical (adversarial-review hardening on the Badge doctor itself): the
+  deployed-extension check's timeout now spans the whole transfer including
+  the body (size-capped, streams cancelled, sockets drained); it fetches the
+  myshopify origin with `?_fd=0` so the primary domain's CDN bot protection
+  cannot false-FAIL it, and a 403 names bot protection instead of "check
+  reachability"; a deployed build with the "Stars only" style WARNs (that
+  setting hides the number) instead of PASSing; the review-data table is
+  capped at 250 products with stats queried in small chunks; dry-run input
+  is length-bounded; and the page copy states plainly that the dry-run runs
+  the real chain (Admin API and, with a locale root, storefront lookups).
+
 ## 1.31.0 — 2026-08-11
 
 ### Fixed — card star badges: translated languages & home-page carousel slides (SPEC-1.31.md)

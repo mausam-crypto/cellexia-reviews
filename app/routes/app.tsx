@@ -39,6 +39,7 @@ export default function App() {
         <Link to="/app/bulk-add">Bulk add</Link>
         <Link to="/app/import-export">Import / Export</Link>
         <Link to="/app/qa-generator">QA data</Link>
+        <Link to="/app/badge-doctor">Badge doctor</Link>
         <Link to="/app/settings">Settings</Link>
       </NavMenu>
       {/* Global generation progress — visible on every admin page while ≥ 1

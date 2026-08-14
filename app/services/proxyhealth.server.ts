@@ -1297,33 +1297,19 @@ interface DatasourceInfo {
 let datasourceCache: DatasourceInfo | null = null;
 
 /**
- * Best-effort read of the Prisma datasource actually driving this process, so
- * the database check can tell "SQLite file baked into the container" apart
- * from "url = env(DATABASE_URL)". Cached; an unreadable schema yields
+ * Best-effort read of the Prisma datasource from prisma/schema.prisma, so the
+ * database check can tell "SQLite file baked into the container" apart from
+ * "url = env(DATABASE_URL)". Cached; an unreadable schema yields
  * `{ fileUrl: null }`, which falls back to the DATABASE_URL-only heuristic.
- *
- * This deployment ships TWO schemas: prisma/schema.prisma (SQLite, for local
- * `npm run dev`) and prisma/schema.production.prisma (Postgres via
- * DATABASE_URL, generated and pushed by `setup:production` — see
- * package.json's `docker-start`, the only thing Render ever runs). Reading
- * schema.prisma unconditionally would report the dev schema's baked-in
- * SQLite file even when this exact process was built from
- * schema.production.prisma — a false "wiped on redeploy" warning on every
- * Render deploy. DATABASE_URL is set precisely (and only) in that Render
- * environment, so its presence plus the production schema's existence is
- * what selects which file describes THIS process, not local dev.
  */
 function readDatasource(): DatasourceInfo {
   if (datasourceCache) return datasourceCache;
   let info: DatasourceInfo = { fileUrl: null };
-  const productionSchema = path.join(process.cwd(), "prisma", "schema.production.prisma");
-  const usesProductionSchema =
-    (process.env.DATABASE_URL ?? "").trim() !== "" && fs.existsSync(productionSchema);
-  const schemaPath = usesProductionSchema
-    ? productionSchema
-    : path.join(process.cwd(), "prisma", "schema.prisma");
   try {
-    const source = fs.readFileSync(schemaPath, "utf8");
+    const source = fs.readFileSync(
+      path.join(process.cwd(), "prisma", "schema.prisma"),
+      "utf8",
+    );
     const block = /datasource\s+\w+\s*\{([\s\S]*?)\}/.exec(source);
     const url = block ? /url\s*=\s*"([^"]*)"/.exec(block[1]) : null;
     const value = url?.[1]?.trim() ?? "";

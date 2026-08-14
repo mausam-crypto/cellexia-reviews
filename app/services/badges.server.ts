@@ -34,6 +34,14 @@
  *
  * Handles that resolve to nothing — unknown products, or products without a
  * single PUBLISHED review — are simply omitted from the result.
+ *
+ * Diagnostics (SPEC-1.32 §2 step 3): `badgeStatsByHandles` accepts an
+ * OPTIONAL, append-only `trace` hook — `(handle, step) => void` — invoked at
+ * each resolution decision ("cache", "review-rows", "admin-api",
+ * "storefront-json", "negative-cache", "storefront-skipped", "unresolved")
+ * so the Badge doctor can render the exact path every handle took. Default
+ * undefined; existing callers are byte-for-byte unaffected, and a throwing
+ * hook is swallowed (the hook observes resolution, it never participates).
  */
 import type { AdminApiContext as BaseAdminApiContext } from "@shopify/shopify-app-remix/server";
 import prisma from "~/db.server";
@@ -52,6 +60,35 @@ export type AdminClient = Pick<BaseAdminApiContext, "graphql">;
 
 /** Shopify handle shape (SPEC-1.5 §2) — mirrors the route's validation. */
 const HANDLE_RE = /^[a-z0-9-]{1,255}$/;
+
+/**
+ * Resolution-decision labels the optional trace hook receives (SPEC-1.32 §2
+ * step 3), in chain order:
+ *
+ *   - "cache"              canonical or root-scoped handle-cache hit
+ *   - "review-rows"        resolved by step (a), Review.productHandle rows
+ *   - "admin-api"          resolved by step (b), the batched Admin lookup
+ *   - "storefront-json"    resolved by step (c), `{root}products/{handle}.js`
+ *   - "negative-cache"     step (c) skipped — a recent lookup already failed
+ *   - "storefront-skipped" step (c) skipped — per-request fresh cap or the
+ *                          process-wide in-flight ceiling (SPEC-1.31 §3)
+ *   - "unresolved"         final: no product id found, handle omitted
+ *
+ * A handle may receive several labels ("negative-cache" then "unresolved");
+ * the last one is the outcome. Handles that resolve but have zero PUBLISHED
+ * reviews keep their resolution label and are simply absent from the result.
+ */
+export type BadgeTraceStep =
+  | "cache"
+  | "review-rows"
+  | "admin-api"
+  | "storefront-json"
+  | "negative-cache"
+  | "storefront-skipped"
+  | "unresolved";
+
+/** The optional trace hook (SPEC-1.32 §2 step 3). */
+export type BadgeTrace = (handle: string, step: BadgeTraceStep) => void;
 
 /** Hard cap on handles per request (SPEC-1.5 §2). */
 export const MAX_BADGE_HANDLES = 48;
@@ -270,13 +307,27 @@ async function fetchStorefrontProductId(
  * with at least one PUBLISHED review appear. Admin API failures degrade to
  * "those handles are omitted" — DB-resolved handles still answer, and the
  * function only throws on database errors (the route maps those to a 500).
+ *
+ * `trace` (SPEC-1.32 §2 step 3) is append-only and OPTIONAL — see BadgeTrace.
+ * Undefined (every pre-1.32 caller) means zero behavior change; defined, it
+ * is called with (handle, step) at each resolution decision and its errors
+ * are swallowed so a diagnostic hook can never alter resolution.
  */
 export async function badgeStatsByHandles(
   shop: string,
   admin: AdminClient | null,
   handles: string[],
   rootPrefix: string | null = null,
+  trace?: BadgeTrace,
 ): Promise<Record<string, BadgeStatsDTO>> {
+  const note = (handle: string, step: BadgeTraceStep): void => {
+    if (!trace) return;
+    try {
+      trace(handle, step);
+    } catch {
+      // Observability only — a throwing hook must not break badge answers.
+    }
+  };
   // Defensive re-validation — the route already enforces this contract.
   const wanted: string[] = [];
   for (const raw of Array.isArray(handles) ? handles : []) {
@@ -302,8 +353,10 @@ export async function badgeStatsByHandles(
     const cached =
       cacheGet(cacheKey(shop, handle)) ??
       (root ? cacheGet(rootCacheKey(shop, root, handle)) : null);
-    if (cached) productIdByHandle.set(handle, cached);
-    else uncached.push(handle);
+    if (cached) {
+      productIdByHandle.set(handle, cached);
+      note(handle, "cache");
+    } else uncached.push(handle);
   }
 
   // (a) Review.productHandle rows. Any status is fine for RESOLUTION — a
@@ -335,6 +388,7 @@ export async function badgeStatsByHandles(
     for (const [handle, hit] of best) {
       productIdByHandle.set(handle, hit.productId);
       cacheSet(cacheKey(shop, handle), hit.productId);
+      note(handle, "review-rows");
     }
   }
 
@@ -352,6 +406,7 @@ export async function badgeStatsByHandles(
         if (product) {
           productIdByHandle.set(handle, product.id);
           cacheSet(cacheKey(shop, handle), product.id);
+          note(handle, "admin-api");
         }
       }
       // SPEC-1.8 §5 audit #3: a product whose Review rows ALL have a NULL
@@ -395,13 +450,19 @@ export async function badgeStatsByHandles(
   // (v1.8 §5 audit #3).
   if (root) {
     // Review hardening: cap FRESH lookups per request — the tail is omitted
-    // this time and resolves on later requests as the caches warm.
-    const pending = wanted
-      .filter(
-        (handle) =>
-          !productIdByHandle.has(handle) && !negativeCacheHas(rootCacheKey(shop, root, handle)),
-      )
-      .slice(0, STOREFRONT_MAX_FRESH_PER_REQUEST);
+    // this time and resolves on later requests as the caches warm. (v1.32:
+    // split from one filter().slice() chain only so the trace hook can label
+    // negative-cache and fresh-cap skips — same predicates, same order.)
+    const eligible: string[] = [];
+    for (const handle of wanted) {
+      if (productIdByHandle.has(handle)) continue;
+      if (negativeCacheHas(rootCacheKey(shop, root, handle))) note(handle, "negative-cache");
+      else eligible.push(handle);
+    }
+    const pending = eligible.slice(0, STOREFRONT_MAX_FRESH_PER_REQUEST);
+    for (const handle of eligible.slice(STOREFRONT_MAX_FRESH_PER_REQUEST)) {
+      note(handle, "storefront-skipped");
+    }
     // Chunked so at most STOREFRONT_MAX_IN_FLIGHT fetches run at once for
     // THIS request; storefrontInFlight caps the whole process — a lookup
     // that would exceed it is skipped WITHOUT a negative-cache entry
@@ -410,13 +471,17 @@ export async function badgeStatsByHandles(
     for (let i = 0; i < pending.length; i += STOREFRONT_MAX_IN_FLIGHT) {
       await Promise.all(
         pending.slice(i, i + STOREFRONT_MAX_IN_FLIGHT).map(async (handle) => {
-          if (storefrontInFlight >= STOREFRONT_GLOBAL_MAX_IN_FLIGHT) return;
+          if (storefrontInFlight >= STOREFRONT_GLOBAL_MAX_IN_FLIGHT) {
+            note(handle, "storefront-skipped");
+            return;
+          }
           storefrontInFlight += 1;
           try {
             const productId = await fetchStorefrontProductId(shop, root, handle);
             if (productId) {
               productIdByHandle.set(handle, productId);
               cacheSet(rootCacheKey(shop, root, handle), productId);
+              note(handle, "storefront-json");
             } else {
               negativeCacheSet(rootCacheKey(shop, root, handle));
             }
@@ -425,6 +490,14 @@ export async function badgeStatsByHandles(
           }
         }),
       );
+    }
+  }
+
+  // Trace epilogue (SPEC-1.32 §2 step 3): every requested handle that ends
+  // the chain without a product id is omitted — that is its final decision.
+  if (trace) {
+    for (const handle of wanted) {
+      if (!productIdByHandle.has(handle)) note(handle, "unresolved");
     }
   }
 

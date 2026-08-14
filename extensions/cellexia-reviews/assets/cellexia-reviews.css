@@ -713,6 +713,9 @@ a.cx.cx-badge-inline { cursor:pointer;}
 a.cx.cx-badge-inline:is(:hover, :focus, :active) { text-decoration:none;color:var(--cx-text);}
 .cx-badge-inline .cx-stars { flex:none;line-height:1;}
 /* SPEC-1.12 §1/§4: the count is an Amazon link — blue, underlined on hover. */
+/* v1.32: the numeric rating on card badges — leads the badge and matches
+   the PDP's .cx-badge__avg byte-for-byte so both surfaces read identically. */
+.cx-badge-inline__score { font-size:.85em;color:var(--cx-text);white-space:nowrap;}
 .cx-badge-inline__count { font-size:.85em;color:var(--cx-link);white-space:nowrap;}
 a.cx-badge-inline__count { text-decoration:none;}
 a.cx-badge-inline__count:hover,

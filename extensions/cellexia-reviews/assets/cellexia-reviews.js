@@ -2471,6 +2471,16 @@ function scrollToTarget(tgt) {
 function buildInlineBadge(rating, count, style, skin, I, linkTargetId) {
  var badge = el(linkTargetId ? "a" : "span", "cx cx-badge-inline");
  sa(badge, "data-cx-skin", skin === "cellexia" || skin === "luxe" ? skin : "amazon");
+ if (style !== "stars_only") {
+  /* v1.32 (SPEC-1.32 §1): the NUMERIC rating — the "star rating" itself —
+     was never rendered on card badges (only stars + count), on any surface,
+     ever. Anatomy mirrors the PDP title badge (merchant-directed): score →
+     stars → (count), score styled like .cx-badge__avg. aria-hidden: the
+     stars' aria-label already speaks the rating. */
+  var sc = el("span", "cx-badge-inline__score", I.NF1.format(rating));
+  sa(sc, "aria-hidden", "true");
+  ap(badge, sc);
+ }
  ap(badge, starRowCore(halfRound(rating), 16, I.t("a11y.stars_label", { rating: I.NF1.format(rating) })));
  if (style !== "stars_only") {
   var c = el("span", "cx-badge-inline__count", "(" + I.fmtNum(count) + ")");

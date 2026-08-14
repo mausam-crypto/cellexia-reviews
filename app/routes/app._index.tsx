@@ -1492,7 +1492,7 @@ export default function Dashboard() {
       );
     } else if (kind === "theme" && needsFix) {
       fixAction = (
-        <Button size="slim" url={themeEditorUrl} target="_blank">
+        <Button size="slim" url={themeEditorUrl} external>
           Open theme editor
         </Button>
       );
@@ -1785,7 +1785,7 @@ export default function Dashboard() {
                 text="Add the Cellexia Reviews block to your product template in the theme editor."
                 done={false}
                 action={
-                  <Button url={themeEditorUrl} target="_blank">
+                  <Button url={themeEditorUrl} external>
                     Open theme editor
                   </Button>
                 }

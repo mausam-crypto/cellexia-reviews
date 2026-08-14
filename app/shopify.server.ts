@@ -1,4 +1,3 @@
-import "dotenv/config";
 import "@shopify/shopify-app-remix/adapters/node";
 import {
   AppDistribution,
@@ -21,12 +20,10 @@ const shopify = shopifyApp({
   apiSecretKey: process.env.SHOPIFY_API_SECRET || "",
   apiVersion: LATEST_API_VERSION,
   scopes: process.env.SCOPES?.split(","),
-  // Falls back to Render's auto-provided service URL so the app can boot
-  // on a fresh deploy before SHOPIFY_APP_URL is manually set.
-  appUrl: process.env.SHOPIFY_APP_URL || process.env.RENDER_EXTERNAL_URL || "",
+  appUrl: process.env.SHOPIFY_APP_URL || "",
   authPathPrefix: "/auth",
   sessionStorage: new PrismaSessionStorage(prisma),
-  distribution: AppDistribution.SingleMerchant,
+  distribution: AppDistribution.AppStore,
   future: {
     unstable_newEmbeddedAuthStrategy: true,
     removeRest: true,

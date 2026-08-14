@@ -4,6 +4,26 @@ All notable changes to Cellexia Reviews are documented here. The version number 
 `package.json` and stamped into the release ZIP built by `npm run package`
 (`dist/cellexia-reviews-v<version>.zip`).
 
+## 1.33.0 — 2026-08-14
+
+### Changed — card badge placement: two polished choices (SPEC-1.33.md)
+
+Merchant feedback on the freshly deployed numeric rating: sitting flush
+under the price looked cramped. Both remedies now ship through the app
+embed's existing "Card badge position" setting — pick either in the theme
+editor, no redeploy needed after this build:
+
+- **Under the price** (the current setting) now leaves a small gap between
+  the price and the rating line. The gap only applies when the badge really
+  sits under a price — when a card has no price and the badge falls back to
+  the tagline or title, spacing stays as before.
+- **Under the tagline** places the rating above the price (title → tagline
+  → rating → price, the Amazon card order) — unchanged behavior, called out
+  here as the alternative the merchant previewed.
+
+No new settings, no server, scope, locale or schema changes; the Badge
+doctor's deployed-extension check already reports which position is active.
+
 ## 1.32.0 — 2026-08-14
 
 ### Fixed — the numeric star rating now shows on every card badge (SPEC-1.32.md)

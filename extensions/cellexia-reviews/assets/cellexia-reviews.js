@@ -3068,7 +3068,15 @@ function initBadges(cfgE, I) {
      pos = s.pdp_badge_position === "under_tagline" ? "under_tagline" : "under_title";
     }
     var anchor = tEl;
-    if (pos === "under_price") anchor = cardPrice(en.card, tEl) || cardTagline(en.card, tEl) || tEl;
+    if (pos === "under_price") {
+     /* v1.33 (SPEC-1.33 §1): breathing room between price and badge —
+        merchant feedback ("literally right under the price"). The modifier
+        rides ONLY when the badge really lands under a price node; the
+        tagline/title fallbacks keep the default rhythm. */
+     var priceEl = cardPrice(en.card, tEl);
+     if (priceEl) { anchor = priceEl; b.className += " cx-badge-inline--under-price"; }
+     else anchor = cardTagline(en.card, tEl) || tEl;
+    }
     else if (pos === "under_tagline") anchor = cardTagline(en.card, tEl) || tEl;
     insertAfter(b, anchor);
    } catch (e) { en.done = true; }

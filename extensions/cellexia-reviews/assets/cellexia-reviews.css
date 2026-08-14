@@ -725,6 +725,9 @@ a.cx.cx-badge-inline:hover .cx-badge-inline__count { color:var(--cx-link-hover);
 .cx.cx-badge-inline--pdp { margin-block:6px 2px;}
 /* v1.5.1 Fix 3: card badges take their own flex row right after the title */
 .cx.cx-badge-inline--card { display:flex;}
+/* v1.33: extra gap ONLY for badges anchored directly under a price node —
+   the above-price placements keep the theme's own tagline/title rhythm. */
+.cx.cx-badge-inline--under-price { margin-block-start:.5em;}
 /* v1.28: cart line items — badge sits above the quantity stepper */
 .cx.cx-badge-inline--cart { margin:.25rem 0 .5rem;}
 

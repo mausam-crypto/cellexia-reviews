@@ -22,8 +22,12 @@ function clampInt(value: unknown, min: number, max: number, fallback: number): n
   return Math.min(max, Math.max(min, Math.round(n)));
 }
 
-/** Trim a nullable string; empty strings become null. */
-function normalizeNullable(value: string | null | undefined, maxLength: number): string | null {
+/**
+ * Trim a nullable string; empty strings become null. Exported (v1.34) so the
+ * Settings test intent can apply the exact save-path length caps when
+ * building its candidate row — the test-equals-save invariant.
+ */
+export function normalizeNullable(value: string | null | undefined, maxLength: number): string | null {
   if (value === null || value === undefined) return null;
   const trimmed = String(value).trim().slice(0, maxLength);
   return trimmed.length > 0 ? trimmed : null;
@@ -136,6 +140,62 @@ export function parseLiveMarkets(settings: Setting): string[] {
   } catch {
     return [];
   }
+}
+
+/* ------------------------------------------------------------------------- *
+ * v1.34 (SPEC-1.34) — low-star alert sanitizers
+ * ------------------------------------------------------------------------- */
+
+// Same shape the storefront submit route accepts for author emails. Defined
+// here (not imported from alerts.server) to keep this module dependency-free:
+// alerts.server imports settings.server.
+const ALERT_SETTINGS_EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+/**
+ * Canonicalize a recipient list: split on commas/semicolons/whitespace, keep
+ * plausible addresses only, dedupe case-insensitively, cap at 5, join with
+ * ", ". Empty result → null (the alert falls back to notifyEmail).
+ */
+export function sanitizeRecipients(value: string | null | undefined): string | null {
+  if (value === null || value === undefined) return null;
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const part of String(value).split(/[\s,;]+/)) {
+    const addr = part.trim();
+    if (!addr || addr.length > 254 || !ALERT_SETTINGS_EMAIL_RE.test(addr)) continue;
+    const key = addr.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(addr);
+    if (out.length >= 5) break;
+  }
+  return out.length > 0 ? out.join(", ") : null;
+}
+
+/**
+ * From address for alert email: must be a single plain address ("Name
+ * <addr>" display forms are rejected — nodemailer gets the display name
+ * separately). Shared by updateSettings and the Settings test intent so the
+ * tested and saved values can never diverge.
+ */
+export function sanitizeAlertFromEmail(value: string | null | undefined): string | null {
+  const from = normalizeNullable(value ?? null, 254);
+  return from && ALERT_SETTINGS_EMAIL_RE.test(from) ? from : null;
+}
+
+/**
+ * Hostname (or IPv4) for the SMTP server: label characters only — anything
+ * else (spaces, slashes, a pasted URL scheme) is rejected to null so a broken
+ * value can never reach the transport. The route warns inline on rejection;
+ * "smtp://host" style pastes are stripped to their host first.
+ */
+export function sanitizeSmtpHost(value: string | null | undefined): string | null {
+  if (value === null || value === undefined) return null;
+  let host = String(value).trim().toLowerCase();
+  host = host.replace(/^[a-z]+:\/\//, "").replace(/\/.*$/, "");
+  if (host.length === 0 || host.length > 253) return null;
+  if (!/^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/.test(host)) return null;
+  return host;
 }
 
 /**
@@ -322,6 +382,34 @@ export async function updateSettings(shop: string, patch: Partial<Setting>): Pro
   }
   if (patch.summaryAutoThreshold !== undefined) {
     data.summaryAutoThreshold = clampInt(patch.summaryAutoThreshold, 1, 100, 5);
+  }
+
+  // v1.34 (SPEC-1.34): low-star review support alerts. The route validates
+  // user-facing fields and reports problems inline; these sanitizers are the
+  // last line of defense and stay lenient like the rest of this module.
+  if (typeof patch.lowStarAlerts === "boolean") data.lowStarAlerts = patch.lowStarAlerts;
+  if (patch.lowStarAlertMax !== undefined) {
+    data.lowStarAlertMax = clampInt(patch.lowStarAlertMax, 1, 3, 2);
+  }
+  if (patch.alertRecipients !== undefined) {
+    // Canonicalized to a comma-separated list of plausible addresses (max 5);
+    // an empty/invalid list clears the override (falls back to notifyEmail).
+    data.alertRecipients = sanitizeRecipients(patch.alertRecipients);
+  }
+  if (patch.smtpHost !== undefined) data.smtpHost = sanitizeSmtpHost(patch.smtpHost);
+  if (patch.smtpPort !== undefined) data.smtpPort = clampInt(patch.smtpPort, 1, 65535, 587);
+  if (
+    patch.smtpSecurity === "starttls" ||
+    patch.smtpSecurity === "tls" ||
+    patch.smtpSecurity === "none"
+  ) {
+    data.smtpSecurity = patch.smtpSecurity;
+  }
+  if (patch.smtpUser !== undefined) data.smtpUser = normalizeNullable(patch.smtpUser, 254);
+  // Password: like the API keys, empty string clears (stored as null).
+  if (patch.smtpPass !== undefined) data.smtpPass = normalizeNullable(patch.smtpPass, 512);
+  if (patch.alertFromEmail !== undefined) {
+    data.alertFromEmail = sanitizeAlertFromEmail(patch.alertFromEmail);
   }
 
   return prisma.setting.upsert({

@@ -193,7 +193,39 @@ Changes are saved with the Save button; a confirmation toast appears.
 | Storefront status | Not live (new installs) | Read-only row: a **Live** / **Not live** badge showing whether visitors can see the widget, with a button to the Dashboard — where the Preview, Go live and Switch off actions live. See §2, "Going live & previewing". |
 | Brand display name | Cellexia | The name shown on your replies to reviews ("Response from Cellexia"). |
 | Auto-publish new reviews | Off | On: new reviews go live immediately (you can still reject them later). Off: every review waits in **Pending** until you approve it. Keep it off unless volume makes moderation impractical. |
-| Notification email | empty | Reserved for a future email-notification feature — the app does not send emails yet. Check the Dashboard's "Needs attention" list for new reviews. |
+| Notification email | empty | Fallback recipient for **Low-star review alerts** (next card) when no alert recipient is set there. Pending and reported reviews appear in the Dashboard's "Needs attention" list. |
+
+### Low-star review alerts (since 1.34.0)
+
+Email your support team the moment a shopper submits a low-star review on the
+storefront. With auto-publish off (the default) the alert arrives while the
+review still waits in **Pending**, before anything is published; with
+auto-publish on, the email notes the review is already live. The email
+contains the full review, the customer's contact details (name, email, phone
+when known) and their recent orders (order number, date, total, fulfillment
+and payment/refund status, products — with the reviewed product flagged) plus
+direct links to the order and customer in the Shopify admin. **Reply-To is
+the customer**, so replying to the alert emails them directly. Off by
+default.
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| Send low-star review alerts | Off | Master toggle. Only storefront submissions alert — never CSV imports, Bulk add or the QA generator. Shows when the last alert was sent, and a warning with the exact reason if the last one failed. |
+| Alert on | 1–2 star reviews | 1-star only, 1–2 stars, or 1–3 stars. |
+| Send alerts to | empty | Up to 5 addresses, comma-separated. Blank = the Notification email above. **Tip:** use your helpdesk's inbound address (Gorgias, Zendesk, Freshdesk…) and every alert opens a ticket automatically. |
+| SMTP host / Port / Connection security | — / 587 / STARTTLS | The mail server that sends the alerts — the app sends through your own email account. Examples: Google Workspace `smtp.gmail.com` + 587 + STARTTLS (create an **app password**); Microsoft 365 `smtp.office365.com` + 587; or a transactional provider (Postmark, SendGrid, Brevo…). |
+| SMTP username / password | empty | The mailbox login. The password saves like the API keys: a saved password shows as dots and an empty field keeps it — with one exception: **changing the SMTP host clears the saved password** (so it can never be sent to a server it was not saved for); re-enter it after a host change. |
+| From address | empty | Optional — defaults to the SMTP username. Must be a single plain address (no display name). Most providers require it to match the authenticated account. |
+| Send test email | — | Sends a clearly marked sample alert with **exactly the configuration the form would save** — unsaved edits included, cleared fields tested as cleared (only a blank password falls back to the saved one, and never across a host change) — and reports exactly what failed if it could not send. |
+
+Delivery notes: alerts are sent in the background after the review is stored,
+so a slow or broken mail server can never delay or fail a shopper's
+submission — but that also means a misconfigured one fails silently at
+submit time. The card's warning banner and the **Send test email** button are
+how you know it works; test it once after setup. A per-shop cap of 30
+alerts/hour protects your inbox from review-bomb floods — the reviews
+themselves are always saved normally (with auto-publish off, the default,
+they wait in Pending).
 
 ### AI summary
 

@@ -4,6 +4,51 @@ All notable changes to Cellexia Reviews are documented here. The version number 
 `package.json` and stamped into the release ZIP built by `npm run package`
 (`dist/cellexia-reviews-v<version>.zip`).
 
+## 1.34.0 — 2026-08-15
+
+### Added — low-star review support alerts (SPEC-1.34.md)
+
+Optional and **off by default**: when a shopper submits a 1–2 star review on
+the storefront (threshold configurable to 1-star-only or up to 3 stars), the
+app immediately emails your support team. With auto-publish off (the
+default) the alert arrives while the review still waits in Pending, before
+anything is published; with auto-publish on, the email says the review is
+already live. Point the recipient list at a helpdesk inbound address
+(Gorgias, Zendesk, Freshdesk, a shared inbox…) and every alert opens a
+support ticket.
+
+- **The email contains everything support needs**: the full review (stars,
+  title, text, structured answers, language, verified badge, submission
+  time, whether it is pending or published), the customer's contact details
+  (name, email, phone when known), and their recent orders — order number,
+  date, total, fulfillment and payment/refund status and the products in
+  each order, with the reviewed product flagged and direct links to the
+  order and customer pages in the Shopify admin. **Reply-To is set to the
+  customer**, so answering the alert emails them directly.
+- **New Settings card "Low-star review alerts"**: master toggle, star
+  threshold, up to 5 recipients (blank falls back to the Notification email
+  field, which now has its promised purpose), SMTP delivery settings
+  (host/port/security/username/password — any mailbox or transactional
+  provider works; password saves like the API keys), optional From address,
+  and a **Send test email** button that sends a clearly marked sample alert
+  with exactly the configuration the form would save — unsaved edits
+  included. Only a blank password falls back to the saved one, and never
+  across a host change: **changing the SMTP host clears the saved
+  password**, so the stored credential can never be sent to a server it was
+  not saved for.
+- **Built not to interfere**: the alert is sent in the background after the
+  review is stored — a slow or broken SMTP server can never delay or fail a
+  shopper's submission. Only storefront submissions alert (never CSV
+  imports, Bulk add or the QA generator). A per-shop cap of 30 alerts/hour
+  protects the support inbox from review-bomb floods.
+- **Failures are visible, not silent**: the card shows a warning with the
+  exact reason when the last alert could not be sent, saving with alerts ON
+  but an unusable configuration names what is missing, and the order lookup
+  distinguishes "this customer has no orders" from "Shopify did not answer".
+- Order/customer context uses the already-required `read_orders` scope — no
+  new permissions, no theme or storefront changes, migration runs
+  automatically on `npm run setup`. New dependency: nodemailer.
+
 ## 1.33.0 — 2026-08-14
 
 ### Changed — card badge placement: two polished choices (SPEC-1.33.md)

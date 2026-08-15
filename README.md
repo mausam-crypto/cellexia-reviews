@@ -122,6 +122,13 @@ extension — no theme code edits, uninstall-safe.
   configured — automatic mode simply falls back to the original language, never an error.
 - **Moderation**: pending/published/rejected/spam workflow, bulk actions, report auto-remoderation,
   brand replies, per-review translation preview for the merchant.
+- **Low-star review support alerts** (since 1.34.0, off by default): the moment a shopper
+  submits a 1–2 star review (threshold configurable 1–3), your support team gets an email with
+  the full review, the customer's contact details and their recent orders (order numbers,
+  products, admin links), Reply-To set to the customer — with auto-publish off (the default),
+  while the review is still unpublished in Pending. Sent through your own SMTP account
+  (configured in Settings, with a send-test button); point it at a helpdesk inbound address
+  and every alert opens a ticket.
 - **Verified purchase detection** via logged-in customer id or order lookup by email.
 - **Review media** uploaded to Shopify Files (up to 5 images + 1 video per review), served from
   the Shopify CDN.
@@ -292,4 +299,4 @@ Full production installation, hosting and store setup: **[docs/INSTALL.md](docs/
 
 ## Version
 
-Current version: **1.26.1** — see [CHANGELOG.md](CHANGELOG.md).
+Current version: **1.34.0** — see [CHANGELOG.md](CHANGELOG.md).

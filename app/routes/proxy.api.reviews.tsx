@@ -47,6 +47,7 @@ import {
 import { checkRateLimit } from "~/services/ratelimit.server";
 import { createReview, listReviews } from "~/services/reviews.server";
 import { recomputeProduct } from "~/services/aggregates.server";
+import { maybeSendLowStarAlert } from "~/services/alerts.server";
 import { isVerifiedPurchase } from "~/services/verified.server";
 import { resolveMediaUrls, uploadReviewMedia } from "~/services/files.server";
 import { getSettings } from "~/services/settings.server";
@@ -473,6 +474,14 @@ export async function action({ request }: ActionFunctionArgs) {
 
     const status: "PENDING" | "PUBLISHED" =
       review.status === "PUBLISHED" ? "PUBLISHED" : "PENDING";
+
+    // v1.34 (SPEC-1.34): low-star support alert — deliberately NOT awaited.
+    // The service applies its own gate (toggle, threshold, storefront-only)
+    // and catches everything; a slow or failing SMTP server must never delay
+    // or fail the shopper's submission.
+    void maybeSendLowStarAlert(shop, review, admin, { mediaCount: media.length }).catch(
+      (error) => console.error("[cellexia] low-star alert dispatch failed", error),
+    );
 
     // Auto-published reviews change the aggregates immediately.
     if (status === "PUBLISHED" && admin) {

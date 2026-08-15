@@ -231,6 +231,32 @@ model Setting {
    */
   curationBatchLock    DateTime?
   curationSpendUsd     Float   @default(0)
+  // v1.34 (SPEC-1.34): low-star review support alerts. lowStarAlerts is the
+  // master toggle, OFF by default. When on, every review submitted FROM THE
+  // STOREFRONT with rating <= lowStarAlertMax (1..3, default 2) emails the
+  // support team a copy of the review plus the customer's contact details and
+  // recent orders — the moment it is created, pending or published.
+  lowStarAlerts        Boolean @default(false)
+  lowStarAlertMax      Int     @default(2)
+  // Comma-separated recipient list (max 5 addresses); null = fall back to
+  // notifyEmail. Point it at a helpdesk inbound address to open tickets.
+  alertRecipients      String?
+  // SMTP transport for outgoing alert email — stored here (not env) so the
+  // merchant configures it from the admin without a redeploy, like the AI
+  // keys. smtpSecurity: "starttls" (port 587) | "tls" (465) | "none".
+  smtpHost             String?
+  smtpPort             Int     @default(587)
+  smtpSecurity         String  @default("starttls")
+  smtpUser             String?
+  smtpPass             String?
+  // From header for alert email; null = use smtpUser.
+  alertFromEmail       String?
+  // Observability for a fire-and-forget send (the lastSyncError lesson —
+  // SPEC-1.6.1 §A): lastAlertAt is the last successful send; lastAlertError
+  // holds the compact reason for the last FAILED send and is cleared by the
+  // next success (real alert or Settings "Send test email").
+  lastAlertAt          DateTime?
+  lastAlertError       String?
 }
 
 // v1.20 (SPEC-1.20 §4): one submitted Anthropic Message Batch of curation

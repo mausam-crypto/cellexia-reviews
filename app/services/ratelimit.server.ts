@@ -44,6 +44,11 @@ export const RATE_LIMITS = {
   // v1.16 review fix: /summary can schedule background generation — the only
   // previously-unlimited data route gets a ceiling like its siblings.
   summary: { max: 120, windowMs: HOUR_MS },
+  // v1.34 (SPEC-1.34): low-star support alerts — PER-SHOP (callers pass a
+  // constant "shop" as the ip half), because the submit cap is per-IP and a
+  // distributed bot could otherwise flood the support inbox. Dropped alerts
+  // are recorded on Setting.lastAlertError; the reviews stay in moderation.
+  alert: { max: 30, windowMs: HOUR_MS },
 } as const;
 
 export type RateLimitAction = keyof typeof RATE_LIMITS;

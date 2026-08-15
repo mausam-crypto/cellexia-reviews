@@ -162,6 +162,17 @@ model Setting {
   curationSpendMonth   String  @default("")
   curationBatchLock    DateTime?
   curationSpendUsd     Float   @default(0)
+  lowStarAlerts        Boolean @default(false)
+  lowStarAlertMax      Int     @default(2)
+  alertRecipients      String?
+  smtpHost             String?
+  smtpPort             Int     @default(587)
+  smtpSecurity         String  @default("starttls")
+  smtpUser             String?
+  smtpPass             String?
+  alertFromEmail       String?
+  lastAlertAt          DateTime?
+  lastAlertError       String?
 }
 
 model CurationBatch {
